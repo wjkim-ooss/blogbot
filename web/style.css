@@ -86,10 +86,13 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .detail table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 14px; }
 .detail th, .detail td { border: 1px solid #e3e6ec; padding: 6px 8px; text-align: left; }
 .detail th { background: #f5f6f8; }
-details.post { margin-bottom: 8px; border: 1px solid #e3e6ec; border-radius: 8px; padding: 8px 12px; }
-details.post summary { cursor: pointer; font-weight: 600; font-size: 13px; }
-details.post pre { white-space: pre-wrap; font-family: inherit; font-size: 13px; color: #444c5c; margin-top: 8px; max-height: 320px; overflow-y: auto; }
-details.post a { font-size: 12px; }
+.ref-row { cursor: pointer; }
+.ref-row:hover { background: #f5f6f8; }
+.ref-row.open { background: #eef1ff; }
+.ref-title { color: #3b4bd8; font-weight: 600; }
+.ref-body pre { white-space: pre-wrap; font-family: inherit; font-size: 13px; color: #444c5c; margin-top: 8px; max-height: 320px; overflow-y: auto; }
+.ref-body a { font-size: 12px; }
+.ref-body td { background: #fafbfd; }
 
 .insight-card { margin-bottom: 14px; }
 .insight-card h3 { font-size: 15px; margin-bottom: 8px; }

@@ -64,20 +64,28 @@ async function loadRefs() {
 function renderRefDetail(r) {
   const rows = r.posts
     .map(
-      (p, i) => `<tr><td>${i + 1}</td><td>${esc(p.title)}</td><td>${p.chars.toLocaleString()}</td><td>${p.images}</td></tr>`
-    )
-    .join("");
-  const posts = r.posts
-    .map(
-      (p) => `<details class="post"><summary>${esc(p.title)}</summary>
+      (p, i) => `<tr class="ref-row">
+        <td>${i + 1}</td>
+        <td class="ref-title">${esc(p.title)}</td>
+        <td>${p.chars.toLocaleString()}</td>
+        <td>${p.images}</td>
+      </tr>
+      <tr class="ref-body hidden"><td colspan="4">
         <a href="${esc(p.url)}" target="_blank">${esc(p.url)}</a>
-        <pre>${esc(p.text || "(본문 없음)")}</pre></details>`
+        <pre>${esc(p.text || "(본문 없음)")}</pre>
+      </td></tr>`
     )
     .join("");
   $("#ref-detail").innerHTML = `
     <h2>${esc(r.keyword)} <span class="muted" style="font-size:13px">(${r.date})</span></h2>
-    <table><tr><th>#</th><th>제목</th><th>글자수</th><th>이미지</th></tr>${rows}</table>
-    ${posts}`;
+    <p class="muted" style="font-size:12px;margin-bottom:8px">제목을 클릭하면 본문이 펼쳐집니다</p>
+    <table><tr><th>#</th><th>제목</th><th>글자수</th><th>이미지</th></tr>${rows}</table>`;
+  $("#ref-detail").querySelectorAll(".ref-row").forEach((row) => {
+    row.addEventListener("click", () => {
+      row.classList.toggle("open");
+      row.nextElementSibling.classList.toggle("hidden");
+    });
+  });
 }
 
 // ---------- 탭 2: 인사이트 ----------
