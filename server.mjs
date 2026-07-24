@@ -200,6 +200,17 @@ async function draftPut(ctx, name, content) {
   return true;
 }
 
+async function draftDelete(ctx, name) {
+  if (!validName(name)) return false;
+  if (!ctx.authOn) {
+    const f = path.join(DRAFT_DIR, name);
+    if (fs.existsSync(f)) fs.unlinkSync(f);
+    return true;
+  }
+  await supaAdmin.from("drafts").delete().eq("user_id", ctx.userId).eq("name", name);
+  return true;
+}
+
 async function draftCreate(ctx, keyword, title, body, v) {
   const content = buildDraftContent(keyword, title, body, v);
   const base = `${new Date().toISOString().slice(0, 10)}_${keyword.replace(/[\/\s]+/g, "-")}`;
@@ -460,6 +471,10 @@ const server = http.createServer(async (req, res) => {
       if (req.method === "PUT") {
         const body = await readBody(req);
         await draftPut(ctx, name, body.content ?? "");
+        return json(res, 200, { ok: true });
+      }
+      if (req.method === "DELETE") {
+        await draftDelete(ctx, name);
         return json(res, 200, { ok: true });
       }
     }

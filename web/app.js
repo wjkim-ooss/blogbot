@@ -118,13 +118,35 @@ async function loadDrafts(selectName) {
   list.innerHTML = drafts.length ? "" : '<div class="muted card">초안이 없습니다. AI 생성을 눌러보세요.</div>';
   drafts.forEach((d) => {
     const div = document.createElement("div");
-    div.className = "side-item";
-    div.innerHTML = `<div class="title">${esc(d.name.replace(/\.md$/, ""))}</div>`;
-    div.addEventListener("click", () => openDraft(d.name, div));
+    div.className = "side-item draft-item";
+    div.innerHTML = `<div class="title">${esc(d.name.replace(/\.md$/, ""))}</div>
+      <button class="del-btn" title="삭제">🗑</button>`;
+    div.querySelector(".title").addEventListener("click", () => openDraft(d.name, div));
+    div.querySelector(".del-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteDraft(d.name);
+    });
     list.appendChild(div);
-    if (selectName ? d.name === selectName : false) div.click();
+    if (selectName ? d.name === selectName : false) div.querySelector(".title").click();
   });
-  if (!selectName && drafts.length) list.firstChild.click();
+  if (!selectName && drafts.length) list.firstChild.querySelector(".title").click();
+}
+
+async function deleteDraft(name) {
+  if (!confirm(`"${name.replace(/\.md$/, "")}" 초안을 삭제할까요?\n되돌릴 수 없습니다.`)) return;
+  try {
+    await api(`/api/drafts/${encodeURIComponent(name)}`, { method: "DELETE" });
+  } catch (e) {
+    return alert("삭제 실패: " + e.message);
+  }
+  // 열려 있던 초안을 지웠으면 편집기 비우기
+  if (currentDraft === name) {
+    currentDraft = null;
+    $("#editor").value = "";
+    $("#draft-keyword").value = "";
+    runValidation();
+  }
+  await loadDrafts();
 }
 
 async function openDraft(name, el) {
