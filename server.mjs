@@ -40,6 +40,7 @@ if (AUTH_ON) {
 const monthKey = () => new Date().toISOString().slice(0, 7); // YYYY-MM
 
 // 요청 컨텍스트: { authOn, isAdmin, approved, profile, userId }
+const ANON_CTX = { authOn: true, isAdmin: false, approved: false, profile: null, userId: null };
 async function context(req) {
   if (!AUTH_ON) {
     // 로컬 단독 모드: 관리자로 취급, 초안은 로컬 파일(기존 견본 포함)
@@ -47,9 +48,9 @@ async function context(req) {
   }
   const auth = req.headers["authorization"] || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  if (!token) return { authOn: true, isAdmin: false, approved: false, profile: null, userId: null };
+  if (!token) return ANON_CTX;
   const { data, error } = await supaAdmin.auth.getUser(token);
-  if (error || !data?.user) return { authOn: true, isAdmin: false, approved: false, profile: null, userId: null };
+  if (error || !data?.user) return ANON_CTX;
   let { data: profile } = await supaAdmin.from("profiles").select("*").eq("id", data.user.id).single();
   if (!profile) {
     // 트리거가 아직 안 만든 경우 대비
@@ -141,6 +142,24 @@ function parseRefMd(md, file) {
   return { file, keyword, date, avgChars, avgImages, posts, failed: [] };
 }
 
+// 생성용: 해당 키워드 파일만 읽는다 (전체 코퍼스를 파싱하지 않음)
+function findReference(keyword) {
+  if (!fs.existsSync(REF_DIR)) return null;
+  const safeKw = keyword.replace(/[\/\s]+/g, "-");
+  const files = fs.readdirSync(REF_DIR);
+  for (const f of files.filter((f) => f.endsWith(`_${safeKw}.json`)).sort().reverse()) {
+    try {
+      const r = JSON.parse(fs.readFileSync(path.join(REF_DIR, f), "utf8"));
+      if (r.keyword === keyword) return { file: f, ...r };
+    } catch { /* 깨진 파일 무시 */ }
+  }
+  for (const f of files.filter((f) => f.endsWith(`_${safeKw}.md`) && !files.includes(f.replace(/\.md$/, ".json")))) {
+    const parsed = parseRefMd(fs.readFileSync(path.join(REF_DIR, f), "utf8"), f);
+    if (parsed?.keyword === keyword) return parsed;
+  }
+  return null;
+}
+
 // 레퍼런스 크롤링은 웹에서 하지 않는다 — 채팅(Claude)에서 scripts/crawl.mjs로 수집한다.
 
 // ---------- 초안 저장소 ----------
@@ -164,74 +183,80 @@ function buildDraftContent(keyword, title, body, v) {
   return header + body.trim() + "\n";
 }
 
-async function draftsList(ctx) {
-  if (!ctx.authOn) {
+// 중복 없는 파일명 고르기 (두 저장소가 각자 taken 집합만 넘김)
+const pickName = (base, taken) => {
+  let file = `${base}.md`, i = 2;
+  while (taken.has(file)) file = `${base}_${i++}.md`;
+  return file;
+};
+
+// 로컬 파일 저장소 (userId 무시)
+const fileStore = {
+  list() {
     if (!fs.existsSync(DRAFT_DIR)) return [];
     return fs.readdirSync(DRAFT_DIR)
       .filter((f) => f.endsWith(".md"))
       .map((f) => ({ name: f, mtime: fs.statSync(path.join(DRAFT_DIR, f)).mtimeMs }))
       .sort((a, b) => b.mtime - a.mtime);
-  }
-  const { data } = await supaAdmin.from("drafts").select("name,updated_at").eq("user_id", ctx.userId).order("updated_at", { ascending: false });
-  return (data || []).map((d) => ({ name: d.name, mtime: new Date(d.updated_at).getTime() }));
-}
-
-async function draftGet(ctx, name) {
-  if (!validName(name)) return undefined;
-  if (!ctx.authOn) {
+  },
+  get(_uid, name) {
     const f = path.join(DRAFT_DIR, name);
     return fs.existsSync(f) ? fs.readFileSync(f, "utf8") : null;
-  }
-  const { data } = await supaAdmin.from("drafts").select("content").eq("user_id", ctx.userId).eq("name", name).maybeSingle();
-  return data ? data.content : null;
-}
-
-async function draftPut(ctx, name, content) {
-  if (!validName(name)) return false;
-  if (!ctx.authOn) {
+  },
+  put(_uid, name, content) {
     fs.mkdirSync(DRAFT_DIR, { recursive: true });
     fs.writeFileSync(path.join(DRAFT_DIR, name), content ?? "");
-    return true;
-  }
-  await supaAdmin.from("drafts").upsert(
-    { user_id: ctx.userId, name, content: content ?? "", updated_at: new Date().toISOString() },
-    { onConflict: "user_id,name" }
-  );
-  return true;
-}
-
-async function draftDelete(ctx, name) {
-  if (!validName(name)) return false;
-  if (!ctx.authOn) {
+  },
+  del(_uid, name) {
     const f = path.join(DRAFT_DIR, name);
     if (fs.existsSync(f)) fs.unlinkSync(f);
-    return true;
-  }
-  await supaAdmin.from("drafts").delete().eq("user_id", ctx.userId).eq("name", name);
-  return true;
-}
-
-async function draftCreate(ctx, keyword, title, body, v) {
-  const content = buildDraftContent(keyword, title, body, v);
-  const base = `${new Date().toISOString().slice(0, 10)}_${keyword.replace(/[\/\s]+/g, "-")}`;
-  if (!ctx.authOn) {
+  },
+  create(_uid, base, content) {
     fs.mkdirSync(DRAFT_DIR, { recursive: true });
-    let file = `${base}.md`, i = 2;
-    while (fs.existsSync(path.join(DRAFT_DIR, file))) file = `${base}_${i++}.md`;
+    const file = pickName(base, new Set(fs.readdirSync(DRAFT_DIR).filter((f) => f.endsWith(".md"))));
     fs.writeFileSync(path.join(DRAFT_DIR, file), content);
     return file;
-  }
-  const { data } = await supaAdmin.from("drafts").select("name").eq("user_id", ctx.userId).like("name", `${base}%`);
-  const taken = new Set((data || []).map((d) => d.name));
-  let file = `${base}.md`, i = 2;
-  while (taken.has(file)) file = `${base}_${i++}.md`;
-  await supaAdmin.from("drafts").insert({ user_id: ctx.userId, name: file, content });
-  return file;
+  },
+};
+
+// Supabase 저장소 (drafts 테이블, user_id별)
+const supaStore = {
+  async list(uid) {
+    const { data } = await supaAdmin.from("drafts").select("name,updated_at").eq("user_id", uid).order("updated_at", { ascending: false });
+    return (data || []).map((d) => ({ name: d.name, mtime: new Date(d.updated_at).getTime() }));
+  },
+  async get(uid, name) {
+    const { data } = await supaAdmin.from("drafts").select("content").eq("user_id", uid).eq("name", name).maybeSingle();
+    return data ? data.content : null;
+  },
+  async put(uid, name, content) {
+    await supaAdmin.from("drafts").upsert(
+      { user_id: uid, name, content: content ?? "", updated_at: new Date().toISOString() },
+      { onConflict: "user_id,name" }
+    );
+  },
+  async del(uid, name) {
+    await supaAdmin.from("drafts").delete().eq("user_id", uid).eq("name", name);
+  },
+  async create(uid, base, content) {
+    const { data } = await supaAdmin.from("drafts").select("name").eq("user_id", uid).like("name", `${base}%`);
+    const file = pickName(base, new Set((data || []).map((d) => d.name)));
+    await supaAdmin.from("drafts").insert({ user_id: uid, name: file, content });
+    return file;
+  },
+};
+
+// 저장 백엔드는 시작 시 한 번 결정 (인증 ON=Supabase, OFF=로컬 파일)
+const store = AUTH_ON ? supaStore : fileStore;
+
+function draftCreate(ctx, keyword, title, body, v) {
+  const base = `${new Date().toISOString().slice(0, 10)}_${keyword.replace(/[\/\s]+/g, "-")}`;
+  return store.create(ctx.userId, base, buildDraftContent(keyword, title, body, v));
 }
 
 // ---------- AI 생성 ----------
-function buildSystemPrompt() {
-  return `당신은 에스테틱(피부관리실) 원장이 자기 샵 블로그에 올릴 네이버 블로그 글의 견본을 쓰는 작가다. 에스테틱 원장 대상 마케팅 아카데미의 교육 자료로 쓰인다.
+// 시스템 프롬프트는 CONFIG로만 만들어지는 상수 — 시작 시 한 번 조립
+const SYSTEM_PROMPT = `당신은 에스테틱(피부관리실) 원장이 자기 샵 블로그에 올릴 네이버 블로그 글의 견본을 쓰는 작가다. 에스테틱 원장 대상 마케팅 아카데미의 교육 자료로 쓰인다.
 
 [논문 기반 작성 — 최우선 규칙]
 누가 태클을 걸어도 방어되는 글이어야 한다. 성분·효능·수치에 관한 모든 주장은 논문으로 검증된 것만 쓴다.
@@ -272,7 +297,6 @@ function buildSystemPrompt() {
 [출력 형식]
 첫 줄: 제목: <제목>
 둘째 줄부터: 본문 전체. 제목을 본문에서 반복하지 말고, 설명·머리말·맺음말 코멘트 없이 네이버 에디터에 그대로 붙여넣을 수 있는 본문만 출력한다.`;
-}
 
 function buildUserPrompt(keyword, region, point, ref) {
   const lines = [`키워드: ${keyword}`];
@@ -301,7 +325,7 @@ async function streamOnce(client, messages, send) {
     model: MODEL,
     max_tokens: 64000,
     thinking: { type: "adaptive" },
-    system: buildSystemPrompt(),
+    system: SYSTEM_PROMPT,
     messages,
   });
   stream.on("text", (t) => send({ type: "delta", text: t }));
@@ -336,7 +360,7 @@ async function handleGenerate(res, body, ctx) {
       send({ type: "error", message: `이번 달 초안 생성 한도(${ctx.profile.monthly_limit}회)를 모두 사용했습니다. 다음 달에 초기화됩니다.` });
       return res.end();
     }
-    const ref = loadReferences().find((r) => r.keyword === keyword) || null;
+    const ref = findReference(keyword);
     send({
       type: "status",
       message: ref
@@ -459,22 +483,22 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === "/api/references") return json(res, 200, loadReferences());
-    if (p === "/api/drafts" && req.method === "GET") return json(res, 200, await draftsList(ctx));
+    if (p === "/api/drafts" && req.method === "GET") return json(res, 200, await store.list(ctx.userId));
     if (p.startsWith("/api/drafts/")) {
       const name = p.slice("/api/drafts/".length);
       if (!validName(name)) return json(res, 400, { error: "잘못된 파일명" });
       if (req.method === "GET") {
-        const content = await draftGet(ctx, name);
+        const content = await store.get(ctx.userId, name);
         if (content == null) return json(res, 404, { error: "파일 없음" });
         return json(res, 200, { name, content });
       }
       if (req.method === "PUT") {
         const body = await readBody(req);
-        await draftPut(ctx, name, body.content ?? "");
+        await store.put(ctx.userId, name, body.content ?? "");
         return json(res, 200, { ok: true });
       }
       if (req.method === "DELETE") {
-        await draftDelete(ctx, name);
+        await store.del(ctx.userId, name);
         return json(res, 200, { ok: true });
       }
     }

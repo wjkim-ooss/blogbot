@@ -57,19 +57,8 @@ button.primary { background: #3b4bd8; border-color: #3b4bd8; color: #fff; font-w
 button.primary:hover { background: #2f3cb0; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.crawl-bar, .gen-bar { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
-.crawl-bar input, .gen-bar input { flex: 1; min-width: 160px; }
-.log {
-  background: #171b26;
-  color: #b9e37f;
-  border-radius: 10px;
-  padding: 12px 14px;
-  font-size: 12px;
-  margin-bottom: 14px;
-  max-height: 180px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-}
+.gen-bar { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.gen-bar input { flex: 1; min-width: 160px; }
 
 .split { display: flex; gap: 14px; align-items: flex-start; }
 .side-list { width: 260px; flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; }
@@ -153,7 +142,6 @@ header { justify-content: flex-start; }
 .auth-actions button { flex: 1; }
 .auth-msg { font-size: 13px; color: #d8483b; min-height: 18px; text-align: left; }
 .auth-card button + button { margin-top: 8px; }
-.pending-refresh { margin-top: 10px; }
 
 /* 회원 관리 */
 .admin-user { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #eef0f4; flex-wrap: wrap; }

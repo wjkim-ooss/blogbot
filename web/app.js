@@ -127,7 +127,7 @@ async function loadDrafts(selectName) {
       deleteDraft(d.name);
     });
     list.appendChild(div);
-    if (selectName ? d.name === selectName : false) div.querySelector(".title").click();
+    if (selectName && d.name === selectName) div.querySelector(".title").click();
   });
   if (!selectName && drafts.length) list.firstChild.querySelector(".title").click();
 }
@@ -178,13 +178,13 @@ function runValidation() {
   const medicalFound = CONFIG.의료법금지어.filter((w) => body.includes(w));
   const 논문 = CONFIG.논문검증 || {};
   const overclaimFound = (논문.과장표현 || []).filter((w) => body.includes(w));
-  const pmids = [...new Set((body.match(/PMID\s*\d{5,8}/g) || []).map((s) => s.replace(/\s+/g, " ").trim()))];
+  const pmidRe = new RegExp(논문.PMID정규식 || "PMID\\s*\\d{5,8}", "g");
+  const pmids = [...new Set((body.match(pmidRe) || []).map((s) => s.replace(/\s+/g, " ").trim()))];
   const needsEvidence = (논문.효능키워드 || []).some((w) => body.includes(w));
   const tokens = keyword.split(/\s+/).filter(Boolean);
   const kwRows = tokens
     .map((w) => {
       const c = countWord(body, w);
-      const ok = c >= CONFIG.키워드횟수.min && c <= CONFIG.키워드횟수.max + 3;
       return `<div class="v-item"><span>"${esc(w)}"</span><span class="${c >= CONFIG.키워드횟수.min ? "v-ok" : "v-bad"}">${c}회</span></div>`;
     })
     .join("");
@@ -277,10 +277,7 @@ $("#gen-btn").addEventListener("click", async () => {
             ME.remaining = ev.quota.remaining;
             updateQuota();
           }
-          await loadDrafts(ev.file);
-          document.querySelectorAll("#draft-list .side-item").forEach((el) => {
-            if (el.querySelector(".title").textContent === ev.file.replace(/\.md$/, "")) el.click();
-          });
+          await loadDrafts(ev.file); // ev.file을 자동 선택·오픈
         }
       }
     }
@@ -327,8 +324,7 @@ async function enterApp() {
     if (ME.isAdmin) $("#admin-tab-btn").classList.remove("hidden");
   }
   updateQuota();
-  await loadRefs();
-  await loadDrafts();
+  await Promise.all([loadRefs(), loadDrafts()]);
 }
 
 async function gateByStatus() {
