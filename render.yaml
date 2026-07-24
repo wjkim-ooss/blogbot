@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: blogbot
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      # 값은 Render 대시보드에서 직접 입력합니다 (git에 저장되지 않음)
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
