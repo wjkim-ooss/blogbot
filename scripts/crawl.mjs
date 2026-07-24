@@ -1,5 +1,7 @@
 // 네이버 블로그 상위노출 레퍼런스 크롤러
-// 사용법: node scripts/crawl.mjs "키워드" [수집개수=7]
+// 사용법: node scripts/crawl.mjs "키워드" [수집개수=7] [모드=new|append]
+//   new    = 새로 수집(기존 파일 덮어씀)
+//   append = 기존 레퍼런스 유지 + 중복 아닌 새 글을 수집개수만큼 추가
 // 크롬을 원격 디버깅 포트(9222)로 띄우고 Playwright를 CDP로 연결해서 수집한다.
 import { chromium } from "playwright-core";
 import { spawn } from "node:child_process";
@@ -62,7 +64,20 @@ async function collectTopUrls(page, keyword, limit) {
     }
     return out;
   });
-  return links.slice(0, limit);
+  return links.slice(0, 40); // 검색 결과 상위 다수를 확보해두고, 개수/중복 필터는 호출부에서
+}
+
+// 같은 키워드의 기존 레퍼런스(json) 로드 — append 모드에서 병합·중복제거에 사용
+function loadExisting(safeKw) {
+  const dir = path.join(ROOT, "레퍼런스");
+  if (!fs.existsSync(dir)) return { posts: [] };
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith(`_${safeKw}.json`)).sort();
+  if (!files.length) return { posts: [] };
+  try {
+    return JSON.parse(fs.readFileSync(path.join(dir, files[files.length - 1]), "utf8"));
+  } catch {
+    return { posts: [] };
+  }
 }
 
 // 블로그 글 본문 추출 (본문은 #mainFrame iframe 안의 PostView에 있음)
@@ -120,11 +135,19 @@ function charCountNoSpace(text) {
 
 async function main() {
   const keyword = process.argv[2];
-  const limit = Number(process.argv[3] || 7);
+  const count = Number(process.argv[3] || 7);
+  const mode = (process.argv[4] || "new").toLowerCase();
+  const append = mode === "append";
   if (!keyword) {
-    console.error('사용법: node scripts/crawl.mjs "키워드" [수집개수]');
+    console.error('사용법: node scripts/crawl.mjs "키워드" [수집개수] [new|append]');
     process.exit(1);
   }
+  const safeKw = keyword.replace(/[\/\s]+/g, "-");
+
+  // append 모드: 기존 글 유지 + 이미 수집한 URL은 건너뜀
+  const existing = append ? loadExisting(safeKw) : { posts: [] };
+  const existingUrls = new Set((existing.posts || []).map((p) => p.url));
+  if (append) console.log(`기존 ${existing.posts?.length || 0}개 유지, 새 글 ${count}개 추가 수집`);
 
   await ensureChrome();
   const browser = await chromium.connectOverCDP(CDP_URL);
@@ -132,73 +155,61 @@ async function main() {
 
   const searchPage = await context.newPage();
   console.log(`"${keyword}" 블로그탭 상위 글 수집 중...`);
-  const urls = await collectTopUrls(searchPage, keyword, limit);
+  const allUrls = await collectTopUrls(searchPage, keyword);
   await searchPage.close();
-  if (urls.length === 0) throw new Error("검색 결과에서 블로그 글을 찾지 못함");
-  console.log(`${urls.length}개 URL 확보, 본문 추출 시작`);
+  const urls = allUrls.filter((u) => !existingUrls.has(u)).slice(0, count);
+  if (urls.length === 0) throw new Error("추가할 새 글을 찾지 못함(이미 다 수집했거나 검색 결과 없음)");
+  console.log(`새 URL ${urls.length}개 확보, 본문 추출 시작`);
 
-  const posts = [];
+  const fetched = [];
   for (const [i, url] of urls.entries()) {
     const post = await extractPost(context, url);
-    posts.push(post);
+    fetched.push(post);
     console.log(`  [${i + 1}/${urls.length}] ${post.error ? "실패: " + post.error : post.title}`);
     await sleep(1200 + Math.random() * 800); // 과도한 요청 방지
   }
   await browser.close(); // CDP 연결만 끊음, 크롬은 계속 떠 있음
 
-  const ok = posts.filter((p) => !p.error);
-  const today = new Date().toISOString().slice(0, 10);
-  const safeKw = keyword.replace(/[\/\s]+/g, "-");
-  const outPath = path.join(ROOT, "레퍼런스", `${today}_${safeKw}.md`);
+  // 새로 수집한 글을 json 구조로 정규화 후 기존 글과 병합
+  const newOk = fetched
+    .filter((p) => !p.error)
+    .map((p) => ({
+      title: p.title,
+      url: p.url,
+      chars: charCountNoSpace(p.text),
+      images: p.images,
+      text: p.text.length > 4000 ? p.text.slice(0, 4000) : p.text,
+    }));
+  const posts = [...(existing.posts || []), ...newOk];
 
+  const today = new Date().toISOString().slice(0, 10);
+  const outPath = path.join(ROOT, "레퍼런스", `${today}_${safeKw}.md`);
   const avg = (arr) => (arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0);
-  const lens = ok.map((p) => charCountNoSpace(p.text));
-  const imgs = ok.map((p) => p.images);
+  const avgChars = avg(posts.map((p) => p.chars));
+  const avgImages = avg(posts.map((p) => p.images));
 
   let md = `# 레퍼런스: ${keyword}\n\n`;
-  md += `- 수집일: ${today} / 성공 ${ok.length}개 (시도 ${posts.length}개)\n`;
-  md += `- 평균 글자수(공백제외): ${avg(lens)}자 / 평균 이미지: ${avg(imgs)}장\n\n`;
+  md += `- 수집일: ${today} / 총 ${posts.length}개${append ? ` (기존 ${existing.posts?.length || 0} + 신규 ${newOk.length})` : ""}\n`;
+  md += `- 평균 글자수(공백제외): ${avgChars}자 / 평균 이미지: ${avgImages}장\n\n`;
   md += `## 요약표\n\n| # | 제목 | 글자수 | 이미지 | 제목 키워드 | 본문 키워드 |\n|---|---|---|---|---|---|\n`;
-  ok.forEach((p, i) => {
-    md += `| ${i + 1} | ${p.title.replace(/\|/g, " ")} | ${charCountNoSpace(p.text)} | ${p.images} | ${keywordStats(p.title, keyword)} | ${keywordStats(p.text, keyword)} |\n`;
+  posts.forEach((p, i) => {
+    md += `| ${i + 1} | ${p.title.replace(/\|/g, " ")} | ${p.chars} | ${p.images} | ${keywordStats(p.title, keyword)} | ${keywordStats(p.text, keyword)} |\n`;
   });
   md += `\n## 개별 글\n`;
-  ok.forEach((p, i) => {
-    md += `\n### ${i + 1}. ${p.title}\n\n- ${p.url}\n\n`;
-    md += p.text.length > 4000 ? p.text.slice(0, 4000) + "\n\n(...이하 생략)" : p.text;
-    md += "\n";
+  posts.forEach((p, i) => {
+    md += `\n### ${i + 1}. ${p.title}\n\n- ${p.url}\n\n${p.text}\n`;
   });
-  const failed = posts.filter((p) => p.error);
+  const failed = fetched.filter((p) => p.error);
   if (failed.length) {
     md += `\n## 실패한 URL\n\n${failed.map((p) => `- ${p.url} (${p.error})`).join("\n")}\n`;
   }
 
   fs.writeFileSync(outPath, md);
-
-  // 웹 대시보드용 구조화 데이터도 함께 저장
-  const jsonPath = outPath.replace(/\.md$/, ".json");
   fs.writeFileSync(
-    jsonPath,
-    JSON.stringify(
-      {
-        keyword,
-        date: today,
-        avgChars: avg(lens),
-        avgImages: avg(imgs),
-        posts: ok.map((p) => ({
-          title: p.title,
-          url: p.url,
-          chars: charCountNoSpace(p.text),
-          images: p.images,
-          text: p.text.length > 4000 ? p.text.slice(0, 4000) : p.text,
-        })),
-        failed: posts.filter((p) => p.error).map((p) => ({ url: p.url, error: p.error })),
-      },
-      null,
-      2
-    )
+    outPath.replace(/\.md$/, ".json"),
+    JSON.stringify({ keyword, date: today, avgChars, avgImages, posts, failed: failed.map((p) => ({ url: p.url, error: p.error })) }, null, 2)
   );
-  console.log(`저장 완료: ${outPath}`);
+  console.log(`저장 완료: ${outPath} (총 ${posts.length}개)`);
 }
 
 main().catch((e) => {
