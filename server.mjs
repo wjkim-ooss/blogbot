@@ -113,7 +113,10 @@ function loadReferences() {
     } catch { /* 깨진 파일은 건너뜀 */ }
   }
   refs.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  return refs;
+  // 같은 키워드는 최신 수집분만 보여준다 (append로 날짜가 바뀌면 옛 파일은 부분집합)
+  const newest = new Map();
+  for (const r of refs) if (!newest.has(r.keyword)) newest.set(r.keyword, r);
+  return [...newest.values()];
 }
 
 // crawl.mjs가 예전에 저장한 md 포맷 파서 (json이 없는 파일용)
