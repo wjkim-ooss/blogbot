@@ -133,16 +133,81 @@ function charCountNoSpace(text) {
   return text.replace(/\s/g, "").length;
 }
 
+// ---------- 글 품질 점수 (후보를 많이 모아 좋은 글만 채택할 때 사용) ----------
+// 요청 기준을 측정 가능한 신호로 환산: 추상어 회피 / 구체성 / 스토리텔링 / 본능분석·반박제거
+const 추상어 = JSON.parse(fs.readFileSync(path.join(ROOT, "기준.json"), "utf8")).추상어;
+const 스토리텔링어 = ["저는", "제가", "처음", "그때", "결국", "솔직히", "직접", "다녀", "받아봤", "해봤", "그런데", "지금은", "이후로", "느꼈", "였는데", "했는데"];
+const 반박제거어 = ["고민", "걱정", "망설", "부담", "실패", "후회", "왜냐", "이유는", "사실", "오해", "아니라", "차이", "비교", "가격", "비용", "단점", "주의", "장단점", "솔직"];
+const 구체성패턴 = /\d+\s*(분|회|원|만원|주|개월|년|일|%|번|장|cc|ml|mm|kg)/g;
+const MIN_SCORE = 0; // 이 점수 미만(추상어 과다 등)은 레퍼런스로 채택하지 않음
+
+function scorePost(text) {
+  const per1k = (n) => (charCountNoSpace(text) ? (n / charCountNoSpace(text)) * 1000 : 0);
+  const hits = (words) => words.reduce((a, w) => a + countOccurrences(text, w), 0);
+  const abstract = hits(추상어);
+  const concrete = (text.match(구체성패턴) || []).length;
+  const story = hits(스토리텔링어);
+  const rebut = hits(반박제거어);
+  // 추상어는 감점, 나머지는 길이 보정 후 가점
+  const score = Math.round(
+    per1k(concrete) * 3 + per1k(story) * 2 + per1k(rebut) * 2 - per1k(abstract) * 6
+  );
+  return { score, abstract, concrete, story, rebut };
+}
+
+// 레퍼런스 md + json 저장 (신규 수집·재정리가 같은 경로를 쓴다)
+function saveReference(keyword, safeKw, posts, failed = [], keptFromBefore = 0) {
+  const today = new Date().toISOString().slice(0, 10);
+  const outPath = path.join(ROOT, "레퍼런스", `${today}_${safeKw}.md`);
+  const avg = (arr) => (arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0);
+  const avgChars = avg(posts.map((p) => p.chars));
+  const avgImages = avg(posts.map((p) => p.images));
+
+  let md = `# 레퍼런스: ${keyword}\n\n`;
+  md += `- 수집일: ${today} / 총 ${posts.length}개${keptFromBefore ? ` (기존 ${keptFromBefore} + 신규 ${posts.length - keptFromBefore})` : ""}\n`;
+  md += `- 평균 글자수(공백제외): ${avgChars}자 / 평균 이미지: ${avgImages}장\n\n`;
+  md += `## 요약표\n\n| # | 제목 | 글자수 | 이미지 | 제목 키워드 | 본문 키워드 |\n|---|---|---|---|---|---|\n`;
+  posts.forEach((p, i) => {
+    md += `| ${i + 1} | ${p.title.replace(/\|/g, " ")} | ${p.chars} | ${p.images} | ${keywordStats(p.title, keyword)} | ${keywordStats(p.text, keyword)} |\n`;
+  });
+  md += `\n## 개별 글\n`;
+  posts.forEach((p, i) => {
+    md += `\n### ${i + 1}. ${p.title}\n\n- ${p.url}\n\n${p.text}\n`;
+  });
+  if (failed.length) {
+    md += `\n## 실패한 URL\n\n${failed.map((p) => `- ${p.url} (${p.error})`).join("\n")}\n`;
+  }
+
+  fs.writeFileSync(outPath, md);
+  fs.writeFileSync(
+    outPath.replace(/\.md$/, ".json"),
+    JSON.stringify({ keyword, date: today, avgChars, avgImages, posts, failed: failed.map((p) => ({ url: p.url, error: p.error })) }, null, 2)
+  );
+  console.log(`저장 완료: ${outPath} (총 ${posts.length}개)`);
+}
+
 async function main() {
   const keyword = process.argv[2];
   const count = Number(process.argv[3] || 7);
   const mode = (process.argv[4] || "new").toLowerCase();
+  const pool = Number(process.argv[5] || 0); // 후보 수(>count면 품질 점수로 상위 count개만 채택)
   const append = mode === "append";
   if (!keyword) {
-    console.error('사용법: node scripts/crawl.mjs "키워드" [수집개수] [new|append]');
+    console.error('사용법: node scripts/crawl.mjs "키워드" [수집개수] [new|append|refilter] [후보수]');
     process.exit(1);
   }
   const safeKw = keyword.replace(/[\/\s]+/g, "-");
+
+  // refilter: 이미 수집한 레퍼런스에서 최소 점수 미달 글만 걷어낸다 (재크롤링 없음)
+  if (mode === "refilter") {
+    const cur = loadExisting(safeKw);
+    const keep = (cur.posts || []).filter((p) => p.score === undefined || p.score >= MIN_SCORE);
+    const drop = (cur.posts || []).filter((p) => p.score !== undefined && p.score < MIN_SCORE);
+    drop.forEach((p) => console.log(`제외 ${p.score}점 (추상어 ${p.abstract}개) — ${p.title.slice(0, 45)}`));
+    if (!drop.length) return console.log("걸러낼 글이 없습니다.");
+    saveReference(keyword, safeKw, keep);
+    return;
+  }
 
   // append 모드: 기존 글 유지 + 이미 수집한 URL은 건너뜀
   const existing = append ? loadExisting(safeKw) : { posts: [] };
@@ -157,9 +222,10 @@ async function main() {
   console.log(`"${keyword}" 블로그탭 상위 글 수집 중...`);
   const allUrls = await collectTopUrls(searchPage, keyword);
   await searchPage.close();
-  const urls = allUrls.filter((u) => !existingUrls.has(u)).slice(0, count);
+  const take = Math.max(count, pool); // 후보를 넉넉히 받아 점수로 추림
+  const urls = allUrls.filter((u) => !existingUrls.has(u)).slice(0, take);
   if (urls.length === 0) throw new Error("추가할 새 글을 찾지 못함(이미 다 수집했거나 검색 결과 없음)");
-  console.log(`새 URL ${urls.length}개 확보, 본문 추출 시작`);
+  console.log(`새 URL ${urls.length}개 확보${take > count ? ` (이 중 점수 상위 ${count}개 채택)` : ""}, 본문 추출 시작`);
 
   const fetched = [];
   for (const [i, url] of urls.entries()) {
@@ -170,46 +236,35 @@ async function main() {
   }
   await browser.close(); // CDP 연결만 끊음, 크롬은 계속 떠 있음
 
-  // 새로 수집한 글을 json 구조로 정규화 후 기존 글과 병합
-  const newOk = fetched
+  // 새로 수집한 글을 json 구조로 정규화 (품질 점수 포함)
+  let newOk = fetched
     .filter((p) => !p.error)
-    .map((p) => ({
+    .map((p, i) => ({
       title: p.title,
       url: p.url,
       chars: charCountNoSpace(p.text),
       images: p.images,
+      rank: i + 1, // 검색 노출 순위
+      ...scorePost(p.text),
       text: p.text.length > 4000 ? p.text.slice(0, 4000) : p.text,
     }));
+
+  if (take > count) {
+    // 최소 점수 미달은 후보가 모자라도 채택하지 않는다
+    const below = newOk.filter((p) => p.score < MIN_SCORE);
+    below.forEach((p) => console.log(`  기준 미달 제외: ${p.score}점 (추상어 ${p.abstract}개) — ${p.title.slice(0, 40)}`));
+    newOk = newOk.filter((p) => p.score >= MIN_SCORE);
+    newOk.sort((a, b) => b.score - a.score);
+    const picked = newOk.slice(0, count);
+    console.log(`\n채택 ${picked.length}개 (점수순):`);
+    picked.forEach((p) => console.log(`  ${p.score}점 [노출${p.rank}위] 추상어${p.abstract} 구체${p.concrete} 스토리${p.story} 반박${p.rebut} — ${p.title.slice(0, 40)}`));
+    const dropped = newOk.slice(count);
+    if (dropped.length) console.log(`제외 ${dropped.length}개 (최저 ${dropped[dropped.length - 1].score}점)`);
+    newOk = picked;
+  }
   const posts = [...(existing.posts || []), ...newOk];
 
-  const today = new Date().toISOString().slice(0, 10);
-  const outPath = path.join(ROOT, "레퍼런스", `${today}_${safeKw}.md`);
-  const avg = (arr) => (arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0);
-  const avgChars = avg(posts.map((p) => p.chars));
-  const avgImages = avg(posts.map((p) => p.images));
-
-  let md = `# 레퍼런스: ${keyword}\n\n`;
-  md += `- 수집일: ${today} / 총 ${posts.length}개${append ? ` (기존 ${existing.posts?.length || 0} + 신규 ${newOk.length})` : ""}\n`;
-  md += `- 평균 글자수(공백제외): ${avgChars}자 / 평균 이미지: ${avgImages}장\n\n`;
-  md += `## 요약표\n\n| # | 제목 | 글자수 | 이미지 | 제목 키워드 | 본문 키워드 |\n|---|---|---|---|---|---|\n`;
-  posts.forEach((p, i) => {
-    md += `| ${i + 1} | ${p.title.replace(/\|/g, " ")} | ${p.chars} | ${p.images} | ${keywordStats(p.title, keyword)} | ${keywordStats(p.text, keyword)} |\n`;
-  });
-  md += `\n## 개별 글\n`;
-  posts.forEach((p, i) => {
-    md += `\n### ${i + 1}. ${p.title}\n\n- ${p.url}\n\n${p.text}\n`;
-  });
-  const failed = fetched.filter((p) => p.error);
-  if (failed.length) {
-    md += `\n## 실패한 URL\n\n${failed.map((p) => `- ${p.url} (${p.error})`).join("\n")}\n`;
-  }
-
-  fs.writeFileSync(outPath, md);
-  fs.writeFileSync(
-    outPath.replace(/\.md$/, ".json"),
-    JSON.stringify({ keyword, date: today, avgChars, avgImages, posts, failed: failed.map((p) => ({ url: p.url, error: p.error })) }, null, 2)
-  );
-  console.log(`저장 완료: ${outPath} (총 ${posts.length}개)`);
+  saveReference(keyword, safeKw, posts, fetched.filter((p) => p.error), append ? existing.posts?.length || 0 : 0);
 }
 
 main().catch((e) => {
