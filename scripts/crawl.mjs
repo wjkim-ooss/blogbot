@@ -74,7 +74,8 @@ function loadExisting(safeKw) {
   const files = fs.readdirSync(dir).filter((f) => f.endsWith(`_${safeKw}.json`)).sort();
   if (!files.length) return { posts: [] };
   try {
-    return JSON.parse(fs.readFileSync(path.join(dir, files[files.length - 1]), "utf8"));
+    const parsed = JSON.parse(fs.readFileSync(path.join(dir, files[files.length - 1]), "utf8"));
+    return { ...parsed, posts: parsed.posts || [] };
   } catch {
     return { posts: [] };
   }
@@ -134,23 +135,26 @@ function charCountNoSpace(text) {
 }
 
 // ---------- 글 품질 점수 (후보를 많이 모아 좋은 글만 채택할 때 사용) ----------
-// 요청 기준을 측정 가능한 신호로 환산: 추상어 회피 / 구체성 / 스토리텔링 / 본능분석·반박제거
-const 추상어 = JSON.parse(fs.readFileSync(path.join(ROOT, "기준.json"), "utf8")).추상어;
-const 스토리텔링어 = ["저는", "제가", "처음", "그때", "결국", "솔직히", "직접", "다녀", "받아봤", "해봤", "그런데", "지금은", "이후로", "느꼈", "였는데", "했는데"];
-const 반박제거어 = ["고민", "걱정", "망설", "부담", "실패", "후회", "왜냐", "이유는", "사실", "오해", "아니라", "차이", "비교", "가격", "비용", "단점", "주의", "장단점", "솔직"];
-const 구체성패턴 = /\d+\s*(분|회|원|만원|주|개월|년|일|%|번|장|cc|ml|mm|kg)/g;
-const MIN_SCORE = 0; // 이 점수 미만(추상어 과다 등)은 레퍼런스로 채택하지 않음
+// 기준·가중치는 전부 기준.json의 품질점수 블록에서 읽는다 (검증 규칙과 같은 자리에서 조정)
+const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, "기준.json"), "utf8"));
+const Q = CONFIG.품질점수;
+const MIN_SCORE = Q.최소점수;
+const 구체성RX = new RegExp(Q.구체성패턴, "g");
+
+const dropLine = (p) => `기준 미달 제외: ${p.score}점 (추상어 ${p.abstract}개) — ${p.title.slice(0, 45)}`;
 
 function scorePost(text) {
-  const per1k = (n) => (charCountNoSpace(text) ? (n / charCountNoSpace(text)) * 1000 : 0);
+  const chars = charCountNoSpace(text) || 1;
+  const per1k = (n) => (n / chars) * 1000;
+  // 단어별로 센다 — "장단점"처럼 겹치는 단어를 각각 세는 기존 집계 방식 유지 (저장된 점수와 호환)
   const hits = (words) => words.reduce((a, w) => a + countOccurrences(text, w), 0);
-  const abstract = hits(추상어);
-  const concrete = (text.match(구체성패턴) || []).length;
-  const story = hits(스토리텔링어);
-  const rebut = hits(반박제거어);
-  // 추상어는 감점, 나머지는 길이 보정 후 가점
+  const abstract = hits(CONFIG.추상어);
+  const concrete = (text.match(구체성RX) || []).length;
+  const story = hits(Q.스토리텔링어);
+  const rebut = hits(Q.반박제거어);
+  const w = Q.가중치;
   const score = Math.round(
-    per1k(concrete) * 3 + per1k(story) * 2 + per1k(rebut) * 2 - per1k(abstract) * 6
+    per1k(concrete) * w.구체성 + per1k(story) * w.스토리텔링 + per1k(rebut) * w.반박제거 + per1k(abstract) * w.추상어
   );
   return { score, abstract, concrete, story, rebut };
 }
@@ -183,6 +187,16 @@ function saveReference(keyword, safeKw, posts, failed = [], keptFromBefore = 0) 
     outPath.replace(/\.md$/, ".json"),
     JSON.stringify({ keyword, date: today, avgChars, avgImages, posts, failed: failed.map((p) => ({ url: p.url, error: p.error })) }, null, 2)
   );
+
+  // 같은 키워드의 지난 파일은 이번 파일의 부분집합 → 보관함으로 옮겨 중복 적재를 막는다
+  const refDir = path.join(ROOT, "레퍼런스");
+  const archive = path.join(refDir, "archive");
+  const olds = fs.readdirSync(refDir).filter((f) => /\.(md|json)$/.test(f) && f.endsWith(`_${safeKw}${path.extname(f)}`) && !f.startsWith(today));
+  if (olds.length) {
+    fs.mkdirSync(archive, { recursive: true });
+    olds.forEach((f) => fs.renameSync(path.join(refDir, f), path.join(archive, f)));
+    console.log(`지난 수집분 ${olds.length}개를 레퍼런스/archive/로 이동`);
+  }
   console.log(`저장 완료: ${outPath} (총 ${posts.length}개)`);
 }
 
@@ -200,12 +214,11 @@ async function main() {
 
   // refilter: 이미 수집한 레퍼런스에서 최소 점수 미달 글만 걷어낸다 (재크롤링 없음)
   if (mode === "refilter") {
-    const cur = loadExisting(safeKw);
-    const keep = (cur.posts || []).filter((p) => p.score === undefined || p.score >= MIN_SCORE);
-    const drop = (cur.posts || []).filter((p) => p.score !== undefined && p.score < MIN_SCORE);
-    drop.forEach((p) => console.log(`제외 ${p.score}점 (추상어 ${p.abstract}개) — ${p.title.slice(0, 45)}`));
+    const posts = loadExisting(safeKw).posts; // 점수 없는 옛 글은 score가 undefined → 비교가 false라 유지됨
+    const drop = posts.filter((p) => p.score < MIN_SCORE);
+    drop.forEach((p) => console.log(dropLine(p)));
     if (!drop.length) return console.log("걸러낼 글이 없습니다.");
-    saveReference(keyword, safeKw, keep);
+    saveReference(keyword, safeKw, posts.filter((p) => !(p.score < MIN_SCORE)));
     return;
   }
 
@@ -230,7 +243,7 @@ async function main() {
   const fetched = [];
   for (const [i, url] of urls.entries()) {
     const post = await extractPost(context, url);
-    fetched.push(post);
+    fetched.push({ ...post, rank: i + 1 }); // 검색 노출 순위(실패 글 포함한 원래 순서)
     console.log(`  [${i + 1}/${urls.length}] ${post.error ? "실패: " + post.error : post.title}`);
     await sleep(1200 + Math.random() * 800); // 과도한 요청 방지
   }
@@ -239,27 +252,27 @@ async function main() {
   // 새로 수집한 글을 json 구조로 정규화 (품질 점수 포함)
   let newOk = fetched
     .filter((p) => !p.error)
-    .map((p, i) => ({
+    .map((p) => ({
       title: p.title,
       url: p.url,
       chars: charCountNoSpace(p.text),
       images: p.images,
-      rank: i + 1, // 검색 노출 순위
+      rank: p.rank,
       ...scorePost(p.text),
-      text: p.text.length > 4000 ? p.text.slice(0, 4000) : p.text,
+      text: p.text.slice(0, 4000),
     }));
 
+  // 최소 점수 미달은 항상(후보가 모자라도) 제외한다
+  newOk.filter((p) => p.score < MIN_SCORE).forEach((p) => console.log(`  ${dropLine(p)}`));
+  newOk = newOk.filter((p) => p.score >= MIN_SCORE);
+
   if (take > count) {
-    // 최소 점수 미달은 후보가 모자라도 채택하지 않는다
-    const below = newOk.filter((p) => p.score < MIN_SCORE);
-    below.forEach((p) => console.log(`  기준 미달 제외: ${p.score}점 (추상어 ${p.abstract}개) — ${p.title.slice(0, 40)}`));
-    newOk = newOk.filter((p) => p.score >= MIN_SCORE);
     newOk.sort((a, b) => b.score - a.score);
     const picked = newOk.slice(0, count);
     console.log(`\n채택 ${picked.length}개 (점수순):`);
     picked.forEach((p) => console.log(`  ${p.score}점 [노출${p.rank}위] 추상어${p.abstract} 구체${p.concrete} 스토리${p.story} 반박${p.rebut} — ${p.title.slice(0, 40)}`));
     const dropped = newOk.slice(count);
-    if (dropped.length) console.log(`제외 ${dropped.length}개 (최저 ${dropped[dropped.length - 1].score}점)`);
+    if (dropped.length) console.log(`점수순 제외 ${dropped.length}개 (최저 ${dropped[dropped.length - 1].score}점)`);
     newOk = picked;
   }
   const posts = [...(existing.posts || []), ...newOk];

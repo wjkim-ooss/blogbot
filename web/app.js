@@ -69,22 +69,25 @@ function renderRefDetail(r) {
         <td class="ref-title">${esc(p.title)}</td>
         <td>${p.chars.toLocaleString()}</td>
         <td>${p.images}</td>
+        <td title="추상어 감점 + 구체성·스토리텔링·반박제거 가점">${p.score ?? "–"}</td>
       </tr>
-      <tr class="ref-body hidden"><td colspan="4">
+      <tr class="ref-body hidden"><td colspan="5">
         <a href="${esc(p.url)}" target="_blank">${esc(p.url)}</a>
         <pre>${esc(p.text || "(본문 없음)")}</pre>
       </td></tr>`
     )
     .join("");
-  $("#ref-detail").innerHTML = `
+  const detail = $("#ref-detail");
+  detail.innerHTML = `
     <h2>${esc(r.keyword)} <span class="muted" style="font-size:13px">(${r.date})</span></h2>
-    <p class="muted" style="font-size:12px;margin-bottom:8px">제목을 클릭하면 본문이 펼쳐집니다</p>
-    <table><tr><th>#</th><th>제목</th><th>글자수</th><th>이미지</th></tr>${rows}</table>`;
-  $("#ref-detail").querySelectorAll(".ref-row").forEach((row) => {
-    row.addEventListener("click", () => {
-      row.classList.toggle("open");
-      row.nextElementSibling.classList.toggle("hidden");
-    });
+    <p class="muted" style="font-size:12px;margin-bottom:8px">제목을 클릭하면 본문이 펼쳐집니다 · 점수 = 글 품질(높을수록 참고 가치 큼)</p>
+    <table><tr><th>#</th><th>제목</th><th>글자수</th><th>이미지</th><th>점수</th></tr>${rows}</table>`;
+  // 행마다 리스너를 다는 대신 표 하나에 위임
+  detail.querySelector("table").addEventListener("click", (e) => {
+    const row = e.target.closest(".ref-row");
+    if (!row) return;
+    row.classList.toggle("open");
+    row.nextElementSibling.classList.toggle("hidden");
   });
 }
 
@@ -324,6 +327,7 @@ function updateQuota() {
 async function enterApp() {
   hideOverlays();
   if (ME.authOn) {
+    $("#import-samples").classList.remove("hidden"); // 배포 모드에서만 필요
     $("#user-chip").classList.remove("hidden");
     $("#user-email").textContent = ME.email || "";
     const badge = $("#user-badge");
@@ -426,6 +430,19 @@ async function loadAdminUsers() {
     );
   });
 }
+
+$("#import-samples").addEventListener("click", async (e) => {
+  e.target.disabled = true;
+  try {
+    const { added } = await api("/api/samples/import", { method: "POST" });
+    alert(added.length ? `견본 초안 ${added.length}개를 가져왔습니다.` : "이미 모든 견본을 가지고 있습니다.");
+    if (added.length) await loadDrafts(added[0]);
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    e.target.disabled = false;
+  }
+});
 
 $("#login-btn").addEventListener("click", () => authAction("login"));
 $("#signup-btn").addEventListener("click", () => authAction("signup"));

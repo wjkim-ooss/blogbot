@@ -97,26 +97,28 @@ function validateDraft(text, keyword) {
 }
 
 // ---------- 레퍼런스 ----------
+// 파일명이 `YYYY-MM-DD_키워드.확장자`라 이름만으로 키워드별 최신본을 고를 수 있다.
+// 먼저 이름으로 추린 뒤 필요한 파일만 파싱한다 (전체를 읽고 버리지 않음).
 function loadReferences() {
   if (!fs.existsSync(REF_DIR)) return [];
-  const files = fs.readdirSync(REF_DIR);
+  const files = fs.readdirSync(REF_DIR).sort(); // 날짜 접두사 → 사전순 = 오래된 순
   const jsonSet = new Set(files.filter((f) => f.endsWith(".json")));
-  const refs = [];
+  const newest = new Map(); // 키워드 슬러그 → 파일명 (뒤에서 덮어쓰므로 최신이 남음)
   for (const f of files) {
+    if (f.endsWith(".json")) newest.set(f.slice(11, -5), f);
+    else if (f.endsWith(".md") && !jsonSet.has(f.replace(/\.md$/, ".json"))) newest.set(f.slice(11, -3), f);
+  }
+  const refs = [];
+  for (const f of newest.values()) {
     try {
-      if (f.endsWith(".json")) {
-        refs.push({ file: f, ...JSON.parse(fs.readFileSync(path.join(REF_DIR, f), "utf8")) });
-      } else if (f.endsWith(".md") && !jsonSet.has(f.replace(/\.md$/, ".json"))) {
+      if (f.endsWith(".json")) refs.push({ file: f, ...JSON.parse(fs.readFileSync(path.join(REF_DIR, f), "utf8")) });
+      else {
         const parsed = parseRefMd(fs.readFileSync(path.join(REF_DIR, f), "utf8"), f);
         if (parsed) refs.push(parsed);
       }
     } catch { /* 깨진 파일은 건너뜀 */ }
   }
-  refs.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  // 같은 키워드는 최신 수집분만 보여준다 (append로 날짜가 바뀌면 옛 파일은 부분집합)
-  const newest = new Map();
-  for (const r of refs) if (!newest.has(r.keyword)) newest.set(r.keyword, r);
-  return [...newest.values()];
+  return refs.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 }
 
 // crawl.mjs가 예전에 저장한 md 포맷 파서 (json이 없는 파일용)
@@ -251,6 +253,21 @@ const supaStore = {
 
 // 저장 백엔드는 시작 시 한 번 결정 (인증 ON=Supabase, OFF=로컬 파일)
 const store = AUTH_ON ? supaStore : fileStore;
+
+// 견본 초안 = 저장소(git)에 함께 배포되는 초안/*.md — 배포 모드에서 각 회원 계정으로 복사해 준다
+const listSamples = () =>
+  fs.existsSync(DRAFT_DIR) ? fs.readdirSync(DRAFT_DIR).filter((f) => f.endsWith(".md")) : [];
+
+async function importSamples(uid) {
+  const mine = new Set((await store.list(uid)).map((d) => d.name));
+  const added = [];
+  for (const name of listSamples()) {
+    if (mine.has(name)) continue;
+    await store.put(uid, name, fs.readFileSync(path.join(DRAFT_DIR, name), "utf8"));
+    added.push(name);
+  }
+  return added;
+}
 
 function draftCreate(ctx, keyword, title, body, v) {
   const base = `${new Date().toISOString().slice(0, 10)}_${keyword.replace(/[\/\s]+/g, "-")}`;
@@ -480,7 +497,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // --- 승인된 사용자만: 레퍼런스·초안·생성 ---
-    if (p === "/api/references" || p.startsWith("/api/drafts") || p === "/api/generate") {
+    if (p === "/api/references" || p.startsWith("/api/drafts") || p === "/api/generate" || p.startsWith("/api/samples")) {
       if (ctx.authOn && !ctx.profile) return json(res, 401, { error: "로그인이 필요합니다" });
       if (!ctx.approved) return json(res, 403, { error: "승인 대기 중입니다. 관리자 승인 후 이용할 수 있어요." });
     }
@@ -508,6 +525,12 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/generate" && req.method === "POST") {
       const body = await readBody(req);
       return handleGenerate(res, body, ctx);
+    }
+    // 견본 초안 가져오기 (배포 모드에서 회원이 견본을 자기 계정으로 복사)
+    if (p === "/api/samples/import" && req.method === "POST") {
+      if (!ctx.authOn) return json(res, 400, { error: "로컬 모드에서는 견본이 이미 목록에 있습니다" });
+      const added = await importSamples(ctx.userId);
+      return json(res, 200, { added });
     }
 
     // --- 정적 파일 ---
