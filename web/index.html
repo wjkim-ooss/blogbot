@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>블로그봇 대시보드</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>📝 블로그봇</h1>
+    <nav>
+      <button class="tab-btn active" data-tab="refs">레퍼런스 보관함</button>
+      <button class="tab-btn" data-tab="insights">인사이트</button>
+      <button class="tab-btn" data-tab="drafts">초안 작성</button>
+      <button class="tab-btn hidden" data-tab="admin" id="admin-tab-btn">회원 관리</button>
+    </nav>
+    <div id="user-chip" class="hidden">
+      <span id="user-email" class="muted"></span>
+      <span id="user-badge"></span>
+      <button id="logout-btn">로그아웃</button>
+    </div>
+  </header>
+
+  <!-- 로그인 / 회원가입 오버레이 (인증 ON일 때만) -->
+  <div id="auth-overlay" class="overlay hidden">
+    <div class="auth-card card">
+      <h2>📝 블로그봇</h2>
+      <p class="muted">에스테틱 원장 전용 · 로그인 후 관리자 승인이 필요합니다</p>
+      <input id="auth-email" type="email" placeholder="이메일" autocomplete="username" />
+      <input id="auth-pw" type="password" placeholder="비밀번호 (6자 이상)" autocomplete="current-password" />
+      <div id="auth-msg" class="auth-msg"></div>
+      <div class="auth-actions">
+        <button id="login-btn" class="primary">로그인</button>
+        <button id="signup-btn">회원가입</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 승인 대기 오버레이 -->
+  <div id="pending-overlay" class="overlay hidden">
+    <div class="auth-card card">
+      <h2>⏳ 승인 대기 중</h2>
+      <p class="muted" id="pending-email"></p>
+      <p>가입이 접수되었습니다.<br />관리자 승인 후 레퍼런스 열람과 초안 작성이 열립니다.</p>
+      <button id="pending-refresh" class="primary">승인됐는지 새로고침</button>
+      <button id="pending-logout">로그아웃</button>
+    </div>
+  </div>
+
+  <!-- 탭 1: 레퍼런스 보관함 -->
+  <section id="tab-refs" class="tab active">
+    <div class="split">
+      <div id="ref-list" class="side-list"></div>
+      <div id="ref-detail" class="detail card"><p class="muted">왼쪽에서 레퍼런스를 선택하세요</p></div>
+    </div>
+  </section>
+
+  <!-- 탭 2: 인사이트 -->
+  <section id="tab-insights" class="tab">
+    <div id="insights-body"></div>
+  </section>
+
+  <!-- 탭 4: 회원 관리 (관리자 전용) -->
+  <section id="tab-admin" class="tab">
+    <div class="card">
+      <h3>회원 관리</h3>
+      <p class="muted">가입한 원장을 승인하면 레퍼런스·초안 작성이 열립니다. 등급: 관리자(무제한) / 원장(월 한도).</p>
+      <div id="admin-users"></div>
+    </div>
+  </section>
+
+  <!-- 탭 3: 초안 작성 -->
+  <section id="tab-drafts" class="tab">
+    <div class="gen-bar card">
+      <input id="gen-keyword" placeholder="키워드 *" />
+      <input id="gen-region" placeholder="지역 (선택)" />
+      <input id="gen-point" placeholder="강조 포인트 (선택)" />
+      <button id="gen-btn" class="primary">🤖 AI 초안 생성</button>
+      <button id="import-samples" class="hidden">📥 견본 초안 가져오기</button>
+      <span id="gen-quota" class="muted"></span>
+    </div>
+    <div id="gen-output-wrap" class="card hidden">
+      <div id="gen-status" class="muted"></div>
+      <pre id="gen-output"></pre>
+    </div>
+    <div class="split">
+      <div id="draft-list" class="side-list"></div>
+      <div class="editor-wrap">
+        <div class="editor-tools">
+          <input id="draft-keyword" placeholder="검증용 키워드" />
+          <button id="save-btn">💾 저장</button>
+          <button id="copy-btn">📋 본문 복사 (네이버용)</button>
+          <span id="editor-msg" class="muted"></span>
+        </div>
+        <div class="editor-split">
+          <textarea id="editor" placeholder="왼쪽에서 초안을 선택하거나 새로 생성하세요" spellcheck="false"></textarea>
+          <aside id="validation" class="card"></aside>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <script src="/app.js"></script>
+</body>
+</html>

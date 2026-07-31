@@ -1,0 +1,18 @@
+{
+  "name": "naver-blog-draft-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "네이버 블로그 초안발행 작성봇 (웹 대시보드 + 논문 검증)",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.114.0",
+    "@supabase/supabase-js": "^2.110.8",
+    "playwright-core": "^1.61.1"
+  }
+}
