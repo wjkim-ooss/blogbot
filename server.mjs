@@ -7,9 +7,9 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
-const REF_DIR = path.join(ROOT, "레퍼런스");
-const DRAFT_DIR = path.join(ROOT, "초안");
-const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, "기준.json"), "utf8"));
+const REF_DIR = path.join(ROOT, "references");
+const DRAFT_DIR = path.join(ROOT, "drafts");
+const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
 const PORT = Number(process.env.PORT) || 4039;
 const MODEL = "claude-opus-4-8";
 

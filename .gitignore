@@ -3,4 +3,4 @@ node_modules/
 .chrome-profile/
 *.log
 .DS_Store
-레퍼런스/archive/
+references/archive/

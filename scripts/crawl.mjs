@@ -69,7 +69,7 @@ async function collectTopUrls(page, keyword, limit) {
 
 // 같은 키워드의 기존 레퍼런스(json) 로드 — append 모드에서 병합·중복제거에 사용
 function loadExisting(safeKw) {
-  const dir = path.join(ROOT, "레퍼런스");
+  const dir = path.join(ROOT, "references");
   if (!fs.existsSync(dir)) return { posts: [] };
   const files = fs.readdirSync(dir).filter((f) => f.endsWith(`_${safeKw}.json`)).sort();
   if (!files.length) return { posts: [] };
@@ -136,7 +136,7 @@ function charCountNoSpace(text) {
 
 // ---------- 글 품질 점수 (후보를 많이 모아 좋은 글만 채택할 때 사용) ----------
 // 기준·가중치는 전부 기준.json의 품질점수 블록에서 읽는다 (검증 규칙과 같은 자리에서 조정)
-const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, "기준.json"), "utf8"));
+const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
 const Q = CONFIG.품질점수;
 const MIN_SCORE = Q.최소점수;
 const 구체성RX = new RegExp(Q.구체성패턴, "g");
@@ -162,7 +162,7 @@ function scorePost(text) {
 // 레퍼런스 md + json 저장 (신규 수집·재정리가 같은 경로를 쓴다)
 function saveReference(keyword, safeKw, posts, failed = [], keptFromBefore = 0) {
   const today = new Date().toISOString().slice(0, 10);
-  const outPath = path.join(ROOT, "레퍼런스", `${today}_${safeKw}.md`);
+  const outPath = path.join(ROOT, "references", `${today}_${safeKw}.md`);
   const avg = (arr) => (arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0);
   const avgChars = avg(posts.map((p) => p.chars));
   const avgImages = avg(posts.map((p) => p.images));
@@ -189,7 +189,7 @@ function saveReference(keyword, safeKw, posts, failed = [], keptFromBefore = 0) 
   );
 
   // 같은 키워드의 지난 파일은 이번 파일의 부분집합 → 보관함으로 옮겨 중복 적재를 막는다
-  const refDir = path.join(ROOT, "레퍼런스");
+  const refDir = path.join(ROOT, "references");
   const archive = path.join(refDir, "archive");
   const olds = fs.readdirSync(refDir).filter((f) => /\.(md|json)$/.test(f) && f.endsWith(`_${safeKw}${path.extname(f)}`) && !f.startsWith(today));
   if (olds.length) {
