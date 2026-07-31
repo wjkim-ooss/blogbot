@@ -97,70 +97,30 @@ function validateDraft(text, keyword) {
 }
 
 // ---------- 레퍼런스 ----------
-// 파일명이 `YYYY-MM-DD_키워드.확장자`라 이름만으로 키워드별 최신본을 고를 수 있다.
-// 먼저 이름으로 추린 뒤 필요한 파일만 파싱한다 (전체를 읽고 버리지 않음).
+// 파일명 앞 10자리 날짜로 오래된 순 정렬한 뒤, 키워드는 파일 '내용'으로 판별한다.
+// (파일명의 한글은 업로드 경로에 따라 자모 분리형이 될 수 있어 키로 쓰지 않는다)
 function loadReferences() {
   if (!fs.existsSync(REF_DIR)) return [];
-  const files = fs.readdirSync(REF_DIR).sort(); // 날짜 접두사 → 사전순 = 오래된 순
-  const jsonSet = new Set(files.filter((f) => f.endsWith(".json")));
-  const newest = new Map(); // 키워드 슬러그 → 파일명 (뒤에서 덮어쓰므로 최신이 남음)
-  for (const f of files) {
-    if (f.endsWith(".json")) newest.set(f.slice(11, -5), f);
-    else if (f.endsWith(".md") && !jsonSet.has(f.replace(/\.md$/, ".json"))) newest.set(f.slice(11, -3), f);
-  }
-  const refs = [];
-  for (const f of newest.values()) {
+  const newest = new Map(); // 키워드 → 레퍼런스 (뒤에서 덮어쓰므로 최신 수집분이 남음)
+  for (const f of fs.readdirSync(REF_DIR).filter((f) => f.endsWith(".json")).sort()) {
     try {
-      if (f.endsWith(".json")) refs.push({ file: f, ...JSON.parse(fs.readFileSync(path.join(REF_DIR, f), "utf8")) });
-      else {
-        const parsed = parseRefMd(fs.readFileSync(path.join(REF_DIR, f), "utf8"), f);
-        if (parsed) refs.push(parsed);
-      }
+      const r = { file: f, ...JSON.parse(fs.readFileSync(path.join(REF_DIR, f), "utf8")) };
+      if (r.keyword) newest.set(r.keyword.normalize("NFC"), r);
     } catch { /* 깨진 파일은 건너뜀 */ }
   }
-  return refs.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  return [...newest.values()].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 }
 
-// crawl.mjs가 예전에 저장한 md 포맷 파서 (json이 없는 파일용)
-function parseRefMd(md, file) {
-  const keyword = md.match(/^# 레퍼런스: (.+)$/m)?.[1]?.trim();
-  if (!keyword) return null;
-  const date = md.match(/수집일: (\d{4}-\d{2}-\d{2})/)?.[1] || "";
-  const avgChars = Number(md.match(/평균 글자수\(공백제외\): (\d+)자/)?.[1] || 0);
-  const avgImages = Number(md.match(/평균 이미지: (\d+)장/)?.[1] || 0);
-  const posts = [];
-  for (const sec of md.split(/\n### /).slice(1)) {
-    const lines = sec.split("\n");
-    const title = lines[0].replace(/^\d+\.\s*/, "").trim();
-    const url = sec.match(/- (https?:\/\/\S+)/)?.[1] || "";
-    const text = sec.split("\n\n").slice(2).join("\n\n").split("\n## ")[0].trim();
-    posts.push({ title, url, chars: noSpace(text), images: 0, text });
-  }
-  const rows = md.match(/^\| \d+ \|.+\|$/gm) || [];
-  rows.forEach((row, i) => {
-    const cells = row.split("|").map((c) => c.trim());
-    if (posts[i]) {
-      posts[i].chars = Number(cells[3]) || posts[i].chars;
-      posts[i].images = Number(cells[4]) || 0;
-    }
-  });
-  return { file, keyword, date, avgChars, avgImages, posts, failed: [] };
-}
-
-// 생성용: 해당 키워드 파일만 읽는다 (전체 코퍼스를 파싱하지 않음)
+// 생성용: 파일명이 아니라 파일 안의 keyword로 찾는다.
+// (파일명에 한글이 들어가는데, 업로드 경로에 따라 자모 분리형으로 바뀔 수 있어 이름 비교는 조용히 실패한다)
 function findReference(keyword) {
   if (!fs.existsSync(REF_DIR)) return null;
-  const safeKw = keyword.replace(/[\/\s]+/g, "-");
-  const files = fs.readdirSync(REF_DIR);
-  for (const f of files.filter((f) => f.endsWith(`_${safeKw}.json`)).sort().reverse()) {
+  const want = keyword.normalize("NFC");
+  for (const f of fs.readdirSync(REF_DIR).filter((f) => f.endsWith(".json")).sort().reverse()) {
     try {
       const r = JSON.parse(fs.readFileSync(path.join(REF_DIR, f), "utf8"));
-      if (r.keyword === keyword) return { file: f, ...r };
+      if (r.keyword?.normalize("NFC") === want) return { file: f, ...r };
     } catch { /* 깨진 파일 무시 */ }
-  }
-  for (const f of files.filter((f) => f.endsWith(`_${safeKw}.md`) && !files.includes(f.replace(/\.md$/, ".json")))) {
-    const parsed = parseRefMd(fs.readFileSync(path.join(REF_DIR, f), "utf8"), f);
-    if (parsed?.keyword === keyword) return parsed;
   }
   return null;
 }
@@ -254,7 +214,7 @@ const supaStore = {
 // 저장 백엔드는 시작 시 한 번 결정 (인증 ON=Supabase, OFF=로컬 파일)
 const store = AUTH_ON ? supaStore : fileStore;
 
-// 견본 초안 = 저장소(git)에 함께 배포되는 초안/*.md — 배포 모드에서 각 회원 계정으로 복사해 준다
+// 견본 초안 = 저장소(git)에 함께 배포되는 drafts/*.md — 배포 모드에서 각 회원 계정으로 복사해 준다
 const listSamples = () =>
   fs.existsSync(DRAFT_DIR) ? fs.readdirSync(DRAFT_DIR).filter((f) => f.endsWith(".md")) : [];
 
@@ -371,15 +331,20 @@ async function handleGenerate(res, body, ctx) {
     Connection: "keep-alive",
   });
   const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  const fail = (message) => {
+    send({ type: "error", message });
+    return res.end();
+  };
   try {
     const keyword = (body.keyword || "").trim();
-    if (!keyword) throw new Error("키워드를 입력하세요");
+    if (!keyword) return fail("키워드를 입력하세요");
+    // 키 유무는 오류가 아니라 사전 조건 — 실패를 기다리지 않고 여기서 걸러낸다
+    if (!process.env.ANTHROPIC_API_KEY)
+      return fail(adminHint(ctx, "AI 생성이 아직 설정되지 않았습니다.", "서버에 ANTHROPIC_API_KEY 환경변수를 추가하세요."));
 
     const quota = await consumeQuota(ctx);
-    if (quota === null) {
-      send({ type: "error", message: `이번 달 초안 생성 한도(${ctx.profile.monthly_limit}회)를 모두 사용했습니다. 다음 달에 초기화됩니다.` });
-      return res.end();
-    }
+    if (quota === null)
+      return fail(`이번 달 초안 생성 한도(${ctx.profile.monthly_limit}회)를 모두 사용했습니다. 다음 달에 초기화됩니다.`);
     const ref = findReference(keyword);
     send({
       type: "status",
@@ -412,24 +377,27 @@ async function handleGenerate(res, body, ctx) {
     const file = await draftCreate(ctx, keyword, parsed.title, parsed.body, validation);
     send({ type: "done", file, validation, quota });
   } catch (e) {
-    const raw = String(e?.message || e);
-    const status = e?.status || e?.response?.status;
-    let message;
-    if (!process.env.ANTHROPIC_API_KEY) {
-      message = "① API 키가 서버에 설정되지 않았습니다. Render → blogbot → Environment 에서 이름이 정확히 ANTHROPIC_API_KEY 인지 확인하고 저장하세요.";
-    } else if (status === 401 || /authentication|invalid[_ ]?api[_ ]?key/i.test(raw)) {
-      message = "② API 키가 올바르지 않습니다(인증 거부). Render에 넣은 키 값을 다시 확인하거나 console.anthropic.com 에서 키를 새로 만들어 교체하세요.";
-    } else if (status === 400 && /credit|billing|quota/i.test(raw)) {
-      message = "③ Claude 계정에 크레딧이 없습니다. console.anthropic.com → Billing 에서 결제 수단 등록·충전 후 다시 시도하세요.";
-    } else if (status === 429) {
-      message = "④ 요청이 잠시 몰렸습니다(사용량 한도). 1~2분 뒤 다시 시도해주세요.";
-    } else {
-      message = `오류가 발생했습니다: ${raw}`;
-    }
-    send({ type: "error", message });
+    console.error("[generate 실패]", e); // 상세 원인은 서버 로그에 남긴다
+    send({ type: "error", message: describeError(e, ctx) });
   } finally {
     res.end();
   }
+}
+
+// 회원에게는 무슨 일인지, 관리자에게는 조치 방법까지 (운영 안내를 일반 회원에게 노출하지 않는다)
+const adminHint = (ctx, msg, hint) => (ctx.isAdmin || !ctx.authOn ? `${msg} ${hint}` : `${msg} 관리자에게 문의해 주세요.`);
+
+// SDK가 주는 status/type으로 분류한다 (영문 메시지 문자열 매칭은 계약이 아니다)
+function describeError(e, ctx) {
+  const type = e?.type;
+  const status = e?.status;
+  if (type === "authentication_error" || status === 401)
+    return adminHint(ctx, "AI 생성 인증에 실패했습니다.", "ANTHROPIC_API_KEY 값이 올바른지 확인하세요.");
+  if (type === "billing_error" || status === 403)
+    return adminHint(ctx, "AI 생성을 사용할 수 없습니다(결제 문제).", "console.anthropic.com → Billing 에서 크레딧을 충전하세요.");
+  if (type === "rate_limit_error" || status === 429)
+    return "요청이 잠시 몰렸습니다. 1~2분 뒤 다시 시도해 주세요.";
+  return adminHint(ctx, "생성 중 오류가 발생했습니다.", `상세: ${String(e?.message || e)}`);
 }
 
 function parseDraftOutput(text, keyword) {
