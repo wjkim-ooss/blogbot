@@ -338,7 +338,10 @@ function updateQuota() {
 
 async function enterApp() {
   hideOverlays();
-  if (ME.authOn) {
+  if (ME.publicMode) {
+    // 로그인 없는 공개 모드: 계정 표시·회원 관리는 의미가 없고, 견본 가져오기만 노출
+    $("#import-samples").classList.remove("hidden");
+  } else if (ME.authOn) {
     $("#import-samples").classList.remove("hidden"); // 배포 모드에서만 필요
     $("#user-chip").classList.remove("hidden");
     $("#user-email").textContent = ME.email || "";
@@ -468,7 +471,7 @@ $("#auth-pw").addEventListener("keydown", (e) => { if (e.key === "Enter") authAc
 (async () => {
   CONFIG = await api("/api/config");
   if (!CONFIG.auth?.enabled) {
-    // 로컬 단독 모드: 로그인 없이 관리자로 바로 입장
+    // 로컬 단독 모드 또는 공개 모드: 로그인 없이 바로 입장
     ME = await api("/api/me");
     return enterApp();
   }
