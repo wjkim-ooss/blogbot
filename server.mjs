@@ -413,9 +413,19 @@ async function handleGenerate(res, body, ctx) {
     send({ type: "done", file, validation, quota });
   } catch (e) {
     const raw = String(e?.message || e);
-    const message = /api[_ ]?key|authentication|401|credential/i.test(raw)
-      ? "API 키가 없습니다. 블로그봇/.env 파일을 만들어 ANTHROPIC_API_KEY=발급받은키 한 줄을 직접 입력한 뒤 서버를 재시작하세요. 키 발급: console.anthropic.com → API Keys"
-      : raw;
+    const status = e?.status || e?.response?.status;
+    let message;
+    if (!process.env.ANTHROPIC_API_KEY) {
+      message = "① API 키가 서버에 설정되지 않았습니다. Render → blogbot → Environment 에서 이름이 정확히 ANTHROPIC_API_KEY 인지 확인하고 저장하세요.";
+    } else if (status === 401 || /authentication|invalid[_ ]?api[_ ]?key/i.test(raw)) {
+      message = "② API 키가 올바르지 않습니다(인증 거부). Render에 넣은 키 값을 다시 확인하거나 console.anthropic.com 에서 키를 새로 만들어 교체하세요.";
+    } else if (status === 400 && /credit|billing|quota/i.test(raw)) {
+      message = "③ Claude 계정에 크레딧이 없습니다. console.anthropic.com → Billing 에서 결제 수단 등록·충전 후 다시 시도하세요.";
+    } else if (status === 429) {
+      message = "④ 요청이 잠시 몰렸습니다(사용량 한도). 1~2분 뒤 다시 시도해주세요.";
+    } else {
+      message = `오류가 발생했습니다: ${raw}`;
+    }
     send({ type: "error", message });
   } finally {
     res.end();
