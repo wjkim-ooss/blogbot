@@ -28,40 +28,15 @@ const SUPA_URL = process.env.SUPABASE_URL || "";
 const SUPA_ANON = process.env.SUPABASE_ANON_KEY || "";
 const SUPA_SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const AUTH_ON = !!(SUPA_URL && SUPA_ANON && SUPA_SERVICE);
-// PUBLIC_MODE=true → 로그인 없이 누구나 바로 사용. 초안은 공용 계정으로 Supabase에 계속 보관된다
-// (서버 파일에 두면 무료 플랜이 잠들 때마다 초기화되므로).
-const PUBLIC_MODE = process.env.PUBLIC_MODE === "true";
+// 초안은 언제나 쓴 사람 것이다 — 계정끼리 섞이는 경로는 두지 않는다.
+// (예전의 PUBLIC_MODE = 로그인 없이 모두가 초안 하나를 공유하던 모드는 삭제했다)
 let supaAdmin = null;
 if (AUTH_ON) {
   const { createClient } = await import("@supabase/supabase-js");
   supaAdmin = createClient(SUPA_URL, SUPA_SERVICE, { auth: { persistSession: false } });
-  if (PUBLIC_MODE) console.log("공개 모드 — 로그인 없이 사용, 초안은 공용 계정에 보관");
-  else console.log("인증 ON — Supabase 로그인·승인·등급 활성화");
+  console.log("인증 ON — Supabase 로그인·승인·등급 활성화");
 } else {
   console.log("인증 OFF — 관리자 단독 로컬 모드 (Supabase 미설정)");
-}
-
-// 공개 모드에서 모든 초안을 담을 공용 계정.
-// 첫 요청 때 한 번만 해결한다 — 부팅 시점에 잡으면 Supabase가 잠깐 안 될 때 사이트 전체가 안 뜬다.
-// 값이 아니라 약속(Promise)을 기억해 둔다. 콜드 스타트 직후 동시 요청이 계정을 중복 생성하지 않게.
-const SHARED_EMAIL = "shared@blogbot.local";
-let sharedUserP = null;
-const sharedUserId = () => (sharedUserP ??= resolveSharedUser());
-
-async function resolveSharedUser() {
-  // 프로필 표에 이메일로 한 줄만 물어본다 (auth 사용자 목록은 페이지 단위라 회원이 늘면 못 찾는다)
-  const { data: row } = await supaAdmin.from("profiles").select("id").eq("email", SHARED_EMAIL).maybeSingle();
-  if (row) return row.id;
-  const { data, error } = await supaAdmin.auth.admin.createUser({
-    email: SHARED_EMAIL,
-    password: crypto.randomUUID(),
-    email_confirm: true,
-  });
-  if (error) {
-    sharedUserP = null; // 실패는 기억하지 않는다 — 다음 요청에서 다시 시도
-    throw new Error(`공용 계정 준비 실패: ${error.message}`);
-  }
-  return data.user.id;
 }
 
 const monthKey = () => new Date().toISOString().slice(0, 7); // YYYY-MM
@@ -71,17 +46,12 @@ const monthKey = () => new Date().toISOString().slice(0, 7); // YYYY-MM
 //   approved  레퍼런스·초안을 쓸 수 있는가
 //   unlimited 월 생성 한도를 적용하지 않는가
 //   needsLogin 로그인부터 해야 하는가
-//   userId    초안 주인. 공개 모드는 null → 저장소가 공용 계정으로 해석한다
+//   userId    초안 주인. 로그인한 본인 외에는 절대 다른 값이 들어가지 않는다
 const ANON_CTX = { authOn: true, isAdmin: false, approved: false, unlimited: false, needsLogin: true, profile: null, userId: null };
 async function context(req) {
   if (!AUTH_ON) {
     // 로컬 단독 모드: 관리자로 취급, 초안은 로컬 파일(기존 견본 포함)
     return { authOn: false, isAdmin: true, approved: true, unlimited: true, needsLogin: false, profile: null, userId: null };
-  }
-  if (PUBLIC_MODE) {
-    // 로그인 없이 통과. 저장은 Supabase 공용 계정으로 (초안이 사라지지 않게).
-    // 관리자 권한은 주지 않는다 — 회원 목록·등급 변경은 로그인한 관리자만.
-    return { authOn: true, isAdmin: false, approved: true, unlimited: true, needsLogin: false, profile: null, userId: null };
   }
   const auth = req.headers["authorization"] || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
@@ -222,33 +192,33 @@ const fileStore = {
 };
 
 // Supabase 저장소 (drafts 테이블, user_id별)
-// 공개 모드에서는 주인이 없으므로(uid=null) 공용 계정으로 해석한다 — 호출하는 쪽은 신경 쓰지 않는다.
-const owner = async (uid) => {
-  if (uid) return uid;
-  if (!PUBLIC_MODE) throw new Error("초안 주인을 알 수 없습니다");
-  return sharedUserId();
+// 모든 조회·저장은 owner(uid)를 거친다. 주인이 없는 요청은 여기서 멈춘다 —
+// 실수로 uid가 비어도 남의 초안이 보이거나 섞이는 일이 없게.
+const owner = (uid) => {
+  if (!uid) throw new Error("초안 주인을 알 수 없습니다");
+  return uid;
 };
 
 const supaStore = {
   async list(uid) {
-    const { data } = await supaAdmin.from("drafts").select("name,updated_at").eq("user_id", await owner(uid)).order("updated_at", { ascending: false });
+    const { data } = await supaAdmin.from("drafts").select("name,updated_at").eq("user_id", owner(uid)).order("updated_at", { ascending: false });
     return (data || []).map((d) => ({ name: d.name, mtime: new Date(d.updated_at).getTime() }));
   },
   async get(uid, name) {
-    const { data } = await supaAdmin.from("drafts").select("content").eq("user_id", await owner(uid)).eq("name", name).maybeSingle();
+    const { data } = await supaAdmin.from("drafts").select("content").eq("user_id", owner(uid)).eq("name", name).maybeSingle();
     return data ? data.content : null;
   },
   async put(uid, name, content) {
     await supaAdmin.from("drafts").upsert(
-      { user_id: await owner(uid), name, content: content ?? "", updated_at: new Date().toISOString() },
+      { user_id: owner(uid), name, content: content ?? "", updated_at: new Date().toISOString() },
       { onConflict: "user_id,name" }
     );
   },
   async del(uid, name) {
-    await supaAdmin.from("drafts").delete().eq("user_id", await owner(uid)).eq("name", name);
+    await supaAdmin.from("drafts").delete().eq("user_id", owner(uid)).eq("name", name);
   },
   async create(uid, base, content) {
-    const id = await owner(uid);
+    const id = owner(uid);
     const { data } = await supaAdmin.from("drafts").select("name").eq("user_id", id).like("name", `${base}%`);
     const file = pickName(base, new Set((data || []).map((d) => d.name)));
     await supaAdmin.from("drafts").insert({ user_id: id, name: file, content });
@@ -486,7 +456,7 @@ const server = http.createServer(async (req, res) => {
   try {
     // --- 공개 API ---
     if (p === "/api/config")
-      return json(res, 200, { ...CONFIG, auth: { enabled: AUTH_ON && !PUBLIC_MODE, supabaseUrl: SUPA_URL, supabaseAnonKey: SUPA_ANON } });
+      return json(res, 200, { ...CONFIG, auth: { enabled: AUTH_ON, supabaseUrl: SUPA_URL, supabaseAnonKey: SUPA_ANON } });
 
     // --- 인증 컨텍스트 (API 요청에만 필요 — 정적 파일은 거치지 않는다) ---
     if (!p.startsWith("/api/")) return serveStatic(res, p);
@@ -499,7 +469,6 @@ const server = http.createServer(async (req, res) => {
       const mk = monthKey();
       const used = p2 && p2.usage_month === mk ? p2.usage_count : 0;
       return json(res, 200, {
-        publicMode: PUBLIC_MODE,
         authOn: ctx.authOn,
         isAdmin: ctx.isAdmin,
         approved: ctx.approved,
@@ -516,8 +485,7 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/admin/users") {
       if (!ctx.isAdmin) return json(res, 403, { error: "관리자 전용" });
       if (req.method === "GET") {
-        // 공용 계정은 사람이 아니므로 회원 목록에서 뺀다 (승인 대기로 보이면 헷갈린다)
-        const { data } = await supaAdmin.from("profiles").select("*").neq("email", SHARED_EMAIL).order("created_at", { ascending: false });
+        const { data } = await supaAdmin.from("profiles").select("*").order("created_at", { ascending: false });
         return json(res, 200, data || []);
       }
       if (req.method === "POST") {

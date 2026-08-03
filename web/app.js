@@ -340,9 +340,8 @@ function updateQuota() {
 
 async function enterApp() {
   hideOverlays();
-  if (ME.authOn) $("#import-samples").classList.remove("hidden"); // 배포 모드에서만 필요
-  // 공개 모드에는 계정이 없으므로 계정 표시·회원 관리는 띄우지 않는다
-  if (ME.authOn && !ME.publicMode) {
+  if (ME.authOn) {
+    $("#import-samples").classList.remove("hidden"); // 배포 모드에서만 필요
     $("#user-chip").classList.remove("hidden");
     $("#user-email").textContent = ME.email || "";
     const badge = $("#user-badge");
@@ -471,7 +470,7 @@ $("#auth-pw").addEventListener("keydown", (e) => { if (e.key === "Enter") authAc
 (async () => {
   CONFIG = await api("/api/config");
   if (!CONFIG.auth?.enabled) {
-    // 로컬 단독 모드 또는 공개 모드: 로그인 없이 바로 입장
+    // 로컬 단독 모드(내 맥에서 혼자 쓸 때): 로그인 없이 바로 입장
     ME = await api("/api/me");
     return enterApp();
   }
