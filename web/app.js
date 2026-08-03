@@ -137,17 +137,24 @@ function renderInsights() {
 }
 
 // ---------- 탭 3: 초안 ----------
+// 관리자가 다른 회원의 초안을 보고 있으면 그 회원 id. 내 초안을 볼 때는 빈 값.
+let viewingUser = "";
+const viewingOther = () => !!viewingUser;
+const draftsUrl = (path) => path + (viewingOther() ? `?user=${encodeURIComponent(viewingUser)}` : "");
+
 async function loadDrafts(selectName) {
-  const drafts = await api("/api/drafts");
+  const drafts = await api(draftsUrl("/api/drafts"));
+  const other = viewingOther();
   const list = $("#draft-list");
-  list.innerHTML = drafts.length ? "" : '<div class="muted card">초안이 없습니다. AI 생성을 눌러보세요.</div>';
+  const empty = other ? "이 회원은 아직 작성한 초안이 없습니다." : "초안이 없습니다. AI 생성을 눌러보세요.";
+  list.innerHTML = drafts.length ? "" : `<div class="muted card">${empty}</div>`;
   drafts.forEach((d) => {
     const div = document.createElement("div");
     div.className = "side-item draft-item";
-    div.innerHTML = `<div class="title">${esc(d.name.replace(/\.md$/, ""))}</div>
-      <button class="del-btn" title="삭제">🗑</button>`;
+    div.innerHTML = `<div class="title">${esc(d.name.replace(/\.md$/, ""))}</div>` +
+      (other ? "" : '<button class="del-btn" title="삭제">🗑</button>'); // 남의 글은 지울 수 없다
     div.querySelector(".title").addEventListener("click", () => openDraft(d.name, div));
-    div.querySelector(".del-btn").addEventListener("click", (e) => {
+    div.querySelector(".del-btn")?.addEventListener("click", (e) => {
       e.stopPropagation();
       deleteDraft(d.name);
     });
@@ -155,29 +162,65 @@ async function loadDrafts(selectName) {
     if (selectName && d.name === selectName) div.querySelector(".title").click();
   });
   if (!selectName && drafts.length) list.firstChild.querySelector(".title").click();
+  else if (!drafts.length) clearEditor();
+}
+
+function clearEditor() {
+  currentDraft = null;
+  $("#editor").value = "";
+  $("#draft-keyword").value = "";
+  runValidation();
+}
+
+// 열람 전용 여부를 화면에 반영 (관리자가 남의 초안을 볼 때)
+function setReadOnly(on, who) {
+  $("#editor").readOnly = on;
+  $("#editor").classList.toggle("readonly", on);
+  $("#save-btn").classList.toggle("hidden", on);
+  $("#gen-btn").classList.toggle("hidden", on);
+  $("#import-samples").classList.toggle("hidden", on || !ME?.authOn);
+  const banner = $("#readonly-banner");
+  banner.classList.toggle("hidden", !on);
+  if (on) banner.textContent = `👀 ${who} 님의 초안을 열람 중입니다 — 읽기만 되고 고치거나 지울 수 없습니다.`;
+}
+
+// 관리자 전용: 회원을 골라 그 사람의 초안을 열람
+async function setupOwnerPicker() {
+  const sel = $("#draft-owner");
+  if (!ME?.isAdmin) return;
+  let users = [];
+  try {
+    users = await api("/api/admin/users");
+  } catch {
+    return; // 회원 명부를 못 읽으면 내 초안만 쓰면 된다
+  }
+  sel.innerHTML = '<option value="">📝 내 초안</option>' +
+    users.filter((u) => u.id !== ME.id).map((u) => `<option value="${esc(u.id)}">👀 ${esc(u.email)}</option>`).join("");
+  sel.classList.remove("hidden");
+  sel.addEventListener("change", async () => {
+    viewingUser = sel.value;
+    setReadOnly(viewingOther(), sel.selectedOptions[0].textContent.replace(/^👀 /, ""));
+    clearEditor();
+    await loadDrafts();
+  });
 }
 
 async function deleteDraft(name) {
+  if (viewingOther()) return; // 남의 초안은 지울 수 없다
   if (!confirm(`"${name.replace(/\.md$/, "")}" 초안을 삭제할까요?\n되돌릴 수 없습니다.`)) return;
   try {
     await api(`/api/drafts/${encodeURIComponent(name)}`, { method: "DELETE" });
   } catch (e) {
     return alert("삭제 실패: " + e.message);
   }
-  // 열려 있던 초안을 지웠으면 편집기 비우기
-  if (currentDraft === name) {
-    currentDraft = null;
-    $("#editor").value = "";
-    $("#draft-keyword").value = "";
-    runValidation();
-  }
+  if (currentDraft === name) clearEditor(); // 열려 있던 초안을 지웠으면 편집기 비우기
   await loadDrafts();
 }
 
 async function openDraft(name, el) {
   document.querySelectorAll("#draft-list .side-item").forEach((x) => x.classList.remove("active"));
   if (el) el.classList.add("active");
-  const d = await api(`/api/drafts/${encodeURIComponent(name)}`);
+  const d = await api(draftsUrl(`/api/drafts/${encodeURIComponent(name)}`));
   currentDraft = name;
   $("#editor").value = d.content;
   // 파일명(YYYY-MM-DD_키워드.md)에서 검증용 키워드 추출
@@ -241,6 +284,7 @@ $("#draft-keyword").addEventListener("input", runValidation);
 
 // 저장 / 복사
 $("#save-btn").addEventListener("click", async () => {
+  if (viewingOther()) return alert("다른 회원의 초안은 고칠 수 없습니다");
   if (!currentDraft) return alert("열려 있는 초안이 없습니다");
   await api(`/api/drafts/${encodeURIComponent(currentDraft)}`, {
     method: "PUT",
@@ -350,7 +394,7 @@ async function enterApp() {
     if (ME.isAdmin) $("#admin-tab-btn").classList.remove("hidden");
   }
   updateQuota();
-  await Promise.all([loadRefs(), loadDrafts()]);
+  await Promise.all([loadRefs(), loadDrafts(), setupOwnerPicker()]);
   openTabFromHash(); // 주소에 #drafts 등이 있으면 그 탭으로
 }
 

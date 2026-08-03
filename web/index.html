@@ -85,8 +85,13 @@
       <pre id="gen-output"></pre>
     </div>
     <div class="split">
-      <div id="draft-list" class="side-list"></div>
+      <div class="side-list">
+        <!-- 관리자만 보이는 회원 선택. 남의 초안은 열람만 된다 -->
+        <select id="draft-owner" class="hidden"></select>
+        <div id="draft-list" class="side-list" style="width:auto"></div>
+      </div>
       <div class="editor-wrap">
+        <div id="readonly-banner" class="hidden"></div>
         <div class="editor-tools">
           <input id="draft-keyword" placeholder="검증용 키워드" />
           <button id="save-btn">💾 저장</button>

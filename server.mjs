@@ -4,6 +4,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveDraftView } from "./permissions.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
@@ -469,6 +470,7 @@ const server = http.createServer(async (req, res) => {
       const mk = monthKey();
       const used = p2 && p2.usage_month === mk ? p2.usage_count : 0;
       return json(res, 200, {
+        id: ctx.userId,
         authOn: ctx.authOn,
         isAdmin: ctx.isAdmin,
         approved: ctx.approved,
@@ -505,15 +507,21 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === "/api/references") return json(res, 200, loadReferences());
-    if (p === "/api/drafts" && req.method === "GET") return json(res, 200, await store.list(ctx.userId));
+
+    // 초안을 누구 것으로 볼지 (규칙은 permissions.mjs, 시험은 permissions.test.mjs)
+    const { viewing, readOnly, denied } = resolveDraftView(ctx, url.searchParams.get("user"));
+    if (denied) return json(res, 403, { error: denied });
+
+    if (p === "/api/drafts" && req.method === "GET") return json(res, 200, await store.list(viewing));
     if (p.startsWith("/api/drafts/")) {
       const name = p.slice("/api/drafts/".length);
       if (!validName(name)) return json(res, 400, { error: "잘못된 파일명" });
       if (req.method === "GET") {
-        const content = await store.get(ctx.userId, name);
+        const content = await store.get(viewing, name);
         if (content == null) return json(res, 404, { error: "파일 없음" });
-        return json(res, 200, { name, content });
+        return json(res, 200, { name, content, readOnly });
       }
+      if (readOnly) return json(res, 403, { error: "다른 회원의 초안은 열람만 가능합니다" });
       if (req.method === "PUT") {
         const body = await readBody(req);
         await store.put(ctx.userId, name, body.content ?? "");
