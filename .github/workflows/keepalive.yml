@@ -1,0 +1,19 @@
+# 무료 서버가 잠들지 않게 10분마다 사이트를 한 번 열어본다.
+# (Render 무료 플랜은 15분간 요청이 없으면 잠들고, 다음 접속 때 30~50초 걸린다)
+name: keep-alive
+
+on:
+  schedule:
+    - cron: "*/10 * * * *" # 10분마다
+  workflow_dispatch: # 수동 실행 버튼
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 사이트 깨우기
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 120 https://blogbot-u7s9.onrender.com/)
+          echo "응답 코드: $code"
+          # 서버가 깨어나는 중이어도 실패로 보지 않는다 (다음 주기에 다시 시도)
+          exit 0
