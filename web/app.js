@@ -8,16 +8,18 @@ let supa = null; // Supabase 클라이언트 (인증 ON일 때)
 let ME = null; // 내 계정 상태
 
 // ---------- 탭 (주소 #drafts 처럼 붙여 특정 탭으로 바로 들어올 수 있게) ----------
+const DEFAULT_TAB = "refs";
+
 function showTab(name) {
   const btn = document.querySelector(`.tab-btn[data-tab="${name}"]`);
-  if (!btn || btn.classList.contains("hidden")) return false;
+  // 없는 탭이거나 권한이 없어 숨긴 탭(#admin 등)이면 기본 탭으로 되돌린다
+  if (!btn || btn.classList.contains("hidden")) return name === DEFAULT_TAB ? undefined : showTab(DEFAULT_TAB);
   document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
   document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
   btn.classList.add("active");
   $(`#tab-${name}`).classList.add("active");
   if (name === "insights") renderInsights();
   if (name === "admin") loadAdminUsers();
-  return true;
 }
 
 document.querySelectorAll(".tab-btn").forEach((btn) => {
@@ -28,7 +30,7 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
 });
 
 // 주소의 #탭이름으로 진입 (로그인·승인을 통과한 뒤 호출된다)
-const openTabFromHash = () => showTab(location.hash.replace("#", "") || "refs");
+const openTabFromHash = () => showTab(location.hash.replace("#", "") || DEFAULT_TAB);
 window.addEventListener("hashchange", openTabFromHash);
 
 // ---------- 공용 ----------
@@ -338,11 +340,9 @@ function updateQuota() {
 
 async function enterApp() {
   hideOverlays();
-  if (ME.publicMode) {
-    // 로그인 없는 공개 모드: 계정 표시·회원 관리는 의미가 없고, 견본 가져오기만 노출
-    $("#import-samples").classList.remove("hidden");
-  } else if (ME.authOn) {
-    $("#import-samples").classList.remove("hidden"); // 배포 모드에서만 필요
+  if (ME.authOn) $("#import-samples").classList.remove("hidden"); // 배포 모드에서만 필요
+  // 공개 모드에는 계정이 없으므로 계정 표시·회원 관리는 띄우지 않는다
+  if (ME.authOn && !ME.publicMode) {
     $("#user-chip").classList.remove("hidden");
     $("#user-email").textContent = ME.email || "";
     const badge = $("#user-badge");

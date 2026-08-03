@@ -32,7 +32,6 @@ const AUTH_ON = !!(SUPA_URL && SUPA_ANON && SUPA_SERVICE);
 // (서버 파일에 두면 무료 플랜이 잠들 때마다 초기화되므로).
 const PUBLIC_MODE = process.env.PUBLIC_MODE === "true";
 let supaAdmin = null;
-let SHARED_USER_ID = null;
 if (AUTH_ON) {
   const { createClient } = await import("@supabase/supabase-js");
   supaAdmin = createClient(SUPA_URL, SUPA_SERVICE, { auth: { persistSession: false } });
@@ -44,33 +43,45 @@ if (AUTH_ON) {
 
 // 공개 모드에서 모든 초안을 담을 공용 계정.
 // 첫 요청 때 한 번만 해결한다 — 부팅 시점에 잡으면 Supabase가 잠깐 안 될 때 사이트 전체가 안 뜬다.
-async function sharedUserId() {
-  if (SHARED_USER_ID) return SHARED_USER_ID;
-  const email = "shared@blogbot.local";
-  const { data: list } = await supaAdmin.auth.admin.listUsers({ perPage: 200 });
-  const found = list?.users?.find((u) => u.email === email);
-  if (found) return (SHARED_USER_ID = found.id);
+// 값이 아니라 약속(Promise)을 기억해 둔다. 콜드 스타트 직후 동시 요청이 계정을 중복 생성하지 않게.
+const SHARED_EMAIL = "shared@blogbot.local";
+let sharedUserP = null;
+const sharedUserId = () => (sharedUserP ??= resolveSharedUser());
+
+async function resolveSharedUser() {
+  // 프로필 표에 이메일로 한 줄만 물어본다 (auth 사용자 목록은 페이지 단위라 회원이 늘면 못 찾는다)
+  const { data: row } = await supaAdmin.from("profiles").select("id").eq("email", SHARED_EMAIL).maybeSingle();
+  if (row) return row.id;
   const { data, error } = await supaAdmin.auth.admin.createUser({
-    email,
+    email: SHARED_EMAIL,
     password: crypto.randomUUID(),
     email_confirm: true,
   });
-  if (error) throw new Error(`공용 계정 준비 실패: ${error.message}`);
-  return (SHARED_USER_ID = data.user.id);
+  if (error) {
+    sharedUserP = null; // 실패는 기억하지 않는다 — 다음 요청에서 다시 시도
+    throw new Error(`공용 계정 준비 실패: ${error.message}`);
+  }
+  return data.user.id;
 }
 
 const monthKey = () => new Date().toISOString().slice(0, 7); // YYYY-MM
 
-// 요청 컨텍스트: { authOn, isAdmin, approved, profile, userId }
-const ANON_CTX = { authOn: true, isAdmin: false, approved: false, profile: null, uid: async () => null };
+// 요청 컨텍스트 — 평범한 데이터. 필드 뜻:
+//   isAdmin   회원 관리 권한 (관리자 전용 화면·안내문의 기준)
+//   approved  레퍼런스·초안을 쓸 수 있는가
+//   unlimited 월 생성 한도를 적용하지 않는가
+//   needsLogin 로그인부터 해야 하는가
+//   userId    초안 주인. 공개 모드는 null → 저장소가 공용 계정으로 해석한다
+const ANON_CTX = { authOn: true, isAdmin: false, approved: false, unlimited: false, needsLogin: true, profile: null, userId: null };
 async function context(req) {
   if (!AUTH_ON) {
     // 로컬 단독 모드: 관리자로 취급, 초안은 로컬 파일(기존 견본 포함)
-    return { authOn: false, isAdmin: true, approved: true, profile: null, uid: async () => null };
+    return { authOn: false, isAdmin: true, approved: true, unlimited: true, needsLogin: false, profile: null, userId: null };
   }
   if (PUBLIC_MODE) {
-    // 로그인 없이 통과. 저장은 Supabase 공용 계정으로 (초안이 사라지지 않게)
-    return { authOn: true, isAdmin: true, approved: true, profile: null, uid: sharedUserId, publicMode: true };
+    // 로그인 없이 통과. 저장은 Supabase 공용 계정으로 (초안이 사라지지 않게).
+    // 관리자 권한은 주지 않는다 — 회원 목록·등급 변경은 로그인한 관리자만.
+    return { authOn: true, isAdmin: false, approved: true, unlimited: true, needsLogin: false, profile: null, userId: null };
   }
   const auth = req.headers["authorization"] || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
@@ -85,7 +96,7 @@ async function context(req) {
   }
   const isAdmin = profile?.role === "admin";
   const approved = isAdmin || profile?.status === "approved";
-  return { authOn: true, isAdmin, approved, profile, uid: async () => data.user.id };
+  return { authOn: true, isAdmin, approved, unlimited: isAdmin, needsLogin: !profile, profile, userId: data.user.id };
 }
 
 // ---------- 공용 유틸 ----------
@@ -211,28 +222,36 @@ const fileStore = {
 };
 
 // Supabase 저장소 (drafts 테이블, user_id별)
+// 공개 모드에서는 주인이 없으므로(uid=null) 공용 계정으로 해석한다 — 호출하는 쪽은 신경 쓰지 않는다.
+const owner = async (uid) => {
+  if (uid) return uid;
+  if (!PUBLIC_MODE) throw new Error("초안 주인을 알 수 없습니다");
+  return sharedUserId();
+};
+
 const supaStore = {
   async list(uid) {
-    const { data } = await supaAdmin.from("drafts").select("name,updated_at").eq("user_id", uid).order("updated_at", { ascending: false });
+    const { data } = await supaAdmin.from("drafts").select("name,updated_at").eq("user_id", await owner(uid)).order("updated_at", { ascending: false });
     return (data || []).map((d) => ({ name: d.name, mtime: new Date(d.updated_at).getTime() }));
   },
   async get(uid, name) {
-    const { data } = await supaAdmin.from("drafts").select("content").eq("user_id", uid).eq("name", name).maybeSingle();
+    const { data } = await supaAdmin.from("drafts").select("content").eq("user_id", await owner(uid)).eq("name", name).maybeSingle();
     return data ? data.content : null;
   },
   async put(uid, name, content) {
     await supaAdmin.from("drafts").upsert(
-      { user_id: uid, name, content: content ?? "", updated_at: new Date().toISOString() },
+      { user_id: await owner(uid), name, content: content ?? "", updated_at: new Date().toISOString() },
       { onConflict: "user_id,name" }
     );
   },
   async del(uid, name) {
-    await supaAdmin.from("drafts").delete().eq("user_id", uid).eq("name", name);
+    await supaAdmin.from("drafts").delete().eq("user_id", await owner(uid)).eq("name", name);
   },
   async create(uid, base, content) {
-    const { data } = await supaAdmin.from("drafts").select("name").eq("user_id", uid).like("name", `${base}%`);
+    const id = await owner(uid);
+    const { data } = await supaAdmin.from("drafts").select("name").eq("user_id", id).like("name", `${base}%`);
     const file = pickName(base, new Set((data || []).map((d) => d.name)));
-    await supaAdmin.from("drafts").insert({ user_id: uid, name: file, content });
+    await supaAdmin.from("drafts").insert({ user_id: id, name: file, content });
     return file;
   },
 };
@@ -257,7 +276,7 @@ async function importSamples(uid) {
 
 async function draftCreate(ctx, keyword, title, body, v) {
   const base = `${new Date().toISOString().slice(0, 10)}_${keyword.replace(/[\/\s]+/g, "-")}`;
-  return store.create(await ctx.uid(), base, buildDraftContent(keyword, title, body, v));
+  return store.create(ctx.userId, base, buildDraftContent(keyword, title, body, v));
 }
 
 // ---------- AI 생성 ----------
@@ -341,7 +360,7 @@ async function streamOnce(client, messages, send) {
 
 // 월 한도 확인·차감 (level1만). 통과 시 남은 횟수 반환, 초과 시 null.
 async function consumeQuota(ctx) {
-  if (!ctx.authOn || ctx.isAdmin) return { unlimited: true };
+  if (ctx.unlimited) return { unlimited: true };
   const p = ctx.profile;
   const mk = monthKey();
   const used = p.usage_month === mk ? p.usage_count : 0;
@@ -467,7 +486,7 @@ const server = http.createServer(async (req, res) => {
   try {
     // --- 공개 API ---
     if (p === "/api/config")
-      return json(res, 200, { ...CONFIG, auth: { enabled: AUTH_ON && !PUBLIC_MODE, publicMode: PUBLIC_MODE, supabaseUrl: SUPA_URL, supabaseAnonKey: SUPA_ANON } });
+      return json(res, 200, { ...CONFIG, auth: { enabled: AUTH_ON && !PUBLIC_MODE, supabaseUrl: SUPA_URL, supabaseAnonKey: SUPA_ANON } });
 
     // --- 인증 컨텍스트 (API 요청에만 필요 — 정적 파일은 거치지 않는다) ---
     if (!p.startsWith("/api/")) return serveStatic(res, p);
@@ -475,21 +494,21 @@ const server = http.createServer(async (req, res) => {
 
     // 내 계정 상태
     if (p === "/api/me") {
-      if (ctx.authOn && !ctx.publicMode && !ctx.profile) return json(res, 401, { error: "로그인이 필요합니다" });
+      if (ctx.needsLogin) return json(res, 401, { error: "로그인이 필요합니다" });
       const p2 = ctx.profile;
       const mk = monthKey();
       const used = p2 && p2.usage_month === mk ? p2.usage_count : 0;
       return json(res, 200, {
-        publicMode: !!ctx.publicMode,
+        publicMode: PUBLIC_MODE,
         authOn: ctx.authOn,
         isAdmin: ctx.isAdmin,
         approved: ctx.approved,
         email: p2?.email || null,
         role: ctx.isAdmin ? "admin" : p2?.role || "admin",
-        status: ctx.isAdmin ? "approved" : p2?.status || "approved",
-        limit: ctx.isAdmin ? null : p2?.monthly_limit ?? null,
-        used: ctx.isAdmin ? null : used,
-        remaining: ctx.isAdmin ? null : Math.max(0, (p2?.monthly_limit ?? 0) - used),
+        status: ctx.approved ? "approved" : p2?.status || "pending",
+        limit: ctx.unlimited ? null : p2?.monthly_limit ?? null,
+        used: ctx.unlimited ? null : used,
+        remaining: ctx.unlimited ? null : Math.max(0, (p2?.monthly_limit ?? 0) - used),
       });
     }
 
@@ -497,7 +516,8 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/admin/users") {
       if (!ctx.isAdmin) return json(res, 403, { error: "관리자 전용" });
       if (req.method === "GET") {
-        const { data } = await supaAdmin.from("profiles").select("*").order("created_at", { ascending: false });
+        // 공용 계정은 사람이 아니므로 회원 목록에서 뺀다 (승인 대기로 보이면 헷갈린다)
+        const { data } = await supaAdmin.from("profiles").select("*").neq("email", SHARED_EMAIL).order("created_at", { ascending: false });
         return json(res, 200, data || []);
       }
       if (req.method === "POST") {
@@ -512,27 +532,27 @@ const server = http.createServer(async (req, res) => {
 
     // --- 승인된 사용자만: 레퍼런스·초안·생성 ---
     if (p === "/api/references" || p.startsWith("/api/drafts") || p === "/api/generate" || p.startsWith("/api/samples")) {
-      if (ctx.authOn && !ctx.publicMode && !ctx.profile) return json(res, 401, { error: "로그인이 필요합니다" });
+      if (ctx.needsLogin) return json(res, 401, { error: "로그인이 필요합니다" });
       if (!ctx.approved) return json(res, 403, { error: "승인 대기 중입니다. 관리자 승인 후 이용할 수 있어요." });
     }
 
     if (p === "/api/references") return json(res, 200, loadReferences());
-    if (p === "/api/drafts" && req.method === "GET") return json(res, 200, await store.list(await ctx.uid()));
+    if (p === "/api/drafts" && req.method === "GET") return json(res, 200, await store.list(ctx.userId));
     if (p.startsWith("/api/drafts/")) {
       const name = p.slice("/api/drafts/".length);
       if (!validName(name)) return json(res, 400, { error: "잘못된 파일명" });
       if (req.method === "GET") {
-        const content = await store.get(await ctx.uid(), name);
+        const content = await store.get(ctx.userId, name);
         if (content == null) return json(res, 404, { error: "파일 없음" });
         return json(res, 200, { name, content });
       }
       if (req.method === "PUT") {
         const body = await readBody(req);
-        await store.put(await ctx.uid(), name, body.content ?? "");
+        await store.put(ctx.userId, name, body.content ?? "");
         return json(res, 200, { ok: true });
       }
       if (req.method === "DELETE") {
-        await store.del(await ctx.uid(), name);
+        await store.del(ctx.userId, name);
         return json(res, 200, { ok: true });
       }
     }
@@ -543,7 +563,7 @@ const server = http.createServer(async (req, res) => {
     // 견본 초안 가져오기 (배포 모드에서 회원이 견본을 자기 계정으로 복사)
     if (p === "/api/samples/import" && req.method === "POST") {
       if (!ctx.authOn) return json(res, 400, { error: "로컬 모드에서는 견본이 이미 목록에 있습니다" });
-      const added = await importSamples(await ctx.uid());
+      const added = await importSamples(ctx.userId);
       return json(res, 200, { added });
     }
 
