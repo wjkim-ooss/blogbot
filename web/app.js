@@ -7,17 +7,29 @@ let authToken = null; // 로그인 후 Supabase 액세스 토큰
 let supa = null; // Supabase 클라이언트 (인증 ON일 때)
 let ME = null; // 내 계정 상태
 
-// ---------- 탭 ----------
+// ---------- 탭 (주소 #drafts 처럼 붙여 특정 탭으로 바로 들어올 수 있게) ----------
+function showTab(name) {
+  const btn = document.querySelector(`.tab-btn[data-tab="${name}"]`);
+  if (!btn || btn.classList.contains("hidden")) return false;
+  document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+  document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+  btn.classList.add("active");
+  $(`#tab-${name}`).classList.add("active");
+  if (name === "insights") renderInsights();
+  if (name === "admin") loadAdminUsers();
+  return true;
+}
+
 document.querySelectorAll(".tab-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
-    document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
-    btn.classList.add("active");
-    $(`#tab-${btn.dataset.tab}`).classList.add("active");
-    if (btn.dataset.tab === "insights") renderInsights();
-    if (btn.dataset.tab === "admin") loadAdminUsers();
+    showTab(btn.dataset.tab);
+    history.replaceState(null, "", `#${btn.dataset.tab}`); // 새로고침·공유해도 같은 탭
   });
 });
+
+// 주소의 #탭이름으로 진입 (로그인·승인을 통과한 뒤 호출된다)
+const openTabFromHash = () => showTab(location.hash.replace("#", "") || "refs");
+window.addEventListener("hashchange", openTabFromHash);
 
 // ---------- 공용 ----------
 const api = async (url, opts = {}) => {
@@ -326,7 +338,10 @@ function updateQuota() {
 
 async function enterApp() {
   hideOverlays();
-  if (ME.authOn) {
+  if (ME.publicMode) {
+    // 로그인 없는 공개 모드: 계정 표시·회원 관리는 의미가 없고, 견본 가져오기만 노출
+    $("#import-samples").classList.remove("hidden");
+  } else if (ME.authOn) {
     $("#import-samples").classList.remove("hidden"); // 배포 모드에서만 필요
     $("#user-chip").classList.remove("hidden");
     $("#user-email").textContent = ME.email || "";
@@ -337,6 +352,7 @@ async function enterApp() {
   }
   updateQuota();
   await Promise.all([loadRefs(), loadDrafts()]);
+  openTabFromHash(); // 주소에 #drafts 등이 있으면 그 탭으로
 }
 
 async function gateByStatus() {
@@ -455,7 +471,7 @@ $("#auth-pw").addEventListener("keydown", (e) => { if (e.key === "Enter") authAc
 (async () => {
   CONFIG = await api("/api/config");
   if (!CONFIG.auth?.enabled) {
-    // 로컬 단독 모드: 로그인 없이 관리자로 바로 입장
+    // 로컬 단독 모드 또는 공개 모드: 로그인 없이 바로 입장
     ME = await api("/api/me");
     return enterApp();
   }

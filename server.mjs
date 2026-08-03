@@ -28,23 +28,49 @@ const SUPA_URL = process.env.SUPABASE_URL || "";
 const SUPA_ANON = process.env.SUPABASE_ANON_KEY || "";
 const SUPA_SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const AUTH_ON = !!(SUPA_URL && SUPA_ANON && SUPA_SERVICE);
+// PUBLIC_MODE=true → 로그인 없이 누구나 바로 사용. 초안은 공용 계정으로 Supabase에 계속 보관된다
+// (서버 파일에 두면 무료 플랜이 잠들 때마다 초기화되므로).
+const PUBLIC_MODE = process.env.PUBLIC_MODE === "true";
 let supaAdmin = null;
+let SHARED_USER_ID = null;
 if (AUTH_ON) {
   const { createClient } = await import("@supabase/supabase-js");
   supaAdmin = createClient(SUPA_URL, SUPA_SERVICE, { auth: { persistSession: false } });
-  console.log("인증 ON — Supabase 로그인·승인·등급 활성화");
+  if (PUBLIC_MODE) console.log("공개 모드 — 로그인 없이 사용, 초안은 공용 계정에 보관");
+  else console.log("인증 ON — Supabase 로그인·승인·등급 활성화");
 } else {
   console.log("인증 OFF — 관리자 단독 로컬 모드 (Supabase 미설정)");
+}
+
+// 공개 모드에서 모든 초안을 담을 공용 계정.
+// 첫 요청 때 한 번만 해결한다 — 부팅 시점에 잡으면 Supabase가 잠깐 안 될 때 사이트 전체가 안 뜬다.
+async function sharedUserId() {
+  if (SHARED_USER_ID) return SHARED_USER_ID;
+  const email = "shared@blogbot.local";
+  const { data: list } = await supaAdmin.auth.admin.listUsers({ perPage: 200 });
+  const found = list?.users?.find((u) => u.email === email);
+  if (found) return (SHARED_USER_ID = found.id);
+  const { data, error } = await supaAdmin.auth.admin.createUser({
+    email,
+    password: crypto.randomUUID(),
+    email_confirm: true,
+  });
+  if (error) throw new Error(`공용 계정 준비 실패: ${error.message}`);
+  return (SHARED_USER_ID = data.user.id);
 }
 
 const monthKey = () => new Date().toISOString().slice(0, 7); // YYYY-MM
 
 // 요청 컨텍스트: { authOn, isAdmin, approved, profile, userId }
-const ANON_CTX = { authOn: true, isAdmin: false, approved: false, profile: null, userId: null };
+const ANON_CTX = { authOn: true, isAdmin: false, approved: false, profile: null, uid: async () => null };
 async function context(req) {
   if (!AUTH_ON) {
     // 로컬 단독 모드: 관리자로 취급, 초안은 로컬 파일(기존 견본 포함)
-    return { authOn: false, isAdmin: true, approved: true, profile: null, userId: null };
+    return { authOn: false, isAdmin: true, approved: true, profile: null, uid: async () => null };
+  }
+  if (PUBLIC_MODE) {
+    // 로그인 없이 통과. 저장은 Supabase 공용 계정으로 (초안이 사라지지 않게)
+    return { authOn: true, isAdmin: true, approved: true, profile: null, uid: sharedUserId, publicMode: true };
   }
   const auth = req.headers["authorization"] || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
@@ -59,7 +85,7 @@ async function context(req) {
   }
   const isAdmin = profile?.role === "admin";
   const approved = isAdmin || profile?.status === "approved";
-  return { authOn: true, isAdmin, approved, profile, userId: data.user.id };
+  return { authOn: true, isAdmin, approved, profile, uid: async () => data.user.id };
 }
 
 // ---------- 공용 유틸 ----------
@@ -97,70 +123,30 @@ function validateDraft(text, keyword) {
 }
 
 // ---------- 레퍼런스 ----------
-// 파일명이 `YYYY-MM-DD_키워드.확장자`라 이름만으로 키워드별 최신본을 고를 수 있다.
-// 먼저 이름으로 추린 뒤 필요한 파일만 파싱한다 (전체를 읽고 버리지 않음).
+// 파일명 앞 10자리 날짜로 오래된 순 정렬한 뒤, 키워드는 파일 '내용'으로 판별한다.
+// (파일명의 한글은 업로드 경로에 따라 자모 분리형이 될 수 있어 키로 쓰지 않는다)
 function loadReferences() {
   if (!fs.existsSync(REF_DIR)) return [];
-  const files = fs.readdirSync(REF_DIR).sort(); // 날짜 접두사 → 사전순 = 오래된 순
-  const jsonSet = new Set(files.filter((f) => f.endsWith(".json")));
-  const newest = new Map(); // 키워드 슬러그 → 파일명 (뒤에서 덮어쓰므로 최신이 남음)
-  for (const f of files) {
-    if (f.endsWith(".json")) newest.set(f.slice(11, -5), f);
-    else if (f.endsWith(".md") && !jsonSet.has(f.replace(/\.md$/, ".json"))) newest.set(f.slice(11, -3), f);
-  }
-  const refs = [];
-  for (const f of newest.values()) {
+  const newest = new Map(); // 키워드 → 레퍼런스 (뒤에서 덮어쓰므로 최신 수집분이 남음)
+  for (const f of fs.readdirSync(REF_DIR).filter((f) => f.endsWith(".json")).sort()) {
     try {
-      if (f.endsWith(".json")) refs.push({ file: f, ...JSON.parse(fs.readFileSync(path.join(REF_DIR, f), "utf8")) });
-      else {
-        const parsed = parseRefMd(fs.readFileSync(path.join(REF_DIR, f), "utf8"), f);
-        if (parsed) refs.push(parsed);
-      }
+      const r = { file: f, ...JSON.parse(fs.readFileSync(path.join(REF_DIR, f), "utf8")) };
+      if (r.keyword) newest.set(r.keyword.normalize("NFC"), r);
     } catch { /* 깨진 파일은 건너뜀 */ }
   }
-  return refs.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  return [...newest.values()].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 }
 
-// crawl.mjs가 예전에 저장한 md 포맷 파서 (json이 없는 파일용)
-function parseRefMd(md, file) {
-  const keyword = md.match(/^# 레퍼런스: (.+)$/m)?.[1]?.trim();
-  if (!keyword) return null;
-  const date = md.match(/수집일: (\d{4}-\d{2}-\d{2})/)?.[1] || "";
-  const avgChars = Number(md.match(/평균 글자수\(공백제외\): (\d+)자/)?.[1] || 0);
-  const avgImages = Number(md.match(/평균 이미지: (\d+)장/)?.[1] || 0);
-  const posts = [];
-  for (const sec of md.split(/\n### /).slice(1)) {
-    const lines = sec.split("\n");
-    const title = lines[0].replace(/^\d+\.\s*/, "").trim();
-    const url = sec.match(/- (https?:\/\/\S+)/)?.[1] || "";
-    const text = sec.split("\n\n").slice(2).join("\n\n").split("\n## ")[0].trim();
-    posts.push({ title, url, chars: noSpace(text), images: 0, text });
-  }
-  const rows = md.match(/^\| \d+ \|.+\|$/gm) || [];
-  rows.forEach((row, i) => {
-    const cells = row.split("|").map((c) => c.trim());
-    if (posts[i]) {
-      posts[i].chars = Number(cells[3]) || posts[i].chars;
-      posts[i].images = Number(cells[4]) || 0;
-    }
-  });
-  return { file, keyword, date, avgChars, avgImages, posts, failed: [] };
-}
-
-// 생성용: 해당 키워드 파일만 읽는다 (전체 코퍼스를 파싱하지 않음)
+// 생성용: 파일명이 아니라 파일 안의 keyword로 찾는다.
+// (파일명에 한글이 들어가는데, 업로드 경로에 따라 자모 분리형으로 바뀔 수 있어 이름 비교는 조용히 실패한다)
 function findReference(keyword) {
   if (!fs.existsSync(REF_DIR)) return null;
-  const safeKw = keyword.replace(/[\/\s]+/g, "-");
-  const files = fs.readdirSync(REF_DIR);
-  for (const f of files.filter((f) => f.endsWith(`_${safeKw}.json`)).sort().reverse()) {
+  const want = keyword.normalize("NFC");
+  for (const f of fs.readdirSync(REF_DIR).filter((f) => f.endsWith(".json")).sort().reverse()) {
     try {
       const r = JSON.parse(fs.readFileSync(path.join(REF_DIR, f), "utf8"));
-      if (r.keyword === keyword) return { file: f, ...r };
+      if (r.keyword?.normalize("NFC") === want) return { file: f, ...r };
     } catch { /* 깨진 파일 무시 */ }
-  }
-  for (const f of files.filter((f) => f.endsWith(`_${safeKw}.md`) && !files.includes(f.replace(/\.md$/, ".json")))) {
-    const parsed = parseRefMd(fs.readFileSync(path.join(REF_DIR, f), "utf8"), f);
-    if (parsed?.keyword === keyword) return parsed;
   }
   return null;
 }
@@ -254,7 +240,7 @@ const supaStore = {
 // 저장 백엔드는 시작 시 한 번 결정 (인증 ON=Supabase, OFF=로컬 파일)
 const store = AUTH_ON ? supaStore : fileStore;
 
-// 견본 초안 = 저장소(git)에 함께 배포되는 초안/*.md — 배포 모드에서 각 회원 계정으로 복사해 준다
+// 견본 초안 = 저장소(git)에 함께 배포되는 drafts/*.md — 배포 모드에서 각 회원 계정으로 복사해 준다
 const listSamples = () =>
   fs.existsSync(DRAFT_DIR) ? fs.readdirSync(DRAFT_DIR).filter((f) => f.endsWith(".md")) : [];
 
@@ -269,9 +255,9 @@ async function importSamples(uid) {
   return added;
 }
 
-function draftCreate(ctx, keyword, title, body, v) {
+async function draftCreate(ctx, keyword, title, body, v) {
   const base = `${new Date().toISOString().slice(0, 10)}_${keyword.replace(/[\/\s]+/g, "-")}`;
-  return store.create(ctx.userId, base, buildDraftContent(keyword, title, body, v));
+  return store.create(await ctx.uid(), base, buildDraftContent(keyword, title, body, v));
 }
 
 // ---------- AI 생성 ----------
@@ -371,15 +357,20 @@ async function handleGenerate(res, body, ctx) {
     Connection: "keep-alive",
   });
   const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  const fail = (message) => {
+    send({ type: "error", message });
+    return res.end();
+  };
   try {
     const keyword = (body.keyword || "").trim();
-    if (!keyword) throw new Error("키워드를 입력하세요");
+    if (!keyword) return fail("키워드를 입력하세요");
+    // 키 유무는 오류가 아니라 사전 조건 — 실패를 기다리지 않고 여기서 걸러낸다
+    if (!process.env.ANTHROPIC_API_KEY)
+      return fail(adminHint(ctx, "AI 생성이 아직 설정되지 않았습니다.", "서버에 ANTHROPIC_API_KEY 환경변수를 추가하세요."));
 
     const quota = await consumeQuota(ctx);
-    if (quota === null) {
-      send({ type: "error", message: `이번 달 초안 생성 한도(${ctx.profile.monthly_limit}회)를 모두 사용했습니다. 다음 달에 초기화됩니다.` });
-      return res.end();
-    }
+    if (quota === null)
+      return fail(`이번 달 초안 생성 한도(${ctx.profile.monthly_limit}회)를 모두 사용했습니다. 다음 달에 초기화됩니다.`);
     const ref = findReference(keyword);
     send({
       type: "status",
@@ -412,14 +403,27 @@ async function handleGenerate(res, body, ctx) {
     const file = await draftCreate(ctx, keyword, parsed.title, parsed.body, validation);
     send({ type: "done", file, validation, quota });
   } catch (e) {
-    const raw = String(e?.message || e);
-    const message = /api[_ ]?key|authentication|401|credential/i.test(raw)
-      ? "API 키가 없습니다. 블로그봇/.env 파일을 만들어 ANTHROPIC_API_KEY=발급받은키 한 줄을 직접 입력한 뒤 서버를 재시작하세요. 키 발급: console.anthropic.com → API Keys"
-      : raw;
-    send({ type: "error", message });
+    console.error("[generate 실패]", e); // 상세 원인은 서버 로그에 남긴다
+    send({ type: "error", message: describeError(e, ctx) });
   } finally {
     res.end();
   }
+}
+
+// 회원에게는 무슨 일인지, 관리자에게는 조치 방법까지 (운영 안내를 일반 회원에게 노출하지 않는다)
+const adminHint = (ctx, msg, hint) => (ctx.isAdmin || !ctx.authOn ? `${msg} ${hint}` : `${msg} 관리자에게 문의해 주세요.`);
+
+// SDK가 주는 status/type으로 분류한다 (영문 메시지 문자열 매칭은 계약이 아니다)
+function describeError(e, ctx) {
+  const type = e?.type;
+  const status = e?.status;
+  if (type === "authentication_error" || status === 401)
+    return adminHint(ctx, "AI 생성 인증에 실패했습니다.", "ANTHROPIC_API_KEY 값이 올바른지 확인하세요.");
+  if (type === "billing_error" || status === 403)
+    return adminHint(ctx, "AI 생성을 사용할 수 없습니다(결제 문제).", "console.anthropic.com → Billing 에서 크레딧을 충전하세요.");
+  if (type === "rate_limit_error" || status === 429)
+    return "요청이 잠시 몰렸습니다. 1~2분 뒤 다시 시도해 주세요.";
+  return adminHint(ctx, "생성 중 오류가 발생했습니다.", `상세: ${String(e?.message || e)}`);
 }
 
 function parseDraftOutput(text, keyword) {
@@ -434,6 +438,14 @@ const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css
 function json(res, code, data) {
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(data));
+}
+
+function serveStatic(res, p) {
+  const filePath = path.join(WEB, p === "/" ? "index.html" : p);
+  if (!filePath.startsWith(WEB)) return json(res, 403, { error: "forbidden" });
+  if (!fs.existsSync(filePath)) return json(res, 404, { error: "not found" });
+  res.writeHead(200, { "Content-Type": `${MIME[path.extname(filePath)] || "text/plain"}; charset=utf-8` });
+  res.end(fs.readFileSync(filePath));
 }
 
 function readBody(req) {
@@ -455,18 +467,20 @@ const server = http.createServer(async (req, res) => {
   try {
     // --- 공개 API ---
     if (p === "/api/config")
-      return json(res, 200, { ...CONFIG, auth: { enabled: AUTH_ON, supabaseUrl: SUPA_URL, supabaseAnonKey: SUPA_ANON } });
+      return json(res, 200, { ...CONFIG, auth: { enabled: AUTH_ON && !PUBLIC_MODE, publicMode: PUBLIC_MODE, supabaseUrl: SUPA_URL, supabaseAnonKey: SUPA_ANON } });
 
-    // --- 인증 컨텍스트 ---
+    // --- 인증 컨텍스트 (API 요청에만 필요 — 정적 파일은 거치지 않는다) ---
+    if (!p.startsWith("/api/")) return serveStatic(res, p);
     const ctx = await context(req);
 
     // 내 계정 상태
     if (p === "/api/me") {
-      if (ctx.authOn && !ctx.profile) return json(res, 401, { error: "로그인이 필요합니다" });
+      if (ctx.authOn && !ctx.publicMode && !ctx.profile) return json(res, 401, { error: "로그인이 필요합니다" });
       const p2 = ctx.profile;
       const mk = monthKey();
       const used = p2 && p2.usage_month === mk ? p2.usage_count : 0;
       return json(res, 200, {
+        publicMode: !!ctx.publicMode,
         authOn: ctx.authOn,
         isAdmin: ctx.isAdmin,
         approved: ctx.approved,
@@ -498,27 +512,27 @@ const server = http.createServer(async (req, res) => {
 
     // --- 승인된 사용자만: 레퍼런스·초안·생성 ---
     if (p === "/api/references" || p.startsWith("/api/drafts") || p === "/api/generate" || p.startsWith("/api/samples")) {
-      if (ctx.authOn && !ctx.profile) return json(res, 401, { error: "로그인이 필요합니다" });
+      if (ctx.authOn && !ctx.publicMode && !ctx.profile) return json(res, 401, { error: "로그인이 필요합니다" });
       if (!ctx.approved) return json(res, 403, { error: "승인 대기 중입니다. 관리자 승인 후 이용할 수 있어요." });
     }
 
     if (p === "/api/references") return json(res, 200, loadReferences());
-    if (p === "/api/drafts" && req.method === "GET") return json(res, 200, await store.list(ctx.userId));
+    if (p === "/api/drafts" && req.method === "GET") return json(res, 200, await store.list(await ctx.uid()));
     if (p.startsWith("/api/drafts/")) {
       const name = p.slice("/api/drafts/".length);
       if (!validName(name)) return json(res, 400, { error: "잘못된 파일명" });
       if (req.method === "GET") {
-        const content = await store.get(ctx.userId, name);
+        const content = await store.get(await ctx.uid(), name);
         if (content == null) return json(res, 404, { error: "파일 없음" });
         return json(res, 200, { name, content });
       }
       if (req.method === "PUT") {
         const body = await readBody(req);
-        await store.put(ctx.userId, name, body.content ?? "");
+        await store.put(await ctx.uid(), name, body.content ?? "");
         return json(res, 200, { ok: true });
       }
       if (req.method === "DELETE") {
-        await store.del(ctx.userId, name);
+        await store.del(await ctx.uid(), name);
         return json(res, 200, { ok: true });
       }
     }
@@ -529,16 +543,11 @@ const server = http.createServer(async (req, res) => {
     // 견본 초안 가져오기 (배포 모드에서 회원이 견본을 자기 계정으로 복사)
     if (p === "/api/samples/import" && req.method === "POST") {
       if (!ctx.authOn) return json(res, 400, { error: "로컬 모드에서는 견본이 이미 목록에 있습니다" });
-      const added = await importSamples(ctx.userId);
+      const added = await importSamples(await ctx.uid());
       return json(res, 200, { added });
     }
 
-    // --- 정적 파일 ---
-    let filePath = path.join(WEB, p === "/" ? "index.html" : p);
-    if (!filePath.startsWith(WEB)) return json(res, 403, { error: "forbidden" });
-    if (!fs.existsSync(filePath)) return json(res, 404, { error: "not found" });
-    res.writeHead(200, { "Content-Type": `${MIME[path.extname(filePath)] || "text/plain"}; charset=utf-8` });
-    res.end(fs.readFileSync(filePath));
+    return json(res, 404, { error: "not found" });
   } catch (e) {
     json(res, 500, { error: String(e?.message || e) });
   }

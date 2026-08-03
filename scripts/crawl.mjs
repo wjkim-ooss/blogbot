@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CDP_URL = "http://127.0.0.1:9222";
 const CHROME_BIN = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const REF_DIR = path.join(ROOT, "references");
 const PROFILE_DIR = path.join(ROOT, ".chrome-profile"); // 사용중인 크롬과 충돌하지 않도록 전용 프로필 사용
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -47,7 +48,7 @@ async function ensureChrome() {
 }
 
 // 네이버 검색 블로그탭에서 상위노출된 글 URL 수집
-async function collectTopUrls(page, keyword, limit) {
+async function collectTopUrls(page, keyword) {
   const url = `https://search.naver.com/search.naver?ssc=tab.blog.all&query=${encodeURIComponent(keyword)}`;
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
   await page.waitForTimeout(2000);
@@ -69,7 +70,7 @@ async function collectTopUrls(page, keyword, limit) {
 
 // 같은 키워드의 기존 레퍼런스(json) 로드 — append 모드에서 병합·중복제거에 사용
 function loadExisting(safeKw) {
-  const dir = path.join(ROOT, "references");
+  const dir = REF_DIR;
   if (!fs.existsSync(dir)) return { posts: [] };
   const files = fs.readdirSync(dir).filter((f) => f.endsWith(`_${safeKw}.json`)).sort();
   if (!files.length) return { posts: [] };
@@ -135,12 +136,14 @@ function charCountNoSpace(text) {
 }
 
 // ---------- 글 품질 점수 (후보를 많이 모아 좋은 글만 채택할 때 사용) ----------
-// 기준·가중치는 전부 기준.json의 품질점수 블록에서 읽는다 (검증 규칙과 같은 자리에서 조정)
+// 기준·가중치는 전부 config.json의 품질점수 블록에서 읽는다 (검증 규칙과 같은 자리에서 조정)
 const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
 const Q = CONFIG.품질점수;
 const MIN_SCORE = Q.최소점수;
 const 구체성RX = new RegExp(Q.구체성패턴, "g");
 
+// 점수 없는 옛 글은 undefined < n === false 라 유지된다
+const belowMin = (p) => p.score < MIN_SCORE;
 const dropLine = (p) => `기준 미달 제외: ${p.score}점 (추상어 ${p.abstract}개) — ${p.title.slice(0, 45)}`;
 
 function scorePost(text) {
@@ -162,7 +165,7 @@ function scorePost(text) {
 // 레퍼런스 md + json 저장 (신규 수집·재정리가 같은 경로를 쓴다)
 function saveReference(keyword, safeKw, posts, failed = [], keptFromBefore = 0) {
   const today = new Date().toISOString().slice(0, 10);
-  const outPath = path.join(ROOT, "references", `${today}_${safeKw}.md`);
+  const outPath = path.join(REF_DIR, `${today}_${safeKw}.md`);
   const avg = (arr) => (arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0);
   const avgChars = avg(posts.map((p) => p.chars));
   const avgImages = avg(posts.map((p) => p.images));
@@ -189,13 +192,12 @@ function saveReference(keyword, safeKw, posts, failed = [], keptFromBefore = 0) 
   );
 
   // 같은 키워드의 지난 파일은 이번 파일의 부분집합 → 보관함으로 옮겨 중복 적재를 막는다
-  const refDir = path.join(ROOT, "references");
-  const archive = path.join(refDir, "archive");
-  const olds = fs.readdirSync(refDir).filter((f) => /\.(md|json)$/.test(f) && f.endsWith(`_${safeKw}${path.extname(f)}`) && !f.startsWith(today));
+  const archive = path.join(REF_DIR, "archive");
+  const olds = fs.readdirSync(REF_DIR).filter((f) => /\.(md|json)$/.test(f) && f.endsWith(`_${safeKw}${path.extname(f)}`) && !f.startsWith(today));
   if (olds.length) {
     fs.mkdirSync(archive, { recursive: true });
-    olds.forEach((f) => fs.renameSync(path.join(refDir, f), path.join(archive, f)));
-    console.log(`지난 수집분 ${olds.length}개를 레퍼런스/archive/로 이동`);
+    olds.forEach((f) => fs.renameSync(path.join(REF_DIR, f), path.join(archive, f)));
+    console.log(`지난 수집분 ${olds.length}개를 references/archive/로 이동`);
   }
   console.log(`저장 완료: ${outPath} (총 ${posts.length}개)`);
 }
@@ -215,10 +217,10 @@ async function main() {
   // refilter: 이미 수집한 레퍼런스에서 최소 점수 미달 글만 걷어낸다 (재크롤링 없음)
   if (mode === "refilter") {
     const posts = loadExisting(safeKw).posts; // 점수 없는 옛 글은 score가 undefined → 비교가 false라 유지됨
-    const drop = posts.filter((p) => p.score < MIN_SCORE);
+    const drop = posts.filter(belowMin);
     drop.forEach((p) => console.log(dropLine(p)));
     if (!drop.length) return console.log("걸러낼 글이 없습니다.");
-    saveReference(keyword, safeKw, posts.filter((p) => !(p.score < MIN_SCORE)));
+    saveReference(keyword, safeKw, posts.filter((p) => !belowMin(p)));
     return;
   }
 
@@ -263,8 +265,8 @@ async function main() {
     }));
 
   // 최소 점수 미달은 항상(후보가 모자라도) 제외한다
-  newOk.filter((p) => p.score < MIN_SCORE).forEach((p) => console.log(`  ${dropLine(p)}`));
-  newOk = newOk.filter((p) => p.score >= MIN_SCORE);
+  newOk.filter(belowMin).forEach((p) => console.log(`  ${dropLine(p)}`));
+  newOk = newOk.filter((p) => !belowMin(p));
 
   if (take > count) {
     newOk.sort((a, b) => b.score - a.score);
