@@ -92,16 +92,23 @@ async function context(req) {
 const noSpace = (t) => t.replace(/\s/g, "").length;
 const stripPhotos = (t) => t.replace(/\[사진:[^\]]*\]/g, "");
 const countWord = (text, word) => (word ? text.split(word).length - 1 : 0);
+// 네이버는 검색어의 띄어쓰기를 무시하고 매칭한다("여드름 피부관리" = "여드름피부관리").
+// 세는 쪽도 양쪽 공백을 지우고 비교해야 원장이 어떻게 띄어 쓰든 결과가 같다.
+const despace = (t) => (t || "").replace(/\s+/g, "");
+const countLoose = (text, word) => countWord(despace(text), despace(word));
 
 const 논문 = CONFIG.논문검증 || {};
 const pmidRe = new RegExp(논문.PMID정규식 || "PMID\\s*\\d{5,8}", "g");
 
-function validateDraft(text, keyword) {
+function validateDraft(text, keyword, minChars = CONFIG.최소글자수) {
   const clean = stripPhotos(text);
   const chars = noSpace(clean);
   const photos = (text.match(/\[사진:/g) || []).length;
-  const kwCounts = (keyword || "").trim().split(/\s+/).filter(Boolean)
-    .map((w) => ({ word: w, count: countWord(text, w) }));
+  // 판정 기준은 키워드 '전체'가 몇 번 나왔나 — 네이버가 실제로 매칭하는 단위가 그것이다.
+  // 단어별 횟수는 어디가 모자란지 보여주는 참고값일 뿐 합격·불합격을 가르지 않는다.
+  const kwCount = countLoose(text, keyword);
+  const kwParts = (keyword || "").trim().split(/\s+/).filter(Boolean)
+    .map((w) => ({ word: w, count: countLoose(text, w) }));
   const abstractFound = CONFIG.추상어.filter((w) => text.includes(w));
   const medicalFound = CONFIG.의료법금지어.filter((w) => text.includes(w));
   const overclaimFound = (논문.과장표현 || []).filter((w) => text.includes(w));
@@ -109,17 +116,19 @@ function validateDraft(text, keyword) {
   const needsEvidence = (논문.효능키워드 || []).some((w) => text.includes(w));
 
   const issues = [];
-  if (chars < CONFIG.최소글자수) issues.push(`글자수 부족: ${chars}자 (최소 ${CONFIG.최소글자수}자)`);
-  const main = kwCounts[0];
-  if (main && main.count < CONFIG.키워드횟수.min)
-    issues.push(`키워드 "${main.word}" ${main.count}회 (최소 ${CONFIG.키워드횟수.min}회)`);
+  if (chars < minChars) issues.push(`글자수 부족: ${chars}자 (최소 ${minChars}자)`);
+  if (keyword && kwCount < CONFIG.키워드횟수.min)
+    issues.push(`키워드 "${keyword}" ${kwCount}회 (최소 ${CONFIG.키워드횟수.min}회 — 문장 안에 자연스럽게 더 넣을 것)`);
+  // 도배도 미달만큼 위험하다 — 네이버는 반복 과다를 키워드 스터핑으로 보고 감점한다.
+  else if (kwCount > CONFIG.키워드횟수.max)
+    issues.push(`키워드 "${keyword}" ${kwCount}회 과다 (최대 ${CONFIG.키워드횟수.max}회 — 일부를 다른 표현으로 바꿔 줄일 것)`);
   if (abstractFound.length) issues.push(`추상어 사용: ${abstractFound.join(", ")}`);
   if (medicalFound.length) issues.push(`의료법 주의 표현: ${medicalFound.join(", ")}`);
   if (overclaimFound.length) issues.push(`과장 표현(논문 근거 없이 단정 금지): ${overclaimFound.join(", ")}`);
   if (needsEvidence && pmids.length === 0)
     issues.push(`성분·효능을 다루는데 논문 근거(PMID)가 하나도 없음 — skin-study.vercel.app에서 🟢 확인 후 PMID를 인용할 것`);
   if (photos < CONFIG.권장이미지최소) issues.push(`사진 자리 ${photos}곳 (권장 ${CONFIG.권장이미지최소}곳 이상)`);
-  return { chars, photos, kwCounts, abstractFound, medicalFound, overclaimFound, pmids, needsEvidence, issues, pass: issues.length === 0 };
+  return { chars, minChars, photos, kwCount, kwParts, abstractFound, medicalFound, overclaimFound, pmids, needsEvidence, issues, pass: issues.length === 0 };
 }
 
 // ---------- 레퍼런스 ----------
@@ -139,13 +148,14 @@ function loadReferences() {
 
 // 생성용: 파일명이 아니라 파일 안의 keyword로 찾는다.
 // (파일명에 한글이 들어가는데, 업로드 경로에 따라 자모 분리형으로 바뀔 수 있어 이름 비교는 조용히 실패한다)
+// 띄어쓰기는 무시하고 찾는다 — "여드름 피부관리"와 "여드름피부관리"는 같은 레퍼런스로 본다.
 function findReference(keyword) {
   if (!fs.existsSync(REF_DIR)) return null;
-  const want = keyword.normalize("NFC");
+  const want = despace(keyword.normalize("NFC"));
   for (const f of fs.readdirSync(REF_DIR).filter((f) => f.endsWith(".json")).sort().reverse()) {
     try {
       const r = JSON.parse(fs.readFileSync(path.join(REF_DIR, f), "utf8"));
-      if (r.keyword?.normalize("NFC") === want) return { file: f, ...r };
+      if (r.keyword && despace(r.keyword.normalize("NFC")) === want) return { file: f, ...r };
     } catch { /* 깨진 파일 무시 */ }
   }
   return null;
@@ -163,7 +173,7 @@ function buildDraftContent(keyword, title, body, v) {
     `# ${title}`,
     "",
     `- 키워드: ${keyword} / 글자수(공백제외): ${v.chars.toLocaleString()}자 / 사진 자리: ${v.photos}곳`,
-    `- 기계 검증: 글자수 ${ok(v.chars >= CONFIG.최소글자수)} · 키워드 ${v.kwCounts.map((k) => `${k.word} ${k.count}회`).join(", ")} · 추상어 ${ok(!v.abstractFound.length)}${v.abstractFound.length ? ` (${v.abstractFound.join(", ")})` : ""} · 의료법 ${ok(!v.medicalFound.length)}${v.medicalFound.length ? ` (${v.medicalFound.join(", ")})` : ""}`,
+    `- 기계 검증: 글자수 ${ok(v.chars >= v.minChars)} (목표 ${v.minChars.toLocaleString()}자) · 키워드 ${v.kwCount}회 ${ok(v.kwCount >= CONFIG.키워드횟수.min && v.kwCount <= CONFIG.키워드횟수.max)} (${v.kwParts.map((k) => `${k.word} ${k.count}`).join(" / ")}) · 추상어 ${ok(!v.abstractFound.length)}${v.abstractFound.length ? ` (${v.abstractFound.join(", ")})` : ""} · 의료법 ${ok(!v.medicalFound.length)}${v.medicalFound.length ? ` (${v.medicalFound.join(", ")})` : ""}`,
     `- 생성: 웹 대시보드 (${MODEL})`,
     "",
     "---",
@@ -278,7 +288,9 @@ const SYSTEM_PROMPT = `당신은 에스테틱(피부관리실) 원장이 자기 
 - 원장의 직접 경험담처럼 쓴다 (네이버는 직접 경험 글을 상위노출에 유리하게 평가)
 
 [구조]
-1. 제목: 키워드 포함 + 읽으면 얻는 것 또는 피할 수 있는 손해 암시. 25자 내외
+1. 제목: 키워드 포함 + 읽으면 얻는 것 또는 피할 수 있는 손해 암시 + 구체적인 숫자 1개 이상(개수·분·년·원·%·가지 등). 25자 내외
+   - 숫자가 들어간 제목은 클릭률이 높고, 상위글 대부분이 숫자를 안 쓰면 그 자체가 차별점이 된다
+   - 억지로 넣지는 않는다. 숫자가 글 내용과 무관하면 빼는 편이 낫다
 2. 서두: 많은 사람이 아는 상황/고민에서 출발 (업계 용어로 시작 금지)
 3. 본문: 소제목 2~4개(### 사용), 원장의 경험 + 구체 정보
 4. 마무리: 과하지 않은 안내 (예약 강요 금지, 정보를 준 사람으로 남기)
@@ -287,6 +299,8 @@ const SYSTEM_PROMPT = `당신은 에스테틱(피부관리실) 원장이 자기 
 - 사진 넣을 자리를 [사진: 어떤 사진인지 설명] 으로 표시 — 최소 ${CONFIG.권장이미지최소}곳
 - 공백 제외 ${CONFIG.최소글자수}자 이상 (레퍼런스 평균이 더 높으면 평균 이상을 목표)
 - 키워드는 제목 1회 + 본문 ${CONFIG.키워드횟수.min}~${CONFIG.키워드횟수.max}회, 자연스러운 문장 안에서만
+- 이때 세는 단위는 '키워드 전체'다. 단어를 쪼개 흩어 놓지 말고 키워드를 통째로 문장에 넣는다 (검증기가 띄어쓰기는 무시하고 전체 일치만 센다)
+- ${CONFIG.키워드횟수.max}회를 넘기지 않는다. 반복이 과하면 네이버가 키워드 도배로 보고 감점한다 — 넘칠 것 같으면 지시어나 유의어로 바꾼다
 - 한 문단 3줄 이내 (모바일 가독성)
 
 [3대 기준 — 반드시 통과]
@@ -304,6 +318,9 @@ const SYSTEM_PROMPT = `당신은 에스테틱(피부관리실) 원장이 자기 
 첫 줄: 제목: <제목>
 둘째 줄부터: 본문 전체. 제목을 본문에서 반복하지 말고, 설명·머리말·맺음말 코멘트 없이 네이버 에디터에 그대로 붙여넣을 수 있는 본문만 출력한다.`;
 
+// 상위글 평균이 최소 기준보다 높으면 그 평균이 진짜 통과선이다 — 평균에 못 미치면 상위권에 못 낀다.
+const targetCharsFor = (ref) => Math.max(CONFIG.최소글자수, ref?.avgChars || 0);
+
 function buildUserPrompt(keyword, region, point, ref) {
   const lines = [`키워드: ${keyword}`];
   if (region) lines.push(`지역: ${region} (본문에 자연스럽게 반영)`);
@@ -314,9 +331,19 @@ function buildUserPrompt(keyword, region, point, ref) {
     lines.push(`- 상위 글 제목들 (그대로 베끼지 말 것):`);
     ref.posts.forEach((p) => lines.push(`  · ${p.title}`));
     lines.push(`- 이 제목들과 화자 포지션이 겹치지 않게 차별화할 것 (예: 후기 일색이면 "원장이 알려주는 기준" 포지션)`);
+    const numRate = Math.round((ref.posts.filter((p) => /\d/.test(p.title)).length / ref.posts.length) * 100);
+    lines.push(
+      numRate < 50
+        ? `- 상위 글 제목 중 숫자가 들어간 것은 ${numRate}%뿐이다 — 제목에 숫자를 넣으면 그 자체로 차별화된다`
+        : `- 상위 글 제목 ${numRate}%가 숫자를 쓴다 — 제목에 숫자를 넣지 않으면 밀린다`
+    );
   } else {
     lines.push("", "(레퍼런스 없음 — 형식 규칙의 최소 기준으로 작성)");
   }
+  lines.push(
+    "",
+    `[목표 분량] 공백 제외 ${targetCharsFor(ref).toLocaleString()}자 이상${ref?.avgChars > CONFIG.최소글자수 ? ` (상위글 평균 ${ref.avgChars.toLocaleString()}자에 맞춘 값 — 이 아래로는 상위권에 못 낀다)` : ""}`
+  );
   lines.push(
     "",
     "[논문 근거]",
@@ -383,9 +410,10 @@ async function handleGenerate(res, body, ctx) {
     const client = new Anthropic();
     const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref) }];
 
+    const targetChars = targetCharsFor(ref);
     let draft = await streamOnce(client, messages, send);
     let parsed = parseDraftOutput(draft, keyword);
-    let validation = validateDraft(`${parsed.title}\n${parsed.body}`, keyword);
+    let validation = validateDraft(`${parsed.title}\n${parsed.body}`, keyword, targetChars);
 
     if (!validation.pass) {
       send({ type: "status", message: `검증 미달 → 자동 보완 1회: ${validation.issues.join(" / ")}` });
@@ -397,7 +425,7 @@ async function handleGenerate(res, body, ctx) {
       });
       draft = await streamOnce(client, messages, send);
       parsed = parseDraftOutput(draft, keyword);
-      validation = validateDraft(`${parsed.title}\n${parsed.body}`, keyword);
+      validation = validateDraft(`${parsed.title}\n${parsed.body}`, keyword, targetChars);
     }
 
     const file = await draftCreate(ctx, keyword, parsed.title, parsed.body, validation);
