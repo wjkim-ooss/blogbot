@@ -43,6 +43,13 @@ const api = async (url, opts = {}) => {
 const noSpace = (t) => t.replace(/\s/g, "").length;
 const stripPhotos = (t) => t.replace(/\[사진:[^\]]*\]/g, "");
 const countWord = (text, w) => (w ? text.split(w).length - 1 : 0);
+// 네이버는 검색어의 띄어쓰기를 무시하고 매칭한다 — 세는 쪽도 양쪽 공백을 지우고 비교해야
+// "여드름 피부관리"로 넣든 "여드름피부관리"로 넣든 같은 결과가 나온다. (server.mjs와 동일 규칙)
+const despace = (t) => (t || "").replace(/\s+/g, "");
+const countLoose = (text, w) => countWord(despace(text), despace(w));
+// 상위글은 사진이 30장을 넘기도 하지만 원장이 실제로 준비할 수 있는 양을 넘으면 의미가 없어
+// 20장에서 끊는다 (server.mjs targetPhotosFor · 인사이트 탭과 같은 기준).
+const targetPhotosOf = (ref) => Math.max(CONFIG.권장이미지최소, Math.min(ref?.avgImages || 0, 20));
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // 초안 파일에서 헤더(--- 위)를 뺀 본문만 추출
@@ -135,6 +142,16 @@ function renderInsights() {
 }
 
 // ---------- 탭 3: 초안 ----------
+// 목록 배지와 '열기'가 같은 응답을 나눠 쓰도록 본문을 한 번만 받아 캐시한다
+const draftCache = new Map();
+async function draftContent(name) {
+  if (!draftCache.has(name)) draftCache.set(name, (await api(`/api/drafts/${encodeURIComponent(name)}`)).content);
+  return draftCache.get(name);
+}
+// 파일명(YYYY-MM-DD_키워드.md)에서 검증용 키워드 추출
+const keywordOf = (name) =>
+  name.replace(/^\d{4}-\d{2}-\d{2}_/, "").replace(/(_\d+)?\.md$/, "").replace(/-/g, " ");
+
 async function loadDrafts(selectName) {
   const drafts = await api("/api/drafts");
   const list = $("#draft-list");
@@ -142,17 +159,40 @@ async function loadDrafts(selectName) {
   drafts.forEach((d) => {
     const div = document.createElement("div");
     div.className = "side-item draft-item";
-    div.innerHTML = `<div class="title">${esc(d.name.replace(/\.md$/, ""))}</div>
+    div.innerHTML = `<div class="d-main">
+        <div class="title">${esc(d.name.replace(/\.md$/, ""))}</div>
+        <div class="d-sub muted">검사 중…</div>
+      </div>
+      <span class="d-badge"></span>
       <button class="del-btn" title="삭제">🗑</button>`;
-    div.querySelector(".title").addEventListener("click", () => openDraft(d.name, div));
+    div.querySelector(".d-main").addEventListener("click", () => openDraft(d.name, div));
     div.querySelector(".del-btn").addEventListener("click", (e) => {
       e.stopPropagation();
       deleteDraft(d.name);
     });
     list.appendChild(div);
-    if (selectName && d.name === selectName) div.querySelector(".title").click();
+    markDraft(d.name, div); // 배지는 본문을 받아야 하므로 목록 표시를 막지 않고 뒤따라 채운다
+    if (selectName && d.name === selectName) div.querySelector(".d-main").click();
   });
-  if (!selectName && drafts.length) list.firstChild.querySelector(".title").click();
+  if (!selectName && drafts.length) list.firstChild.querySelector(".d-main").click();
+}
+
+// 이미 써 둔 초안도 하나씩 열어보지 않고 위험 신호를 알아챌 수 있게 목록에 요약을 붙인다
+async function markDraft(name, div) {
+  const sub = div.querySelector(".d-sub");
+  const badge = div.querySelector(".d-badge");
+  let v;
+  try {
+    v = evaluateDraft(draftBody(await draftContent(name)), keywordOf(name));
+  } catch {
+    sub.textContent = ""; // 본문을 못 읽으면 조용히 비워 둔다 — 목록 자체는 계속 쓸 수 있어야 한다
+    return;
+  }
+  sub.className = `d-sub ${v.kwLack ? "v-bad" : v.kwOver ? "v-warn" : "muted"}`;
+  sub.textContent = `키워드 ${v.kwCount}회${v.kwLack ? " 부족" : v.kwOver ? " 과다" : ""} · ${v.chars.toLocaleString()}자`;
+  badge.className = `d-badge ${v.issues.length ? "warn" : "ok"}`;
+  badge.textContent = v.issues.length ? `⚠️ ${v.issues.length}` : "✅";
+  badge.title = v.issues.length ? `고칠 점 ${v.issues.length}개\n· ${v.issues.join("\n· ")}` : "기준 통과";
 }
 
 async function deleteDraft(name) {
@@ -162,6 +202,7 @@ async function deleteDraft(name) {
   } catch (e) {
     return alert("삭제 실패: " + e.message);
   }
+  draftCache.delete(name);
   // 열려 있던 초안을 지웠으면 편집기 비우기
   if (currentDraft === name) {
     currentDraft = null;
@@ -175,13 +216,56 @@ async function deleteDraft(name) {
 async function openDraft(name, el) {
   document.querySelectorAll("#draft-list .side-item").forEach((x) => x.classList.remove("active"));
   if (el) el.classList.add("active");
-  const d = await api(`/api/drafts/${encodeURIComponent(name)}`);
+  const content = await draftContent(name);
   currentDraft = name;
-  $("#editor").value = d.content;
-  // 파일명(YYYY-MM-DD_키워드.md)에서 검증용 키워드 추출
-  const kw = name.replace(/^\d{4}-\d{2}-\d{2}_/, "").replace(/(_\d+)?\.md$/, "").replace(/-/g, " ");
-  $("#draft-keyword").value = kw;
+  $("#editor").value = content;
+  $("#draft-keyword").value = keywordOf(name);
   runValidation();
+}
+
+// 초안 하나를 채점한다. 오른쪽 검증 패널과 왼쪽 목록 배지가 같은 기준을 쓰도록
+// 계산은 전부 여기 모아두고, 두 화면은 이 결과를 그리기만 한다.
+function evaluateDraft(body, keyword) {
+  const 논문 = CONFIG.논문검증 || {};
+  const chars = noSpace(stripPhotos(body));
+  const photos = (body.match(/\[사진:/g) || []).length;
+  const abstractFound = CONFIG.추상어.filter((w) => body.includes(w));
+  const medicalFound = CONFIG.의료법금지어.filter((w) => body.includes(w));
+  const overclaimFound = (논문.과장표현 || []).filter((w) => body.includes(w));
+  const pmidRe = new RegExp(논문.PMID정규식 || "PMID\\s*\\d{5,8}", "g");
+  const pmids = [...new Set((body.match(pmidRe) || []).map((s) => s.replace(/\s+/g, " ").trim()))];
+  const needsEvidence = (논문.효능키워드 || []).some((w) => body.includes(w));
+  // 합격선은 '키워드 전체'가 몇 번 나왔나 — 네이버가 매칭하는 단위가 그것이다.
+  // 단어별 횟수는 어디가 모자란지 보라고 곁들일 뿐 판정하지 않는다.
+  const kwCount = countLoose(body, keyword);
+  const tokens = keyword.split(/\s+/).filter(Boolean);
+  const kwLack = !!keyword && kwCount < CONFIG.키워드횟수.min;
+  const kwOver = !!keyword && kwCount > CONFIG.키워드횟수.max;
+  // 제목은 상위노출에서 가장 무거운 자리인데 지금까지 아무 검사도 없었다
+  // AI 생성분은 "제목: X" 형식, 손으로 쓴 견본은 마크다운 헤딩("## X")을 쓴다 — 둘 다 받는다
+  const title = (body.match(/^제목:\s*(.+)$/m) || body.match(/^#{1,3}\s+(.+)$/m) || [])[1]?.trim() || "";
+  const titleHasKw = !!title && !!keyword && countLoose(title, keyword) > 0;
+  const titleHasNum = /\d/.test(title);
+  const titleLen = noSpace(title);
+  // 상위글 평균이 최소 기준보다 높으면 그 평균이 진짜 통과선 (server.mjs targetCharsFor와 동일)
+  const refHit = REFS.find((r) => despace(r.keyword) === despace(keyword));
+  const targetChars = Math.max(CONFIG.최소글자수, refHit?.avgChars || 0);
+  const targetPhotos = targetPhotosOf(refHit);
+
+  const issues = [];
+  if (title && keyword && !titleHasKw) issues.push(`제목에 키워드 "${keyword}" 없음`);
+  if (chars < targetChars) issues.push(`글자수 ${chars.toLocaleString()}자 (목표 ${targetChars.toLocaleString()}자)`);
+  if (kwLack) issues.push(`키워드 ${kwCount}회 — 최소 ${CONFIG.키워드횟수.min}회`);
+  if (kwOver) issues.push(`키워드 ${kwCount}회 과다 — 최대 ${CONFIG.키워드횟수.max}회`);
+  if (photos < CONFIG.권장이미지최소) issues.push(`사진 자리 ${photos}곳 (권장 ${CONFIG.권장이미지최소}곳)`);
+  if (abstractFound.length) issues.push(`추상어 ${abstractFound.length}개: ${abstractFound.join(", ")}`);
+  if (medicalFound.length) issues.push(`의료법 주의 ${medicalFound.length}개: ${medicalFound.join(", ")}`);
+  if (overclaimFound.length) issues.push(`과장 표현 ${overclaimFound.length}개: ${overclaimFound.join(", ")}`);
+  if (needsEvidence && !pmids.length) issues.push("논문 근거(PMID) 없음");
+
+  return { chars, targetChars, refHit, photos, targetPhotos, kwCount, tokens, kwLack, kwOver,
+           title, titleHasKw, titleHasNum, titleLen,
+           abstractFound, medicalFound, overclaimFound, pmids, needsEvidence, issues };
 }
 
 // 실시간 검증
@@ -195,28 +279,30 @@ function runValidation() {
   }
   const body = draftBody(raw);
   const keyword = $("#draft-keyword").value.trim();
-  const chars = noSpace(stripPhotos(body));
-  const photos = (body.match(/\[사진:/g) || []).length;
-  const abstractFound = CONFIG.추상어.filter((w) => body.includes(w));
-  const medicalFound = CONFIG.의료법금지어.filter((w) => body.includes(w));
-  const 논문 = CONFIG.논문검증 || {};
-  const overclaimFound = (논문.과장표현 || []).filter((w) => body.includes(w));
-  const pmidRe = new RegExp(논문.PMID정규식 || "PMID\\s*\\d{5,8}", "g");
-  const pmids = [...new Set((body.match(pmidRe) || []).map((s) => s.replace(/\s+/g, " ").trim()))];
-  const needsEvidence = (논문.효능키워드 || []).some((w) => body.includes(w));
-  const tokens = keyword.split(/\s+/).filter(Boolean);
-  const kwRows = tokens
-    .map((w) => {
-      const c = countWord(body, w);
-      return `<div class="v-item"><span>"${esc(w)}"</span><span class="${c >= CONFIG.키워드횟수.min ? "v-ok" : "v-bad"}">${c}회</span></div>`;
-    })
-    .join("");
+  const { chars, targetChars, refHit, photos, targetPhotos, kwCount, tokens, kwLack, kwOver,
+          title, titleHasKw, titleHasNum, titleLen,
+          abstractFound, medicalFound, overclaimFound, pmids, needsEvidence } = evaluateDraft(body, keyword);
+  const kwCls = kwLack ? "v-bad" : kwOver ? "v-warn" : "v-ok";
+  const kwNote = kwLack ? " 부족" : kwOver ? " 과다" : "";
+  const kwRows = keyword
+    ? `<div class="v-item"><span>"${esc(keyword)}" 전체</span><span class="${kwCls}">${kwCount}회${kwNote}</span></div>` +
+      (tokens.length > 1
+        ? `<div class="v-sub">참고 · 단어별 ${tokens.map((w) => `${esc(w)} ${countLoose(body, w)}회`).join(" / ")}</div>`
+        : "")
+    : "";
   const ok = (cond) => (cond ? "v-ok" : "v-bad");
   panel.innerHTML = `
     <h4>3대 기준 검증</h4>
-    <div class="v-item"><span>글자수 (공백제외)</span><span class="${ok(chars >= CONFIG.최소글자수)}">${chars.toLocaleString()}자</span></div>
-    <div class="v-item"><span>최소 기준</span><span class="muted">${CONFIG.최소글자수.toLocaleString()}자</span></div>
+    <div class="v-item"><span>글자수 (공백제외)</span><span class="${ok(chars >= targetChars)}">${chars.toLocaleString()}자</span></div>
+    <div class="v-item"><span>목표 기준</span><span class="muted">${targetChars.toLocaleString()}자${refHit && refHit.avgChars > CONFIG.최소글자수 ? " (상위글 평균)" : ""}</span></div>
     <div class="v-item"><span>사진 자리</span><span class="${ok(photos >= CONFIG.권장이미지최소)}">${photos}곳</span></div>
+    ${refHit ? `<div class="v-sub">${targetPhotos}곳 이상 권장 · 상위글 평균 ${refHit.avgImages}장</div>` : ""}
+    ${title
+      ? `<h4>제목</h4>
+         <div class="v-item"><span>키워드 포함</span><span class="${ok(titleHasKw)}">${titleHasKw ? "포함" : "없음"}</span></div>
+         <div class="v-item"><span>숫자 포함</span><span class="${titleHasNum ? "v-ok" : "muted"}">${titleHasNum ? "포함" : "없음 (권장)"}</span></div>
+         <div class="v-sub">${titleLen}자 · 권장 25자 내외 — ${esc(title)}</div>`
+      : ""}
     <h4>키워드 배치 (본문 ${CONFIG.키워드횟수.min}~${CONFIG.키워드횟수.max}회)</h4>
     ${kwRows || '<span class="muted">위 입력칸에 키워드를 넣으세요</span>'}
     <h4>추상어 <span class="${ok(!abstractFound.length)}">${abstractFound.length ? abstractFound.length + "개 발견" : "통과"}</span></h4>
@@ -240,11 +326,17 @@ $("#draft-keyword").addEventListener("input", runValidation);
 // 저장 / 복사
 $("#save-btn").addEventListener("click", async () => {
   if (!currentDraft) return alert("열려 있는 초안이 없습니다");
+  const content = $("#editor").value;
   await api(`/api/drafts/${encodeURIComponent(currentDraft)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content: $("#editor").value }),
+    body: JSON.stringify({ content }),
   });
+  // 고친 내용이 목록 배지에도 바로 반영되도록 캐시를 갱신하고 그 줄만 다시 채점한다
+  draftCache.set(currentDraft, content);
+  const row = [...document.querySelectorAll("#draft-list .draft-item")]
+    .find((el) => el.querySelector(".title")?.textContent === currentDraft.replace(/\.md$/, ""));
+  if (row) markDraft(currentDraft, row);
   flash("저장 완료 ✅");
 });
 $("#copy-btn").addEventListener("click", async () => {
@@ -256,6 +348,24 @@ function flash(msg) {
   $("#editor-msg").textContent = msg;
   setTimeout(() => ($("#editor-msg").textContent = ""), 3000);
 }
+
+// 레퍼런스가 있는 키워드로 써야 품질이 크게 갈리는데, 지금까지는 생성 버튼을 누른 뒤에야
+// 알 수 있었다. 입력하는 동안 미리 알려 준다.
+function updateGenHint() {
+  const el = $("#gen-hint");
+  if (!el || !CONFIG) return;
+  const kw = $("#gen-keyword").value.trim();
+  if (!kw) {
+    el.className = "gen-hint";
+    return (el.textContent = "");
+  }
+  const ref = REFS.find((r) => despace(r.keyword) === despace(kw));
+  el.className = `gen-hint ${ref ? "ok" : "warn"}`;
+  el.textContent = ref
+    ? `✅ 레퍼런스 ${ref.posts.length}개 — 목표 ${Math.max(CONFIG.최소글자수, ref.avgChars).toLocaleString()}자 · 사진 ${targetPhotosOf(ref)}곳 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)`
+    : `⚠️ 이 키워드는 레퍼런스가 없어 기본 기준(${CONFIG.최소글자수.toLocaleString()}자)으로 씁니다. 보관함에 먼저 크롤링하면 품질이 올라갑니다`;
+}
+$("#gen-keyword").addEventListener("input", updateGenHint);
 
 // AI 생성 (SSE 스트리밍)
 $("#gen-btn").addEventListener("click", async () => {
@@ -351,7 +461,10 @@ async function enterApp() {
     if (ME.isAdmin) $("#admin-tab-btn").classList.remove("hidden");
   }
   updateQuota();
-  await Promise.all([loadRefs(), loadDrafts()]);
+  // 레퍼런스가 먼저 있어야 초안 채점의 목표 글자수(상위글 평균)가 제대로 잡힌다
+  await loadRefs();
+  updateGenHint();
+  await loadDrafts();
   openTabFromHash(); // 주소에 #drafts 등이 있으면 그 탭으로
 }
 

@@ -5,6 +5,7 @@ body {
   color: #1f2430;
   font-size: 14px;
   line-height: 1.6;
+  -webkit-text-size-adjust: 100%; /* iOS가 가로모드에서 글자를 제멋대로 키우는 것 방지 */
 }
 header {
   display: flex;
@@ -59,6 +60,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .gen-bar { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
 .gen-bar input { flex: 1; min-width: 160px; }
+.gen-hint { flex: 1 1 100%; font-size: 12px; line-height: 1.5; }
+.gen-hint:empty { display: none; }
+.gen-hint.ok { color: #1c8c3c; }
+.gen-hint.warn { color: #a5691a; }
 
 .split { display: flex; gap: 14px; align-items: flex-start; }
 .side-list { width: 260px; flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; }
@@ -73,7 +78,11 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .side-item.active { border-color: #3b4bd8; background: #eef1ff; }
 .side-item .title { font-weight: 700; font-size: 13px; word-break: break-all; }
 .draft-item { display: flex; align-items: center; gap: 6px; }
-.draft-item .title { flex: 1; cursor: pointer; }
+.draft-item .d-main { flex: 1; min-width: 0; cursor: pointer; }
+.d-sub { font-size: 11px; line-height: 1.4; margin-top: 2px; }
+.d-badge { flex-shrink: 0; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 6px; }
+.d-badge.ok { background: #e7f7ea; color: #1c8c3c; }
+.d-badge.warn { background: #fdeecb; color: #a5691a; }
 .del-btn {
   border: none; background: transparent; padding: 2px 6px;
   font-size: 14px; opacity: 0.35; cursor: pointer; flex-shrink: 0;
@@ -124,6 +133,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .v-item { display: flex; justify-content: space-between; padding: 3px 0; }
 .v-ok { color: #1c8c3c; font-weight: 700; }
 .v-bad { color: #d8483b; font-weight: 700; }
+.v-warn { color: #c77700; font-weight: 700; }
+/* 판정이 아닌 참고 수치 — 좌우로 눌리지 않게 한 줄로 흘린다 */
+.v-sub { font-size: 12px; color: #8a91a0; line-height: 1.5; padding: 1px 0 2px; }
 .v-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .v-tag { background: #fdeceb; color: #d8483b; border-radius: 6px; padding: 1px 8px; font-size: 12px; }
 
@@ -154,6 +166,43 @@ header { justify-content: flex-start; }
 .st.approved { background: #e7f7ea; color: #1c8c3c; }
 .st.blocked { background: #fdeceb; color: #d8483b; }
 .admin-user select { font-size: 13px; }
+
+/* ---------- 모바일 ---------- */
+/* 이 스타일시트는 원래 데스크톱 폭만 가정하고 있었다. 폰에서는 헤더(제목+탭+계정)와
+   본문 2단(목록/편집기 + 검증패널)이 한 줄에 다 들어가지 못해 각 항목이 최소 너비까지
+   눌리고, 그 결과 한글이 한 글자씩 세로로 쪼개져 보였다.
+   좁아지면 가로로 늘어놓던 것을 세로로 쌓아 폭을 확보한다. */
+@media (max-width: 768px) {
+  header { flex-wrap: wrap; gap: 8px 12px; padding: 10px 14px; }
+  h1 { font-size: 16px; flex-shrink: 0; }
+  /* 탭은 줄바꿈 대신 가로 스크롤 — 글자가 쪼개지지 않게 nowrap 고정 */
+  nav { order: 3; width: 100%; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+  nav::-webkit-scrollbar { display: none; }
+  .tab-btn { flex: 0 0 auto; white-space: nowrap; padding: 8px 12px; }
+  #user-chip { margin-left: auto; gap: 6px; min-width: 0; }
+  #user-email { font-size: 12px; max-width: 42vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .tab { padding: 14px; }
+
+  /* 2단 → 1단 */
+  .split, .editor-split { flex-direction: column; }
+  .side-list { width: 100%; }
+  .side-item .title { word-break: break-word; }
+  /* 1단으로 쌓으면 검증 패널이 긴 편집창 아래로 밀려 스크롤해야 보인다 — 위로 끌어올린다 */
+  #validation { width: 100%; order: -1; background: #fff; border: 1px solid #e3e6ec; border-radius: 12px; padding: 12px 14px; }
+  #editor { width: 100%; min-height: 320px; }
+  .editor-tools input { width: 100%; }
+  .gen-bar input { flex: 1 1 100%; min-width: 0; }
+
+  /* iOS는 입력칸 글자가 16px 미만이면 포커스할 때 화면을 확대해버린다 */
+  input, select, textarea { font-size: 16px; }
+
+  .stat { flex: 1 1 calc(50% - 6px); min-width: 0; padding: 10px 12px; }
+  .stat .num { font-size: 18px; }
+  .admin-user .em { min-width: 0; width: 100%; word-break: break-all; }
+  .detail { overflow-x: auto; } /* 레퍼런스 표가 넘칠 때 화면 대신 표만 스크롤 */
+  .auth-card { width: 100%; }
+}
 
 #gen-output-wrap { margin-bottom: 14px; }
 #gen-output { white-space: pre-wrap; font-family: inherit; font-size: 13px; max-height: 300px; overflow-y: auto; margin-top: 8px; }
