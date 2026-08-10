@@ -47,6 +47,9 @@ const countWord = (text, w) => (w ? text.split(w).length - 1 : 0);
 // "여드름 피부관리"로 넣든 "여드름피부관리"로 넣든 같은 결과가 나온다. (server.mjs와 동일 규칙)
 const despace = (t) => (t || "").replace(/\s+/g, "");
 const countLoose = (text, w) => countWord(despace(text), despace(w));
+// 상위글은 사진이 30장을 넘기도 하지만 원장이 실제로 준비할 수 있는 양을 넘으면 의미가 없어
+// 20장에서 끊는다 (server.mjs targetPhotosFor · 인사이트 탭과 같은 기준).
+const targetPhotosOf = (ref) => Math.max(CONFIG.권장이미지최소, Math.min(ref?.avgImages || 0, 20));
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // 초안 파일에서 헤더(--- 위)를 뺀 본문만 추출
@@ -238,11 +241,19 @@ function evaluateDraft(body, keyword) {
   const tokens = keyword.split(/\s+/).filter(Boolean);
   const kwLack = !!keyword && kwCount < CONFIG.키워드횟수.min;
   const kwOver = !!keyword && kwCount > CONFIG.키워드횟수.max;
+  // 제목은 상위노출에서 가장 무거운 자리인데 지금까지 아무 검사도 없었다
+  // AI 생성분은 "제목: X" 형식, 손으로 쓴 견본은 마크다운 헤딩("## X")을 쓴다 — 둘 다 받는다
+  const title = (body.match(/^제목:\s*(.+)$/m) || body.match(/^#{1,3}\s+(.+)$/m) || [])[1]?.trim() || "";
+  const titleHasKw = !!title && !!keyword && countLoose(title, keyword) > 0;
+  const titleHasNum = /\d/.test(title);
+  const titleLen = noSpace(title);
   // 상위글 평균이 최소 기준보다 높으면 그 평균이 진짜 통과선 (server.mjs targetCharsFor와 동일)
   const refHit = REFS.find((r) => despace(r.keyword) === despace(keyword));
   const targetChars = Math.max(CONFIG.최소글자수, refHit?.avgChars || 0);
+  const targetPhotos = targetPhotosOf(refHit);
 
   const issues = [];
+  if (title && keyword && !titleHasKw) issues.push(`제목에 키워드 "${keyword}" 없음`);
   if (chars < targetChars) issues.push(`글자수 ${chars.toLocaleString()}자 (목표 ${targetChars.toLocaleString()}자)`);
   if (kwLack) issues.push(`키워드 ${kwCount}회 — 최소 ${CONFIG.키워드횟수.min}회`);
   if (kwOver) issues.push(`키워드 ${kwCount}회 과다 — 최대 ${CONFIG.키워드횟수.max}회`);
@@ -252,7 +263,8 @@ function evaluateDraft(body, keyword) {
   if (overclaimFound.length) issues.push(`과장 표현 ${overclaimFound.length}개: ${overclaimFound.join(", ")}`);
   if (needsEvidence && !pmids.length) issues.push("논문 근거(PMID) 없음");
 
-  return { chars, targetChars, refHit, photos, kwCount, tokens, kwLack, kwOver,
+  return { chars, targetChars, refHit, photos, targetPhotos, kwCount, tokens, kwLack, kwOver,
+           title, titleHasKw, titleHasNum, titleLen,
            abstractFound, medicalFound, overclaimFound, pmids, needsEvidence, issues };
 }
 
@@ -267,7 +279,8 @@ function runValidation() {
   }
   const body = draftBody(raw);
   const keyword = $("#draft-keyword").value.trim();
-  const { chars, targetChars, refHit, photos, kwCount, tokens, kwLack, kwOver,
+  const { chars, targetChars, refHit, photos, targetPhotos, kwCount, tokens, kwLack, kwOver,
+          title, titleHasKw, titleHasNum, titleLen,
           abstractFound, medicalFound, overclaimFound, pmids, needsEvidence } = evaluateDraft(body, keyword);
   const kwCls = kwLack ? "v-bad" : kwOver ? "v-warn" : "v-ok";
   const kwNote = kwLack ? " 부족" : kwOver ? " 과다" : "";
@@ -283,6 +296,13 @@ function runValidation() {
     <div class="v-item"><span>글자수 (공백제외)</span><span class="${ok(chars >= targetChars)}">${chars.toLocaleString()}자</span></div>
     <div class="v-item"><span>목표 기준</span><span class="muted">${targetChars.toLocaleString()}자${refHit && refHit.avgChars > CONFIG.최소글자수 ? " (상위글 평균)" : ""}</span></div>
     <div class="v-item"><span>사진 자리</span><span class="${ok(photos >= CONFIG.권장이미지최소)}">${photos}곳</span></div>
+    ${refHit ? `<div class="v-sub">${targetPhotos}곳 이상 권장 · 상위글 평균 ${refHit.avgImages}장</div>` : ""}
+    ${title
+      ? `<h4>제목</h4>
+         <div class="v-item"><span>키워드 포함</span><span class="${ok(titleHasKw)}">${titleHasKw ? "포함" : "없음"}</span></div>
+         <div class="v-item"><span>숫자 포함</span><span class="${titleHasNum ? "v-ok" : "muted"}">${titleHasNum ? "포함" : "없음 (권장)"}</span></div>
+         <div class="v-sub">${titleLen}자 · 권장 25자 내외 — ${esc(title)}</div>`
+      : ""}
     <h4>키워드 배치 (본문 ${CONFIG.키워드횟수.min}~${CONFIG.키워드횟수.max}회)</h4>
     ${kwRows || '<span class="muted">위 입력칸에 키워드를 넣으세요</span>'}
     <h4>추상어 <span class="${ok(!abstractFound.length)}">${abstractFound.length ? abstractFound.length + "개 발견" : "통과"}</span></h4>
@@ -328,6 +348,24 @@ function flash(msg) {
   $("#editor-msg").textContent = msg;
   setTimeout(() => ($("#editor-msg").textContent = ""), 3000);
 }
+
+// 레퍼런스가 있는 키워드로 써야 품질이 크게 갈리는데, 지금까지는 생성 버튼을 누른 뒤에야
+// 알 수 있었다. 입력하는 동안 미리 알려 준다.
+function updateGenHint() {
+  const el = $("#gen-hint");
+  if (!el || !CONFIG) return;
+  const kw = $("#gen-keyword").value.trim();
+  if (!kw) {
+    el.className = "gen-hint";
+    return (el.textContent = "");
+  }
+  const ref = REFS.find((r) => despace(r.keyword) === despace(kw));
+  el.className = `gen-hint ${ref ? "ok" : "warn"}`;
+  el.textContent = ref
+    ? `✅ 레퍼런스 ${ref.posts.length}개 — 목표 ${Math.max(CONFIG.최소글자수, ref.avgChars).toLocaleString()}자 · 사진 ${targetPhotosOf(ref)}곳 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)`
+    : `⚠️ 이 키워드는 레퍼런스가 없어 기본 기준(${CONFIG.최소글자수.toLocaleString()}자)으로 씁니다. 보관함에 먼저 크롤링하면 품질이 올라갑니다`;
+}
+$("#gen-keyword").addEventListener("input", updateGenHint);
 
 // AI 생성 (SSE 스트리밍)
 $("#gen-btn").addEventListener("click", async () => {
@@ -425,6 +463,7 @@ async function enterApp() {
   updateQuota();
   // 레퍼런스가 먼저 있어야 초안 채점의 목표 글자수(상위글 평균)가 제대로 잡힌다
   await loadRefs();
+  updateGenHint();
   await loadDrafts();
   openTabFromHash(); // 주소에 #drafts 등이 있으면 그 탭으로
 }

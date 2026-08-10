@@ -100,7 +100,7 @@ const countLoose = (text, word) => countWord(despace(text), despace(word));
 const 논문 = CONFIG.논문검증 || {};
 const pmidRe = new RegExp(논문.PMID정규식 || "PMID\\s*\\d{5,8}", "g");
 
-function validateDraft(text, keyword, minChars = CONFIG.최소글자수) {
+function validateDraft(text, keyword, minChars = CONFIG.최소글자수, title = "") {
   const clean = stripPhotos(text);
   const chars = noSpace(clean);
   const photos = (text.match(/\[사진:/g) || []).length;
@@ -116,6 +116,9 @@ function validateDraft(text, keyword, minChars = CONFIG.최소글자수) {
   const needsEvidence = (논문.효능키워드 || []).some((w) => text.includes(w));
 
   const issues = [];
+  // 제목은 상위노출에서 가장 무거운 자리다 — 키워드가 빠지면 본문이 아무리 좋아도 밀린다
+  if (title && keyword && countLoose(title, keyword) === 0)
+    issues.push(`제목에 키워드 "${keyword}"가 없음 — 제목에 자연스럽게 넣을 것`);
   if (chars < minChars) issues.push(`글자수 부족: ${chars}자 (최소 ${minChars}자)`);
   if (keyword && kwCount < CONFIG.키워드횟수.min)
     issues.push(`키워드 "${keyword}" ${kwCount}회 (최소 ${CONFIG.키워드횟수.min}회 — 문장 안에 자연스럽게 더 넣을 것)`);
@@ -320,6 +323,9 @@ const SYSTEM_PROMPT = `당신은 에스테틱(피부관리실) 원장이 자기 
 
 // 상위글 평균이 최소 기준보다 높으면 그 평균이 진짜 통과선이다 — 평균에 못 미치면 상위권에 못 낀다.
 const targetCharsFor = (ref) => Math.max(CONFIG.최소글자수, ref?.avgChars || 0);
+// 상위글은 사진이 30장을 넘기도 하지만, 원장이 실제로 준비할 수 있는 양을 넘으면 초안이 무용지물이라
+// 인사이트 탭과 같은 기준(20장)으로 상한을 둔다.
+const targetPhotosFor = (ref) => Math.max(CONFIG.권장이미지최소, Math.min(ref?.avgImages || 0, 20));
 
 function buildUserPrompt(keyword, region, point, ref) {
   const lines = [`키워드: ${keyword}`];
@@ -342,7 +348,8 @@ function buildUserPrompt(keyword, region, point, ref) {
   }
   lines.push(
     "",
-    `[목표 분량] 공백 제외 ${targetCharsFor(ref).toLocaleString()}자 이상${ref?.avgChars > CONFIG.최소글자수 ? ` (상위글 평균 ${ref.avgChars.toLocaleString()}자에 맞춘 값 — 이 아래로는 상위권에 못 낀다)` : ""}`
+    `[목표 분량] 공백 제외 ${targetCharsFor(ref).toLocaleString()}자 이상${ref?.avgChars > CONFIG.최소글자수 ? ` (상위글 평균 ${ref.avgChars.toLocaleString()}자에 맞춘 값 — 이 아래로는 상위권에 못 낀다)` : ""}`,
+    `[사진 자리] ${targetPhotosFor(ref)}곳 이상${ref?.avgImages ? ` (상위글 평균 ${ref.avgImages}장)` : ""} — [사진: 설명] 형식으로 본문 곳곳에 배치`
   );
   lines.push(
     "",
@@ -413,7 +420,7 @@ async function handleGenerate(res, body, ctx) {
     const targetChars = targetCharsFor(ref);
     let draft = await streamOnce(client, messages, send);
     let parsed = parseDraftOutput(draft, keyword);
-    let validation = validateDraft(`${parsed.title}\n${parsed.body}`, keyword, targetChars);
+    let validation = validateDraft(`${parsed.title}\n${parsed.body}`, keyword, targetChars, parsed.title);
 
     if (!validation.pass) {
       send({ type: "status", message: `검증 미달 → 자동 보완 1회: ${validation.issues.join(" / ")}` });
@@ -425,7 +432,7 @@ async function handleGenerate(res, body, ctx) {
       });
       draft = await streamOnce(client, messages, send);
       parsed = parseDraftOutput(draft, keyword);
-      validation = validateDraft(`${parsed.title}\n${parsed.body}`, keyword, targetChars);
+      validation = validateDraft(`${parsed.title}\n${parsed.body}`, keyword, targetChars, parsed.title);
     }
 
     const file = await draftCreate(ctx, keyword, parsed.title, parsed.body, validation);
