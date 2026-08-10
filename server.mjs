@@ -36,8 +36,23 @@ if (AUTH_ON) {
   const { createClient } = await import("@supabase/supabase-js");
   supaAdmin = createClient(SUPA_URL, SUPA_SERVICE, { auth: { persistSession: false } });
   console.log("인증 ON — Supabase 로그인·승인·등급 활성화");
+  keepSupabaseAwake();
 } else {
   console.log("인증 OFF — 관리자 단독 로컬 모드 (Supabase 미설정)");
+}
+
+// Supabase 무료 플랜은 일주일쯤 요청이 없으면 프로젝트를 정지시킨다.
+// 그러면 주소 자체가 사라져 로그인이 통째로 안 된다(2026-08-03에 겪음).
+// 원장들이 매일 쓰면 저절로 깨어 있지만, 방학처럼 뜸한 기간을 넘기려고 6시간마다 한 번 두드린다.
+// unref(): 이 타이머 때문에 서버가 종료되지 못하는 일이 없게 한다.
+function keepSupabaseAwake() {
+  const 여섯시간 = 6 * 60 * 60 * 1000;
+  const ping = async () => {
+    const { error } = await supaAdmin.from("profiles").select("id").limit(1);
+    if (error) console.error("[Supabase 깨우기 실패]", error.message);
+  };
+  ping();
+  setInterval(ping, 여섯시간).unref();
 }
 
 const monthKey = () => new Date().toISOString().slice(0, 7); // YYYY-MM
