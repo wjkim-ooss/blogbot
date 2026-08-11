@@ -404,6 +404,21 @@ function buildUserPrompt(keyword, region, point, ref) {
   return lines.join("\n");
 }
 
+// AI 크레딧 없이 쓰는 길: 프롬프트를 통째로 만들어 준다.
+// 원장이 이걸 복사해 자기 Claude(무료 계정도 가능)에 붙여넣으면 같은 결과를 얻는다.
+// 각자 자기 계정으로 쓰는 것이라 우진님 크레딧도, 구독도 쓰지 않는다.
+function buildFullPrompt(keyword, region, point, ref) {
+  return [
+    "# 역할",
+    SYSTEM_PROMPT,
+    "",
+    "---",
+    "",
+    "# 이번 글 조건",
+    buildUserPrompt(keyword, region, point, ref),
+  ].join("\n");
+}
+
 async function streamOnce(client, messages, send) {
   const stream = client.messages.stream({
     model: MODEL,
@@ -493,16 +508,23 @@ async function handleGenerate(res, body, ctx) {
 const adminHint = (ctx, msg, hint) => (ctx.isAdmin || !ctx.authOn ? `${msg} ${hint}` : `${msg} 관리자에게 문의해 주세요.`);
 
 // SDK가 주는 status/type으로 분류한다 (영문 메시지 문자열 매칭은 계약이 아니다)
+// 크레딧이 없을 때는 400 invalid_request_error로 오기 때문에 status/type만으로는 못 가른다.
+// 원문에 credit balance가 들어있으면 결제 문제로 본다.
+const 크레딧부족 = (e) => /credit balance is too low/i.test(String(e?.message || e));
+
+// AI가 막혀도 글은 쓸 수 있다 — 막다른 길로 끝내지 않고 다음 수를 알려준다
+const 대안안내 = " AI 없이 쓰시려면 ✍️ 직접 쓰기, 또는 📋 AI 프롬프트 복사로 claude.ai에 붙여넣으세요.";
+
 function describeError(e, ctx) {
   const type = e?.type;
   const status = e?.status;
   if (type === "authentication_error" || status === 401)
-    return adminHint(ctx, "AI 생성 인증에 실패했습니다.", "ANTHROPIC_API_KEY 값이 올바른지 확인하세요.");
-  if (type === "billing_error" || status === 403)
-    return adminHint(ctx, "AI 생성을 사용할 수 없습니다(결제 문제).", "console.anthropic.com → Billing 에서 크레딧을 충전하세요.");
+    return adminHint(ctx, "AI 생성 인증에 실패했습니다.", "ANTHROPIC_API_KEY 값이 올바른지 확인하세요.") + 대안안내;
+  if (type === "billing_error" || status === 403 || 크레딧부족(e))
+    return adminHint(ctx, "AI 크레딧이 없습니다.", "console.anthropic.com → Billing 에서 충전하면 켜집니다.") + 대안안내;
   if (type === "rate_limit_error" || status === 429)
     return "요청이 잠시 몰렸습니다. 1~2분 뒤 다시 시도해 주세요.";
-  return adminHint(ctx, "생성 중 오류가 발생했습니다.", `상세: ${String(e?.message || e)}`);
+  return adminHint(ctx, "생성 중 오류가 발생했습니다.", `상세: ${String(e?.message || e)}`) + 대안안내;
 }
 
 function parseDraftOutput(text, keyword) {
@@ -632,6 +654,18 @@ const server = http.createServer(async (req, res) => {
         await store.del(ctx.userId, name);
         return json(res, 200, { ok: true });
       }
+    }
+    // 프롬프트만 만들어 준다 — AI 크레딧을 쓰지 않으므로 월 한도도 차감하지 않는다
+    if (p === "/api/prompt" && req.method === "POST") {
+      const body = await readBody(req);
+      const keyword = (body.keyword || "").trim();
+      if (!keyword) return json(res, 400, { error: "키워드를 입력하세요" });
+      const ref = findReference(keyword);
+      return json(res, 200, {
+        prompt: buildFullPrompt(keyword, body.region || "", body.point || "", ref),
+        refKeyword: ref?.keyword || null,
+        refCount: ref?.posts?.length || 0,
+      });
     }
     if (p === "/api/generate" && req.method === "POST") {
       const body = await readBody(req);

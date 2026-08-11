@@ -226,6 +226,7 @@ function setReadOnly(on, who) {
   $("#save-btn").classList.toggle("hidden", on);
   $("#gen-btn").classList.toggle("hidden", on);
   $("#new-btn").classList.toggle("hidden", on);
+  $("#prompt-btn").classList.toggle("hidden", on);
   $("#import-samples").classList.toggle("hidden", on || !ME?.authOn);
   const banner = $("#readonly-banner");
   banner.classList.toggle("hidden", !on);
@@ -411,10 +412,20 @@ $("#save-btn").addEventListener("click", async () => {
   if (row) markDraft(currentDraft, row);
   flash("저장 완료 ✅");
 });
+// 클립보드는 브라우저·보안설정에 따라 막힌다. 실패하면 false를 돌려 부르는 쪽이 대비하게 한다.
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 $("#copy-btn").addEventListener("click", async () => {
   const body = draftBody($("#editor").value).replace(/^제목:.*\n+/, "");
-  await navigator.clipboard.writeText(body);
-  flash("본문이 복사됐어요. 네이버 에디터에 붙여넣으세요 📋");
+  if (await copyText(body)) flash("본문이 복사됐어요. 네이버 에디터에 붙여넣으세요 📋");
+  else flash("자동 복사가 막혀 있어요. 편집기에서 직접 복사해 주세요");
 });
 function flash(msg) {
   $("#editor-msg").textContent = msg;
@@ -661,6 +672,44 @@ $("#new-btn").addEventListener("click", async (e) => {
     });
     await loadDrafts(file);
     $("#editor").focus();
+  } catch (err) {
+    alert("만들지 못했습니다: " + err.message);
+  } finally {
+    e.target.disabled = false;
+  }
+});
+
+// AI 프롬프트 복사 — 크레딧 없이, 각자 자기 Claude에 붙여넣어 쓴다
+$("#prompt-btn").addEventListener("click", async (e) => {
+  const keyword = $("#gen-keyword").value.trim();
+  if (!keyword) {
+    $("#gen-keyword").focus();
+    return alert("먼저 키워드를 입력하세요");
+  }
+  e.target.disabled = true;
+  try {
+    const { prompt, refKeyword, refCount } = await api("/api/prompt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        keyword,
+        region: $("#gen-region").value.trim(),
+        point: $("#gen-point").value.trim(),
+      }),
+    });
+    const via = refCount ? `"${refKeyword}" 레퍼런스 ${refCount}개를 반영한 ` : "";
+    if (await copyText(prompt)) {
+      alert(
+        `${via}프롬프트를 복사했습니다.\n\n` +
+          "claude.ai 에 붙여넣으면 초안이 나옵니다.\n" +
+          "받은 글은 ✍️ 직접 쓰기로 만든 초안에 붙여넣고 저장하세요."
+      );
+    } else {
+      // 복사가 막힌 브라우저: 편집기에 띄워 직접 긁어가게 한다
+      $("#editor").value = prompt;
+      $("#editor").select();
+      alert("자동 복사가 막혀 있어 편집기에 띄웠습니다.\nCmd+C(또는 Ctrl+C)로 복사해 claude.ai에 붙여넣으세요.");
+    }
   } catch (err) {
     alert("만들지 못했습니다: " + err.message);
   } finally {
