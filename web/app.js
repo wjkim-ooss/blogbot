@@ -77,6 +77,15 @@ function draftBody(content) {
   return idx >= 0 ? content.slice(idx + 5).trim() : content.trim();
 }
 
+// 원장이 글자수를 직접 지정하고 쓴 글은 그 값으로 판정해야 한다.
+// 그 값은 머리말 메모에 "목표 1,200자"로 적혀 있다 (본문에는 없으니 원본에서 읽는다).
+// 없으면 0 — 그때는 기본 기준(최소글자수)을 쓴다.
+function 적힌목표(content) {
+  const 머리 = content.split("\n---\n")[0];
+  const n = Number((머리.match(/목표[^0-9\n]{0,12}([\d,]+)\s*자/) || [])[1]?.replace(/,/g, ""));
+  return n >= 300 && n <= 20000 ? n : 0;
+}
+
 // ---------- 탭 1: 레퍼런스 보관함 ----------
 async function loadRefs() {
   REFS = await api("/api/references");
@@ -268,9 +277,10 @@ async function markDraft(name, div) {
   const badge = div.querySelector(".d-badge");
   let v, blank;
   try {
-    const body = draftBody(await draftContent(name));
+    const 전체 = await draftContent(name);
+    const body = draftBody(전체);
     blank = body.includes(BLANK_MARK);
-    v = evaluateDraft(body, keywordOf(name));
+    v = evaluateDraft(body, keywordOf(name), 적힌목표(전체));
   } catch {
     sub.textContent = ""; // 본문을 못 읽으면 조용히 비워 둔다 — 목록 자체는 계속 쓸 수 있어야 한다
     return;
@@ -319,7 +329,7 @@ async function openDraft(name, el) {
 
 // 초안 하나를 채점한다. 오른쪽 검증 패널과 왼쪽 목록 배지가 같은 기준을 쓰도록
 // 계산은 전부 여기 모아두고, 두 화면은 이 결과를 그리기만 한다.
-function evaluateDraft(body, keyword) {
+function evaluateDraft(body, keyword, 지정목표 = 0) {
   const 논문 = CONFIG.논문검증 || {};
   const chars = noSpace(stripPhotos(body));
   const photos = (body.match(/\[사진:/g) || []).length;
@@ -351,8 +361,10 @@ function evaluateDraft(body, keyword) {
   const titleLen = noSpace(title);
   // 통과선은 최소글자수, 노리는 지점은 권장글자수 (server.mjs targetCharsFor와 동일).
   // 상위글 평균은 2,000자를 넘기도 하지만 원장이 매번 쓸 수 있는 분량이 아니라 목표로 삼지 않는다.
+  // 원장이 직접 지정한 글자수가 있으면 그것이 기준 — 1,200자로 시켜 놓고
+  // "목표 1,300~1,500자"로 판정하면 원장은 왜 걸렸는지 알 수 없다.
   const refHit = pickReference(REFS, keyword);
-  const targetChars = CONFIG.최소글자수;
+  const targetChars = 지정목표 || CONFIG.최소글자수;
   const targetPhotos = targetPhotosOf(refHit);
 
   // 반드시 고쳐야 하는 것(issues)과 고치면 더 좋은 것(advice)을 나눈다.
@@ -399,7 +411,7 @@ function runValidation() {
   const { chars, targetChars, refHit, photos, targetPhotos, kwCount, tokens, kwLack, kwOver,
           title, titleHasKw, titleHasNum, titleLen,
           abstractFound, medicalFound, overclaimFound, pmids, needsEvidence,
-          issues, advice } = evaluateDraft(body, keyword);
+          issues, advice } = evaluateDraft(body, keyword, 적힌목표(raw));
   const kwCls = kwLack ? "v-bad" : kwOver ? "v-warn" : "v-ok";
   const kwNote = kwLack ? " 부족" : kwOver ? " 과다" : "";
   const kwRows = keyword
@@ -422,7 +434,11 @@ function runValidation() {
     ${verdict}${tips}
     <h4>3대 기준 검증</h4>
     <div class="v-item"><span>글자수 (공백제외)</span><span class="${ok(chars >= targetChars)}">${chars.toLocaleString()}자</span></div>
-    <div class="v-item"><span>목표 기준</span><span class="muted">${targetChars.toLocaleString()}~${(CONFIG.권장글자수 || targetChars).toLocaleString()}자</span></div>
+    <div class="v-item"><span>목표 기준</span><span class="muted">${
+      targetChars === CONFIG.최소글자수
+        ? `${targetChars.toLocaleString()}~${(CONFIG.권장글자수 || targetChars).toLocaleString()}자`
+        : `${targetChars.toLocaleString()}자 (직접 지정)`
+    }</span></div>
     <div class="v-item"><span>사진 자리</span><span class="${photos >= targetPhotos ? "v-ok" : "v-warn"}">${photos}곳</span></div>
     ${refHit ? `<div class="v-sub">${targetPhotos}곳 이상 권장 · 상위글 평균 ${refHit.avgImages}장</div>` : ""}
     ${title
