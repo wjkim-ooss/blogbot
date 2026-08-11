@@ -76,6 +76,8 @@
       <input id="gen-keyword" placeholder="키워드 *" />
       <input id="gen-region" placeholder="지역 (선택)" />
       <input id="gen-point" placeholder="강조 포인트 (선택)" />
+      <!-- 비우면 상위글 평균에 맞춘다 -->
+      <input id="gen-chars" type="number" min="300" max="20000" step="100" placeholder="글자수 (선택)" title="공백 제외 목표 글자수. 비우면 상위글 평균에 맞춥니다" />
       <button id="gen-btn" class="primary">🤖 AI 초안 생성</button>
       <!-- AI가 막혀 있어도(크레딧·키 문제) 손으로는 쓸 수 있어야 한다 -->
       <button id="new-btn">✍️ 직접 쓰기</button>

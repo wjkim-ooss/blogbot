@@ -315,8 +315,8 @@ async function draftCreate(ctx, keyword, title, body, v) {
 
 // 손으로 쓰기 시작할 빈 초안. AI 생성이 막혀 있어도(크레딧·키 문제) 글은 쓸 수 있어야 한다.
 // 뼈대에 3대 기준과 목표치를 적어 둬서 무엇을 채워야 하는지 보이게 한다.
-function blankDraft(keyword, ref) {
-  const target = targetCharsFor(ref).toLocaleString();
+function blankDraft(keyword, ref, 목표글자수) {
+  const target = (목표글자수 || targetCharsFor(ref)).toLocaleString();
   const photos = targetPhotosFor(ref);
   return [
     `# ${keyword}`,
@@ -395,7 +395,15 @@ const targetCharsFor = (ref) => Math.max(CONFIG.최소글자수, ref?.avgChars |
 // 인사이트 탭과 같은 기준(20장)으로 상한을 둔다.
 const targetPhotosFor = (ref) => Math.max(CONFIG.권장이미지최소, Math.min(ref?.avgImages || 0, 20));
 
-function buildUserPrompt(keyword, region, point, ref) {
+// 원장이 글자수를 직접 정하면 그 값이 기준이 된다. 비우면 상위글 평균에 맞춘다.
+// 너무 짧으면 상위노출이 안 되고 너무 길면 안 쓰이므로 상식적인 범위로 자른다.
+const 요청글자수 = (v) => {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) && n >= 300 ? Math.min(n, 20000) : null;
+};
+
+function buildUserPrompt(keyword, region, point, ref, 목표글자수) {
+  const 목표 = 목표글자수 || targetCharsFor(ref);
   const lines = [`키워드: ${keyword}`];
   if (region) lines.push(`지역: ${region} (본문에 자연스럽게 반영)`);
   if (point) lines.push(`강조 포인트: ${point}`);
@@ -416,7 +424,7 @@ function buildUserPrompt(keyword, region, point, ref) {
   }
   lines.push(
     "",
-    `[목표 분량] 공백 제외 ${targetCharsFor(ref).toLocaleString()}자 이상${ref?.avgChars > CONFIG.최소글자수 ? ` (상위글 평균 ${ref.avgChars.toLocaleString()}자에 맞춘 값 — 이 아래로는 상위권에 못 낀다)` : ""}`,
+    `[목표 분량] 공백 제외 ${목표.toLocaleString()}자 이상${목표글자수 ? " (원장이 직접 지정한 값 — 반드시 맞출 것)" : ref?.avgChars > CONFIG.최소글자수 ? ` (상위글 평균 ${ref.avgChars.toLocaleString()}자에 맞춘 값 — 이 아래로는 상위권에 못 낀다)` : ""}`,
     `[사진 자리] ${targetPhotosFor(ref)}곳 이상${ref?.avgImages ? ` (상위글 평균 ${ref.avgImages}장)` : ""} — [사진: 설명] 형식으로 본문 곳곳에 배치`
   );
   lines.push(
@@ -428,7 +436,7 @@ function buildUserPrompt(keyword, region, point, ref) {
   lines.push(
     "",
     "[제출 전 스스로 확인할 것 — 기계가 이 그대로 잽니다]",
-    `1. 공백 제외 ${targetCharsFor(ref).toLocaleString()}자 이상인가`,
+    `1. 공백 제외 ${목표.toLocaleString()}자 이상인가`,
     `2. 제목에 "${keyword}"가 통째로 들어갔는가`,
     `3. 본문에 "${keyword}"가 통째로(붙여서) ${CONFIG.키워드횟수.min}~${CONFIG.키워드횟수.max}회 들어갔는가 — 단어를 쪼개 흩어 놓으면 0회로 셉니다`,
     `4. 추상어(${CONFIG.추상어.slice(0, 8).join(", ")} 등)를 하나도 쓰지 않았는가`,
@@ -442,7 +450,7 @@ function buildUserPrompt(keyword, region, point, ref) {
 // AI 크레딧 없이 쓰는 길: 프롬프트를 통째로 만들어 준다.
 // 원장이 이걸 복사해 자기 Claude(무료 계정도 가능)에 붙여넣으면 같은 결과를 얻는다.
 // 각자 자기 계정으로 쓰는 것이라 우진님 크레딧도, 구독도 쓰지 않는다.
-function buildFullPrompt(keyword, region, point, ref) {
+function buildFullPrompt(keyword, region, point, ref, 목표글자수) {
   return [
     "# 역할",
     SYSTEM_PROMPT,
@@ -450,7 +458,7 @@ function buildFullPrompt(keyword, region, point, ref) {
     "---",
     "",
     "# 이번 글 조건",
-    buildUserPrompt(keyword, region, point, ref),
+    buildUserPrompt(keyword, region, point, ref, 목표글자수),
   ].join("\n");
 }
 
@@ -690,9 +698,10 @@ async function handleGenerate(res, body, ctx) {
     } else {
       send({ type: "status", message: `무료 엔진(Gemini ${(await geminiModels())[0]})으로 작성합니다` });
     }
-    const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref) }];
-
-    const targetChars = targetCharsFor(ref);
+    // 원장이 직접 정한 글자수가 있으면 그것이 기준 (프롬프트와 검증이 같은 값을 봐야 한다)
+    const targetChars = 요청글자수(body.chars) || targetCharsFor(ref);
+    if (요청글자수(body.chars)) send({ type: "status", message: `목표 글자수 ${targetChars.toLocaleString()}자로 맞춰 작성합니다` });
+    const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, targetChars) }];
     const check = (d) => {
       const p = parseDraftOutput(d, keyword);
       return { parsed: p, validation: validateDraft(`${p.title}\n${p.body}`, keyword, targetChars, p.title) };
@@ -850,7 +859,21 @@ const server = http.createServer(async (req, res) => {
       if (!ctx.isAdmin) return json(res, 403, { error: "관리자 전용" });
       if (req.method === "GET") {
         const { data } = await supaAdmin.from("profiles").select("*").order("created_at", { ascending: false });
-        return json(res, 200, data || []);
+        // 누가 몇 번 썼는지 한눈에 — 초안을 하나씩 열어보지 않아도 되게.
+        // 본문은 가져오지 않는다(목록에 필요 없고 양이 크다). 관리자만 오는 경로다.
+        const { data: rows } = await supaAdmin.from("drafts").select("user_id,updated_at");
+        const 통계 = new Map();
+        for (const r of rows || []) {
+          const s = 통계.get(r.user_id) || { count: 0, last: null };
+          s.count++;
+          if (!s.last || r.updated_at > s.last) s.last = r.updated_at;
+          통계.set(r.user_id, s);
+        }
+        return json(
+          res,
+          200,
+          (data || []).map((u) => ({ ...u, draftCount: 통계.get(u.id)?.count || 0, lastDraftAt: 통계.get(u.id)?.last || null }))
+        );
       }
       if (req.method === "POST") {
         const body = await readBody(req);
@@ -882,7 +905,7 @@ const server = http.createServer(async (req, res) => {
       const keyword = (body.keyword || "").trim();
       if (!keyword) return json(res, 400, { error: "키워드를 입력하세요" });
       const base = `${new Date().toISOString().slice(0, 10)}_${keyword.replace(/[\/\s]+/g, "-")}`;
-      const file = await store.create(ctx.userId, base, blankDraft(keyword, findReference(keyword)));
+      const file = await store.create(ctx.userId, base, blankDraft(keyword, findReference(keyword), 요청글자수(body.chars)));
       return json(res, 200, { file });
     }
     if (p.startsWith("/api/drafts/")) {
@@ -911,7 +934,7 @@ const server = http.createServer(async (req, res) => {
       if (!keyword) return json(res, 400, { error: "키워드를 입력하세요" });
       const ref = findReference(keyword);
       return json(res, 200, {
-        prompt: buildFullPrompt(keyword, body.region || "", body.point || "", ref),
+        prompt: buildFullPrompt(keyword, body.region || "", body.point || "", ref, 요청글자수(body.chars)),
         refKeyword: ref?.keyword || null,
         refCount: ref?.posts?.length || 0,
       });
