@@ -544,46 +544,79 @@ async function streamClaude(client, messages, send) {
 // 원장 입장에서 "나중에 다시 해보세요"는 사실상 못 쓰는 것이나 마찬가지라서.
 async function streamGemini(messages, send) {
   const models = await geminiModels();
-  const body = JSON.stringify({
-    system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-    // Claude 쪽과 messages 모양을 맞춰 두었으므로 그대로 옮긴다 (보완 호출도 같은 경로를 탄다)
-    contents: messages.map((m) => ({
-      role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content }],
-    })),
-    // Gemini 3.x는 '생각'을 켠 채로 나오고, 그 생각이 출력 한도를 먼저 먹는다.
-    // 한도를 안 정해 주면 생각만 하다 끝나 본문이 몇 글자만 남는다(2026-08-11에 6자짜리 초안이 저장됨).
-    // 넉넉히 주고, 생각은 짧게 시킨다 — 품질은 프롬프트가 만들지 긴 사고가 만들지 않는다.
-    generationConfig: { maxOutputTokens: 16384, thinkingConfig: { thinkingBudget: 512 } },
-  });
+  const contents = messages.map((m) => ({
+    role: m.role === "assistant" ? "model" : "user",
+    parts: [{ text: m.content }],
+  }));
+  const 만들기 = (cfg) =>
+    JSON.stringify({
+      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents,
+      generationConfig: { maxOutputTokens: 16384, ...cfg },
+    });
 
-  let res, 마지막오류;
-  바깥: for (const [i, model] of models.entries()) {
-    for (let 시도 = 1; 시도 <= 2; 시도++) {
-      const r = await fetch(
-        `${GEMINI_BASE()}/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${encodeURIComponent(GEMINI_KEY())}`,
-        { method: "POST", headers: { "Content-Type": "application/json" }, body }
-      );
-      if (r.ok) { res = r; break 바깥; }
+  let 마지막오류;
+  for (const [i, model] of models.entries()) {
+    // 설정 이름은 모델 세대마다 다르다. 어느 쪽이 맞는지 넘겨짚지 않고 되는 것을 찾는다.
+    //   Gemini 3.x → thinkingLevel,  2.5 → thinkingBudget,  그 외 → 아무것도 안 붙임
+    // (2026-08-11: 3.6-flash에 thinkingBudget을 보내 빈 응답이 왔다)
+    for (const [이름, cfg] of 설정후보(model)) {
+      for (let 시도 = 1; 시도 <= 2; 시도++) {
+        let r;
+        try {
+          r = await fetch(
+            `${GEMINI_BASE()}/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${encodeURIComponent(GEMINI_KEY())}`,
+            { method: "POST", headers: { "Content-Type": "application/json" }, body: 만들기(cfg) }
+          );
+        } catch (e) {
+          마지막오류 = Object.assign(new Error(String(e?.message || e)), { status: 502, engine: "gemini" });
+          break;
+        }
 
-      const detail = await r.text().catch(() => "");
-      마지막오류 = Object.assign(new Error(detail || `HTTP ${r.status}`), { status: r.status, engine: "gemini" });
-      if (한도초과(r.status, detail)) break 바깥; // 한도는 모델을 바꿔도 안 풀린다
-      if (!붐빔(r.status, detail)) break 바깥; // 키·요청 문제는 재시도해도 같다
+        if (r.ok) {
+          const 결과 = await 읽기(r, send);
+          if (noSpace(결과.out) >= 100) {
+            GEMINI_설정.set(model, 이름); // 다음부터는 이 설정으로 바로 간다
+            return 결과.out;
+          }
+          // 200인데 글이 없다 = 이 설정이 이 모델에 안 맞는 것. 다음 후보로.
+          마지막오류 = Object.assign(new Error(`글이 거의 나오지 않았습니다 — ${결과.이유}`), { status: 502, engine: "gemini" });
+          GEMINI_설정.delete(model);
+          break;
+        }
 
-      if (시도 === 1) {
-        send({ type: "status", message: `${model}이(가) 붐빕니다 — 3초 뒤 다시 시도합니다` });
-        await 잠시(3000);
-      } else if (i < models.length - 1) {
-        send({ type: "status", message: `${model} 대신 ${models[i + 1]}로 바꿔서 작성합니다` });
+        const detail = await r.text().catch(() => "");
+        마지막오류 = Object.assign(new Error(detail || `HTTP ${r.status}`), { status: r.status, engine: "gemini" });
+        if (한도초과(r.status, detail)) return Promise.reject(마지막오류); // 모델을 바꿔도 안 풀린다
+        if (r.status === 400) break; // 이 설정을 거부한 것 — 다음 후보로
+        if (!붐빔(r.status, detail)) break;
+
+        if (시도 === 1) {
+          send({ type: "status", message: `${model}이(가) 붐빕니다 — 3초 뒤 다시 시도합니다` });
+          await 잠시(3000);
+        }
       }
     }
+    if (i < models.length - 1) send({ type: "status", message: `${models[i + 1]}로 바꿔서 다시 시도합니다` });
   }
-  if (!res) throw 마지막오류;
+  throw 마지막오류;
+}
 
-  let out = "";
-  let buf = "";
-  let 끝난이유 = "";
+// 어느 생각 설정이 통했는지 모델별로 기억한다 — 매번 처음부터 더듬지 않게
+const GEMINI_설정 = new Map();
+function 설정후보(model) {
+  const 전체 = [
+    ["thinkingLevel", { thinkingConfig: { thinkingLevel: "low" } }], // Gemini 3.x
+    ["thinkingBudget", { thinkingConfig: { thinkingBudget: 512 } }], // Gemini 2.5
+    ["없음", {}],                                                    // 둘 다 안 통할 때
+  ];
+  const 아는것 = GEMINI_설정.get(model);
+  return 아는것 ? [...전체.filter(([n]) => n === 아는것), ...전체.filter(([n]) => n !== 아는것)] : 전체;
+}
+
+// SSE를 읽어 본문만 모은다. 왜 비었는지도 함께 돌려준다.
+async function 읽기(res, send) {
+  let out = "", buf = "", 끝난이유 = "", 막힘 = "";
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   for (;;) {
@@ -599,13 +632,12 @@ async function streamGemini(messages, send) {
       const payload = line.slice(5).trim();
       if (!payload || payload === "[DONE]") continue;
       try {
-        const cand = JSON.parse(payload).candidates?.[0];
+        const o = JSON.parse(payload);
+        if (o.promptFeedback?.blockReason) 막힘 = o.promptFeedback.blockReason;
+        const cand = o.candidates?.[0];
         if (cand?.finishReason) 끝난이유 = cand.finishReason;
         // thought: true 인 조각은 모델의 생각이지 글이 아니다 — 본문에 섞으면 안 된다
-        const text = (cand?.content?.parts || [])
-          .filter((p) => !p.thought)
-          .map((p) => p.text || "")
-          .join("");
+        const text = (cand?.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || "").join("");
         if (text) {
           out += text;
           send({ type: "delta", text });
@@ -613,16 +645,12 @@ async function streamGemini(messages, send) {
       } catch { /* 조각난 JSON은 건너뛴다 */ }
     }
   }
-
-  // 글이라 할 수 없는 분량이면 조용히 넘기지 않는다. 그대로 저장하면 6자짜리 초안이 남는다.
-  if (noSpace(out) < 100) {
-    const 이유 =
-      끝난이유 === "MAX_TOKENS" ? "출력 한도에 먼저 걸렸습니다"
-      : 끝난이유 === "SAFETY" || 끝난이유 === "PROHIBITED_CONTENT" ? "안전 필터에 걸렸습니다 (키워드를 바꿔 보세요)"
-      : 끝난이유 ? `중단 사유: ${끝난이유}` : "빈 응답이 왔습니다";
-    throw Object.assign(new Error(`글이 거의 나오지 않았습니다 — ${이유}`), { engine: "gemini", status: 502 });
-  }
-  return out;
+  const 이유 =
+    막힘 ? `요청이 안전 필터에 막혔습니다 (${막힘}) — 키워드를 바꿔 보세요`
+    : 끝난이유 === "MAX_TOKENS" ? "출력 한도에 먼저 걸렸습니다"
+    : 끝난이유 === "SAFETY" || 끝난이유 === "PROHIBITED_CONTENT" ? "안전 필터에 걸렸습니다 (키워드를 바꿔 보세요)"
+    : 끝난이유 ? `중단 사유: ${끝난이유}` : "빈 응답이 왔습니다";
+  return { out, 이유 };
 }
 
 const streamOnce = (client, messages, send) =>
