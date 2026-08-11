@@ -502,12 +502,17 @@ async function resolveGeminiModels() {
       .map((m) => (m.name || "").replace(/^models\//, "")) || [];
     if (!names.length) throw new Error("쓸 수 있는 모델이 없습니다");
 
-    // 선호 순서 먼저, 그다음 flash 계열을 최신순으로 (preview·특수 모델은 제외)
-    const 나머지 = names
-      .filter((n) => !GEMINI_선호.includes(n))
-      .filter((n) => n.includes("flash") && !/preview|tts|live|image|audio|thinking|embedding/.test(n))
-      .sort((a, b) => parseFloat(b.match(/[\d.]+/)?.[0] || 0) - parseFloat(a.match(/[\d.]+/)?.[0] || 0));
-    const 순서 = [...GEMINI_선호.filter((w) => names.includes(w)), ...나머지];
+    // 하루 한도는 '모델마다 따로' 센다. 그래서 쓸 수 있는 모델이 많을수록 하루에 쓸 수 있는 글이 늘어난다.
+    // flash만 쓰다 하루치가 끝나면 그날은 끝이었다 — pro까지 마지막 카드로 쥐고 간다.
+    // (2026-08-11: 원장이 몇 건 쓰고 "오늘 몫을 다 썼습니다"에 막혔다)
+    const 쓸모없음 = /preview|tts|live|image|audio|thinking|embedding|vision|aqa|gemma/;
+    const 최신순 = (a, b) => parseFloat(b.match(/[\d.]+/)?.[0] || 0) - parseFloat(a.match(/[\d.]+/)?.[0] || 0);
+    const 남은이름 = names.filter((n) => !GEMINI_선호.includes(n) && !쓸모없음.test(n));
+    const 순서 = [
+      ...GEMINI_선호.filter((w) => names.includes(w)),          // 손으로 정한 우선순위
+      ...남은이름.filter((n) => n.includes("flash")).sort(최신순), // 빠르고 한도가 넉넉한 쪽
+      ...남은이름.filter((n) => n.includes("pro")).sort(최신순),   // 하루치가 적지만 통이 따로다
+    ];
     const 최종 = 순서.length ? 순서 : [names[0]];
     console.log(`Gemini 모델 순서: ${최종.join(" → ")} (사용 가능 ${names.length}개)`);
     return 최종;
@@ -558,6 +563,18 @@ const 태평양자정 = () => {
   return 지금.getTime() + ((24 - pt.getHours()) * 60 - pt.getMinutes()) * 60_000;
 };
 const 소진됨 = (model) => (GEMINI_소진.get(model) ?? 0) > Date.now();
+
+// 언제 다시 열리는지를 짐작이 아니라 실제 시각으로 알려준다
+const 소진안내 = () => {
+  const 열림 = Math.min(...[...GEMINI_소진.values()].filter((t) => t > Date.now()), 태평양자정());
+  return new Date(열림).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", hour: "numeric", minute: "2-digit" });
+};
+// 어떤 모델이 왜 막혔는지는 관리자만 본다 — 원장에게는 소음이다
+const 소진진단 = (ctx) => {
+  if (!ctx?.isAdmin) return "";
+  const 목록 = [...GEMINI_소진].filter(([, t]) => t > Date.now()).map(([m]) => m);
+  return 목록.length ? `\n[관리자용] 하루치 소진: ${목록.join(", ")}` : "";
+};
 
 async function streamClaude(client, messages, send) {
   const stream = client.messages.stream({
@@ -982,7 +999,7 @@ function describeError(e, ctx) {
     if (status === 429)
       return e?.하루한도
         ? "무료 엔진의 오늘 몫을 다 썼습니다 (구글 무료 등급의 하루 한도 — 회원님의 월 한도와는 별개입니다). " +
-          "한국시간 오후 4~5시경 초기화됩니다." + 대안안내
+          `${소진안내()}에 다시 열립니다.` + 대안안내 + 소진진단(ctx)
         : "무료 엔진이 지금 분당 한도에 걸렸습니다. 1분 뒤에 다시 눌러 주세요. (하루 한도가 끝난 것이 아닙니다)" + 대안안내;
     if (status === 404)
       return adminHint(
@@ -1182,4 +1199,4 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => console.log(`블로그봇 대시보드: http://localhost:${PORT}`));
 
 // 테스트에서만 쓴다 — 가짜 구글 서버를 세워 놓고 한도·스트리밍 동작을 확인하려고
-export const __test = { streamGemini, describeError, 한도해석, 소진됨 };
+export const __test = { streamGemini, describeError, 한도해석, 소진됨, geminiModels };
