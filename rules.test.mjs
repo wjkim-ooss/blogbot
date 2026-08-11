@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, pickReference, 적힌목표, 요청글자수, targetPhotosFor, countLoose } from "./web/rules.js";
+import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 적힌목표, 요청글자수, targetPhotosFor, countLoose } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
@@ -144,4 +144,73 @@ test("빈 값·이상한 값에 터지지 않는다", () => {
   assert.equal(pickReference([{ keyword: null }, {}], "여드름"), null);
   assert.equal(pickReference(null, "여드름"), null);
   assert.equal(pickReference([{ keyword: "여드름" }], ""), null);
+});
+
+// ---------- 레퍼런스가 없는 키워드 ----------
+// 원장이 칠 키워드를 미리 다 모아 둘 수는 없다. 막다른 길로 끝나면 안 된다.
+const 글 = (title, text, n = 1) =>
+  Array.from({ length: n }, (_, i) => ({ title, text, chars: 2000, images: 20, url: `u${i}`, score: 10 }));
+
+test("① 그 키워드의 보관함이 있으면 그것", () => {
+  const list = [{ keyword: "모공", posts: 글("모공 글", "모공 이야기") }, { keyword: "피부고민", posts: [] }];
+  const r = 참고레퍼런스(list, "모공", { 기본레퍼런스: "피부고민" });
+  assert.equal(r.ref.keyword, "모공");
+  assert.equal(r.종류, "정확");
+});
+
+test("② 보관함 제목엔 없어도 본문에 나오면 그 글들을 모아 쓴다", () => {
+  const list = [
+    { keyword: "모공", posts: [...글("모공 줄이는 법", "블랙헤드가 같이 올라옵니다", 2), ...글("모공 후기", "관련 없는 내용", 5)] },
+    { keyword: "피부고민", posts: 글("블랙헤드 고민", "코 블랙헤드 이야기", 2) },
+  ];
+  const r = 참고레퍼런스(list, "블랙헤드", { 기본레퍼런스: "피부고민" });
+  assert.equal(r.종류, "모음");
+  assert.equal(r.ref.posts.length, 4, "블랙헤드가 나오는 글만 골라야 한다");
+  assert.deepEqual(r.ref.출처.sort(), ["모공", "피부고민"], "어느 보관함에서 왔는지 밝혀야 한다");
+  assert.equal(r.ref.keyword, "블랙헤드");
+});
+
+test("② 제목에 걸린 글이 본문에만 있는 글보다 앞에 온다", () => {
+  const list = [{ keyword: "모공", posts: [...글("모공 관리", "블랙헤드 언급", 3), ...글("블랙헤드 제거법", "본문", 1)] }];
+  const r = 참고레퍼런스(list, "블랙헤드", {});
+  assert.equal(r.ref.posts[0].title, "블랙헤드 제거법", "그 키워드가 제목인 글이 중심 글이다");
+});
+
+test("② 몇 개 안 되면 '상위글의 경향'이 아니다 — 기본 보관함으로 물러난다", () => {
+  const list = [
+    { keyword: "모공", posts: 글("모공", "블랙헤드 한 번 언급", 2) }, // 최소 3개 미달
+    { keyword: "피부고민", posts: 글("고민", "일반", 5) },
+  ];
+  const r = 참고레퍼런스(list, "블랙헤드", { 기본레퍼런스: "피부고민" });
+  assert.equal(r.종류, "기본");
+  assert.equal(r.ref.keyword, "피부고민");
+});
+
+test("② 모은 묶음은 평균 글자수·사진수를 그 글들로 다시 센다", () => {
+  const posts = [
+    { title: "블랙헤드 A", text: "x", chars: 1000, images: 10 },
+    { title: "블랙헤드 B", text: "x", chars: 2000, images: 20 },
+    { title: "블랙헤드 C", text: "x", chars: 3000, images: 30 },
+  ];
+  const r = 본문에서찾기([{ keyword: "모공", posts }], "블랙헤드");
+  assert.equal(r.avgChars, 2000);
+  assert.equal(r.avgImages, 20);
+});
+
+test("② 띄어쓰기가 달라도 본문에서 찾는다", () => {
+  // 보관함 이름("여드름")과는 아무 관계 없는 키워드라 ①에서는 안 걸린다
+  const list = [{ keyword: "여드름", posts: 글("관리 후기", "블랙헤드가 같이 올라옵니다", 3) }];
+  assert.equal(참고레퍼런스(list, "블랙 헤드", {}).종류, "모음", "띄어 써도 붙여 쓴 본문에서 찾아야 한다");
+});
+
+test("① 키워드가 보관함 이름을 품으면 그 보관함이 맞다 (모으기까지 갈 일이 아니다)", () => {
+  const list = [{ keyword: "모공", posts: 글("모공", "모공각화증 이야기", 3) }];
+  assert.equal(참고레퍼런스(list, "모공 각화증", {}).종류, "정확");
+});
+
+test("③ 아무 데도 없으면 기본 보관함, 그것도 없으면 빈손", () => {
+  const list = [{ keyword: "모공", posts: 글("모공", "모공", 5) }, { keyword: "피부고민", posts: 글("고민", "고민", 5) }];
+  assert.equal(참고레퍼런스(list, "탈모", { 기본레퍼런스: "피부고민" }).ref.keyword, "피부고민");
+  assert.equal(참고레퍼런스(list, "탈모", {}).ref, null);
+  assert.equal(참고레퍼런스([], "탈모", { 기본레퍼런스: "피부고민" }).ref, null);
 });

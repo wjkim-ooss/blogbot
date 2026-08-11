@@ -2,7 +2,7 @@
 // 판정 규칙은 서버와 같은 파일을 쓴다 — 두 벌로 두면 반드시 갈라진다 (web/rules.js)
 import {
   noSpace, stripPhotos, countWord, despace, countLoose,
-  요청글자수, 적힌목표, pickReference, targetPhotosFor, 평가,
+  요청글자수, 적힌목표, pickReference, 참고레퍼런스, targetPhotosFor, 평가,
 } from "/rules.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -307,7 +307,7 @@ async function openDraft(name, el) {
 // 여기서는 브라우저 사정(설정·레퍼런스 목록)만 채워 넣는다.
 // 말투 "요약": 검증 패널이 좁아 짧게 말한다. 조건은 서버와 한 글자도 다르지 않다.
 function evaluateDraft(body, keyword, 지정목표 = 0) {
-  const refHit = pickReference(REFS, keyword);
+  const { ref: refHit } = 참고레퍼런스(REFS, keyword, CONFIG);
   return { ...평가(body, { keyword, config: CONFIG, 목표글자수: 지정목표, ref: refHit, 말투: "요약" }), refHit };
 }
 
@@ -427,14 +427,17 @@ function updateGenHint() {
     el.className = "gen-hint";
     return (el.textContent = "");
   }
-  const ref = pickReference(REFS, kw);
+  const { ref, 종류 } = 참고레퍼런스(REFS, kw, CONFIG);
   const 표시 = 분량표시(요청글자수($("#gen-chars").value));
+  const 수치 = ref ? ` · 사진 ${targetPhotosOf(ref)}곳 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)` : "";
+  // 무엇을 참고하는지 원장이 알아야 한다 — 엉뚱한 걸 보고 쓰면 글이 겉돈다
+  const 앞말 =
+    종류 === "정확" ? `✅ "${ref.keyword}" 레퍼런스 ${ref.posts.length}개 참고`
+    : 종류 === "모음" ? `✅ "${kw}"가 나오는 상위글 ${ref.posts.length}개를 모아 참고 (${ref.출처.map((k) => `"${k}"`).join("·")} 보관함)`
+    : 종류 === "기본" ? `✅ "${kw}" 레퍼런스는 아직 없어서 "${ref.keyword}" ${ref.posts.length}개를 대신 참고`
+    : `⚠️ 참고할 레퍼런스가 없어 기본 기준으로 씁니다`;
   el.className = `gen-hint ${ref ? "ok" : "warn"}`;
-  // 정확히 같은 키워드가 아니면 어느 레퍼런스를 참고하는지 밝힌다 (엉뚱한 걸 참고하는지 원장이 알아야 한다)
-  const via = ref && despace(ref.keyword) !== despace(kw) ? `"${ref.keyword}" ` : "";
-  el.textContent = ref
-    ? `✅ ${via}레퍼런스 ${ref.posts.length}개 참고 — 목표 ${표시} · 사진 ${targetPhotosOf(ref)}곳 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)`
-    : `⚠️ 이 키워드는 레퍼런스가 없어 기본 기준으로 씁니다 — 목표 ${표시}. 보관함에 먼저 크롤링하면 품질이 올라갑니다`;
+  el.textContent = `${앞말} — 목표 ${표시}${수치}`;
 }
 $("#gen-keyword").addEventListener("input", updateGenHint);
 $("#gen-chars").addEventListener("input", updateGenHint);

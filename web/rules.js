@@ -57,6 +57,61 @@ export function pickReference(list, keyword) {
   return best;
 }
 
+// 보관함 '제목'에 없는 키워드라도, 모아 둔 상위글 '본문'에 그 얘기가 있으면 그게 레퍼런스다.
+// 예: "블랙헤드"라는 보관함은 없어도 모공·피부고민 글 안에 블랙헤드 이야기가 널려 있다.
+// 흩어져 있는 그 글들만 골라 즉석에서 한 묶음으로 만든다.
+//   제목에 있으면 2점, 본문에만 있으면 1점 — 제목에 걸린 글이 그 키워드의 중심 글이다.
+// (본문 전체를 공백 제거하면 수 MB를 매번 훑게 되므로, 원래 말과 붙인 말 둘 다로 그냥 찾는다)
+export function 본문에서찾기(list, keyword, { 최소 = 3, 최대 = 20 } = {}) {
+  const 원말 = (keyword || "").trim().normalize("NFC");
+  if (!원말) return null;
+  const 붙인말 = despace(원말);
+  const 나온다 = (s) => !!s && (s.includes(원말) || s.includes(붙인말));
+
+  const 모은것 = [];
+  const 출처 = new Set();
+  for (const r of list || []) {
+    for (const p of r.posts || []) {
+      const 제목에 = 나온다(p.title);
+      const 본문에 = 나온다(p.text);
+      if (!제목에 && !본문에) continue;
+      모은것.push({ ...p, 가중치: (제목에 ? 2 : 0) + (본문에 ? 1 : 0) });
+      출처.add(r.keyword);
+    }
+  }
+  // 몇 개 안 되면 '상위글의 경향'이라 부를 수 없다 — 차라리 기본 레퍼런스가 낫다
+  if (모은것.length < 최소) return null;
+
+  모은것.sort((a, b) => b.가중치 - a.가중치 || (b.score ?? 0) - (a.score ?? 0));
+  const posts = 모은것.slice(0, 최대);
+  const 평균 = (뽑기) => Math.round(posts.reduce((s, p) => s + (뽑기(p) || 0), 0) / posts.length);
+  return {
+    keyword: 원말,
+    posts,
+    avgChars: 평균((p) => p.chars),
+    avgImages: 평균((p) => p.images),
+    모은것: true,           // 통째 보관함이 아니라 골라 모은 묶음이라는 표시
+    출처: [...출처],
+  };
+}
+
+// 원장이 칠 키워드를 미리 다 모아 둘 수는 없다. 순서대로 물러난다:
+//   ① 그 키워드의 보관함              → 정확
+//   ② 본문에 그 키워드가 나오는 글 모음  → 모음
+//   ③ 폭넓은 기본 보관함(보통 "피부고민") → 기본
+// 무엇을 참고했는지는 어느 쪽이든 화면에 그대로 밝힌다.
+export function 참고레퍼런스(list, keyword, config) {
+  const 맞는것 = pickReference(list, keyword);
+  if (맞는것) return { ref: 맞는것, 종류: "정확" };
+
+  const 모음 = 본문에서찾기(list, keyword, { 최소: config?.본문최소글수 ?? 3 });
+  if (모음) return { ref: 모음, 종류: "모음" };
+
+  const 기본 = config?.기본레퍼런스;
+  const 대신 = 기본 ? pickReference(list, 기본) : null;
+  return { ref: 대신, 종류: 대신 ? "기본" : "없음" };
+}
+
 // 상위글은 사진이 30장을 넘기도 하지만 원장이 실제로 준비할 수 있는 양을 넘으면 의미가 없어 20장에서 끊는다.
 export const targetPhotosFor = (ref, config) =>
   Math.max(config.권장이미지최소, Math.min(ref?.avgImages || 0, 20));
