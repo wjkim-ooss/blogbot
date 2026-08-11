@@ -5,6 +5,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveDraftView } from "./permissions.mjs";
+// 초안 판정 규칙은 브라우저와 한 파일을 함께 쓴다 (web/rules.js). 두 벌로 두면 반드시 갈라진다.
+import { noSpace, 요청글자수, pickReference, targetPhotosFor as 사진목표, 평가 } from "./web/rules.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
@@ -86,80 +88,27 @@ async function context(req) {
 }
 
 // ---------- 공용 유틸 ----------
-const noSpace = (t) => t.replace(/\s/g, "").length;
-const stripPhotos = (t) => t.replace(/\[사진:[^\]]*\]/g, "");
-const countWord = (text, word) => (word ? text.split(word).length - 1 : 0);
-// 네이버는 검색어의 띄어쓰기를 무시하고 매칭한다("여드름 피부관리" = "여드름피부관리").
-// 세는 쪽도 양쪽 공백을 지우고 비교해야 원장이 어떻게 띄어 쓰든 결과가 같다.
-const despace = (t) => (t || "").replace(/\s+/g, "");
-const countLoose = (text, word) => countWord(despace(text), despace(word));
+// 글자 세기·키워드 세기·레퍼런스 고르기는 web/rules.js가 원본이다 (위에서 import).
 
-const 논문 = CONFIG.논문검증 || {};
-const pmidRe = new RegExp(논문.PMID정규식 || "PMID\\s*\\d{5,8}", "g");
+const 논문 = CONFIG.논문검증 || {}; // 프롬프트에 인용한다 (판정 규칙 자체는 rules.js가 갖는다)
 
-// 논문 근거는 '효능을 주장할 때' 필요하다. 단어가 나왔다는 것만으로 요구하면
-// "여드름 관리를 받으러 오셨습니다" 같은 평범한 문장까지 전부 걸려 경고가 무의미해진다.
-// 한 문장 안에 성분·부위(효능키워드)와 주장 표현이 같이 있을 때만 근거를 요구한다.
-// (web/app.js claimSentences와 같은 규칙)
-function claimSentences(text) {
-  const 부위 = 논문.효능키워드 || [];
-  const 주장 = 논문.효능주장패턴 || [];
-  if (!부위.length || !주장.length) return [];
-  return text
-    .split(/(?<=[.!?…]|다\.|요\.)\s+|\n+/)
-    .map((s) => s.trim())
-    .filter((s) => s && 부위.some((w) => s.includes(w)) && 주장.some((w) => s.includes(w)));
-}
-
-function validateDraft(text, keyword, minChars = CONFIG.최소글자수, title = "") {
-  const clean = stripPhotos(text);
-  const chars = noSpace(clean);
-  const photos = (text.match(/\[사진:/g) || []).length;
-  // 판정 기준은 키워드 '전체'가 몇 번 나왔나 — 네이버가 실제로 매칭하는 단위가 그것이다.
-  // 단어별 횟수는 어디가 모자란지 보여주는 참고값일 뿐 합격·불합격을 가르지 않는다.
-  const kwCount = countLoose(text, keyword);
-  const kwParts = (keyword || "").trim().split(/\s+/).filter(Boolean)
-    .map((w) => ({ word: w, count: countLoose(text, w) }));
-  const abstractFound = CONFIG.추상어.filter((w) => text.includes(w));
-  const medicalFound = CONFIG.의료법금지어.filter((w) => text.includes(w));
-  const overclaimFound = (논문.과장표현 || []).filter((w) => text.includes(w));
-  const pmids = [...new Set((text.match(pmidRe) || []).map((s) => s.replace(/\s+/g, " ").trim()))];
-  const claims = claimSentences(text);
-  const needsEvidence = claims.length > 0;
-
-  const issues = [];
-  // 제목은 상위노출에서 가장 무거운 자리다 — 키워드가 빠지면 본문이 아무리 좋아도 밀린다
-  if (title && keyword && countLoose(title, keyword) === 0)
-    issues.push(`제목에 키워드 "${keyword}"가 없음 — 제목에 자연스럽게 넣을 것`);
-  if (chars < minChars) issues.push(`글자수 부족: ${chars}자 (최소 ${minChars}자)`);
-  if (keyword && kwCount < CONFIG.키워드횟수.min)
-    issues.push(`키워드 "${keyword}" ${kwCount}회 (최소 ${CONFIG.키워드횟수.min}회 — 문장 안에 자연스럽게 더 넣을 것)`);
-  // 도배도 미달만큼 위험하다 — 네이버는 반복 과다를 키워드 스터핑으로 보고 감점한다.
-  else if (kwCount > CONFIG.키워드횟수.max)
-    issues.push(`키워드 "${keyword}" ${kwCount}회 과다 (최대 ${CONFIG.키워드횟수.max}회 — 일부를 다른 표현으로 바꿔 줄일 것)`);
-  if (abstractFound.length) issues.push(`추상어 사용: ${abstractFound.join(", ")}`);
-  if (medicalFound.length) issues.push(`의료법 주의 표현: ${medicalFound.join(", ")}`);
-  if (overclaimFound.length) issues.push(`과장 표현(논문 근거 없이 단정 금지): ${overclaimFound.join(", ")}`);
-  if (needsEvidence && pmids.length === 0)
-    issues.push(
-      `효능을 주장한 문장에 논문 근거(PMID)가 없음 — ${논문.출처}에서 🟢 확인 후 PMID를 붙이거나, 주장을 빼세요. ` +
-        `해당 문장: "${claims[0].slice(0, 60)}${claims[0].length > 60 ? "…" : ""}"`
-    );
-
-  // 권장 사항은 불합격 사유가 아니다 (화면의 ⚠️ 계산과 같은 규칙).
-  // 다만 AI에게는 함께 알려 준다 — 한 번 더 돌 때 같이 개선되게.
-  const advice = [];
-  if (photos < CONFIG.권장이미지최소) advice.push(`사진 자리 ${photos}곳 → ${CONFIG.권장이미지최소}곳 이상이면 더 좋음`);
-
-  return { chars, minChars, photos, kwCount, kwParts, abstractFound, medicalFound, overclaimFound,
-           pmids, needsEvidence, claims, issues, advice, pass: issues.length === 0 };
-}
+// 초안 채점 — 규칙은 web/rules.js에 있고 여기서는 서버 사정만 채워 넣는다.
+// 말투 "지시": AI에게 "무엇을 어떻게 고쳐라"까지 적어 준다. 그래야 실제로 고쳐진다.
+const validateDraft = (text, keyword, minChars = CONFIG.최소글자수, title = "", ref = null) =>
+  평가(text, { keyword, config: CONFIG, 목표글자수: minChars, ref, title, 말투: "지시" });
 
 // ---------- 레퍼런스 ----------
 // 파일명 앞 10자리 날짜로 오래된 순 정렬한 뒤, 키워드는 파일 '내용'으로 판별한다.
 // (파일명의 한글은 업로드 경로에 따라 자모 분리형이 될 수 있어 키로 쓰지 않는다)
+// 한 번 읽어 두고 폴더가 바뀔 때만 다시 읽는다.
+// 레퍼런스는 지금도 4MB이고 크롤링할수록 커지는데, 초안 생성·프롬프트 복사 때마다
+// 통째로 JSON.parse 하면 그동안 서버가 통으로 멈춘다(Node는 한 줄로 돈다).
+let 레퍼런스캐시 = null;
 function loadReferences() {
   if (!fs.existsSync(REF_DIR)) return [];
+  const 표식 = `${fs.statSync(REF_DIR).mtimeMs}`;
+  if (레퍼런스캐시?.표식 === 표식) return 레퍼런스캐시.목록;
+
   const newest = new Map(); // 키워드 → 레퍼런스 (뒤에서 덮어쓰므로 최신 수집분이 남음)
   for (const f of fs.readdirSync(REF_DIR).filter((f) => f.endsWith(".json")).sort()) {
     try {
@@ -167,36 +116,23 @@ function loadReferences() {
       if (r.keyword) newest.set(r.keyword.normalize("NFC"), r);
     } catch { /* 깨진 파일은 건너뜀 */ }
   }
-  return [...newest.values()].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const 목록 = [...newest.values()].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  레퍼런스캐시 = { 표식, 목록 };
+  return 목록;
 }
 
-// 어떤 레퍼런스를 참고할지 고른다. (web/app.js pickReference와 같은 규칙)
-// ① 띄어쓰기는 무시 — "여드름 피부관리" = "여드름피부관리"
-// ② 정확히 같은 키워드가 있으면 그것
-// ③ 없으면 한쪽이 다른 쪽을 품는 것 — "여드름"으로 써도 "여드름 피부관리" 40개를 참고할 수 있게.
-//    (원장은 보관함의 키워드를 통째로 외워 입력하지 않는다. 예전에는 여기서 조용히 빈손이 됐다)
-//    여러 개면 길이가 가장 가까운 것 = 가장 덜 벗어난 것을 고른다.
-export function pickReference(list, keyword) {
-  const want = despace((keyword || "").normalize("NFC"));
-  if (!want) return null;
-  let best = null, bestGap = Infinity;
-  for (const r of list) {
-    const k = despace((r.keyword || "").normalize("NFC"));
-    if (!k) continue;
-    if (k === want) return r;
-    if (k.includes(want) || want.includes(k)) {
-      const gap = Math.abs(k.length - want.length);
-      if (gap < bestGap) { best = r; bestGap = gap; }
-    }
-  }
-  return best;
-}
+// 어떤 레퍼런스를 참고할지 고르는 규칙은 web/rules.js pickReference에 있다.
 
 // 생성용: 파일명이 아니라 파일 안의 keyword로 찾는다.
 // (파일명에 한글이 들어가는데, 업로드 경로에 따라 자모 분리형으로 바뀔 수 있어 이름 비교는 조용히 실패한다)
 const findReference = (keyword) => pickReference(loadReferences(), keyword);
 
 // 레퍼런스 크롤링은 웹에서 하지 않는다 — 채팅(Claude)에서 scripts/crawl.mjs로 수집한다.
+
+// 초안 파일명 규칙 — 날짜 접두사 + 키워드. 슬래시·공백을 지우는 것이 validName을 통과시키는 핵심이라
+// 두 군데(AI 생성·직접 쓰기)가 따로 적어 두면 한쪽만 고쳐져 이름이 갈린다.
+const draftBaseName = (keyword) =>
+  `${new Date().toISOString().slice(0, 10)}_${keyword.replace(/[\/\s]+/g, "-")}`;
 
 // ---------- 초안 저장소 ----------
 // 인증 ON(배포): Supabase drafts 테이블(user_id별). OFF(로컬): 파일(DRAFT_DIR 루트).
@@ -209,6 +145,9 @@ function buildDraftContent(keyword, title, body, v) {
     "",
     `- 키워드: ${keyword} / 글자수(공백제외): ${v.chars.toLocaleString()}자 / 사진 자리: ${v.photos}곳`,
     `- 기계 검증: 글자수 ${ok(v.chars >= v.minChars)} (목표 ${v.minChars.toLocaleString()}자) · 키워드 ${v.kwCount}회 ${ok(v.kwCount >= CONFIG.키워드횟수.min && v.kwCount <= CONFIG.키워드횟수.max)} (${v.kwParts.map((k) => `${k.word} ${k.count}`).join(" / ")}) · 추상어 ${ok(!v.abstractFound.length)}${v.abstractFound.length ? ` (${v.abstractFound.join(", ")})` : ""} · 의료법 ${ok(!v.medicalFound.length)}${v.medicalFound.length ? ` (${v.medicalFound.join(", ")})` : ""}`,
+    // 편집기가 이 글을 다시 판정할 때 쓰는 값. 사람 문장에서 정규식으로 캐내지 않도록
+    // 기계가 읽을 자리를 따로 둔다 (문구를 다듬어도 판정이 조용히 틀어지지 않게).
+    `- 목표글자수: ${v.minChars}`,
     `- 생성: 웹 대시보드 (${MODEL})`,
     "",
     "---",
@@ -309,19 +248,20 @@ async function importSamples(uid) {
 }
 
 async function draftCreate(ctx, keyword, title, body, v) {
-  const base = `${new Date().toISOString().slice(0, 10)}_${keyword.replace(/[\/\s]+/g, "-")}`;
+  const base = draftBaseName(keyword);
   return store.create(ctx.userId, base, buildDraftContent(keyword, title, body, v));
 }
 
 // 손으로 쓰기 시작할 빈 초안. AI 생성이 막혀 있어도(크레딧·키 문제) 글은 쓸 수 있어야 한다.
 // 뼈대에 3대 기준과 목표치를 적어 둬서 무엇을 채워야 하는지 보이게 한다.
 function blankDraft(keyword, ref, 목표글자수) {
-  const target = (목표글자수 || targetCharsFor(ref)).toLocaleString();
+  const target = (목표글자수 || CONFIG.최소글자수).toLocaleString();
   const photos = targetPhotosFor(ref);
   return [
     `# ${keyword}`,
     "",
     `- 키워드: ${keyword} / 목표: 공백제외 ${target}자 이상 · 사진 ${photos}곳 이상`,
+    `- 목표글자수: ${목표글자수 || CONFIG.최소글자수}`,
     ref
       ? `- 참고 레퍼런스: "${ref.keyword}" ${ref.posts.length}개 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)`
       : `- 참고 레퍼런스 없음 — 기본 기준으로 씁니다`,
@@ -389,24 +329,14 @@ const SYSTEM_PROMPT = `당신은 에스테틱(피부관리실) 원장이 자기 
 첫 줄: 제목: <제목>
 둘째 줄부터: 본문 전체. 제목을 본문에서 반복하지 말고, 설명·머리말·맺음말 코멘트 없이 네이버 에디터에 그대로 붙여넣을 수 있는 본문만 출력한다.`;
 
-// 상위글 평균이 최소 기준보다 높으면 그 평균이 진짜 통과선이다 — 평균에 못 미치면 상위권에 못 낀다.
-// 상위글 평균은 2,000자를 넘기도 하지만, 원장이 실제로 매번 쓸 수 있는 분량이 아니면 의미가 없다.
 // 통과선은 최소글자수(1,300자), 노리는 지점은 권장글자수(1,500자)로 고정한다.
-const targetCharsFor = () => CONFIG.최소글자수;
+// 상위글 평균은 2,000자를 넘기도 하지만 원장이 매번 쓸 수 있는 분량이 아니라 목표로 삼지 않는다.
 const 권장글자수 = () => CONFIG.권장글자수 || CONFIG.최소글자수;
-// 상위글은 사진이 30장을 넘기도 하지만, 원장이 실제로 준비할 수 있는 양을 넘으면 초안이 무용지물이라
-// 인사이트 탭과 같은 기준(20장)으로 상한을 둔다.
-const targetPhotosFor = (ref) => Math.max(CONFIG.권장이미지최소, Math.min(ref?.avgImages || 0, 20));
+// 사진 목표는 web/rules.js targetPhotosFor가 정한다 — 설정만 여기서 채운다.
+const targetPhotosFor = (ref) => 사진목표(ref, CONFIG);
 
-// 원장이 글자수를 직접 정하면 그 값이 기준이 된다. 비우면 상위글 평균에 맞춘다.
-// 너무 짧으면 상위노출이 안 되고 너무 길면 안 쓰이므로 상식적인 범위로 자른다.
-const 요청글자수 = (v) => {
-  const n = Math.round(Number(v));
-  return Number.isFinite(n) && n >= 300 ? Math.min(n, 20000) : null;
-};
 
 function buildUserPrompt(keyword, region, point, ref, 목표글자수) {
-  const 목표 = 목표글자수 || targetCharsFor(ref);
   const lines = [`키워드: ${keyword}`];
   if (region) lines.push(`지역: ${region} (본문에 자연스럽게 반영)`);
   if (point) lines.push(`강조 포인트: ${point}`);
@@ -428,7 +358,7 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수) {
   lines.push(
     "",
     목표글자수
-      ? `[목표 분량] 공백 제외 ${목표.toLocaleString()}자 이상 (원장이 직접 지정한 값 — 반드시 맞출 것)`
+      ? `[목표 분량] 공백 제외 ${목표글자수.toLocaleString()}자 이상 (원장이 직접 지정한 값 — 반드시 맞출 것)`
       : `[목표 분량] 공백 제외 ${CONFIG.최소글자수.toLocaleString()}~${권장글자수().toLocaleString()}자 (이 범위를 노릴 것. 너무 길게 쓰지 말 것)`,
     `[사진 자리] ${targetPhotosFor(ref)}곳 이상${ref?.avgImages ? ` (상위글 평균 ${ref.avgImages}장)` : ""} — [사진: 설명] 형식으로 본문 곳곳에 배치`
   );
@@ -442,7 +372,7 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수) {
     "",
     "[제출 전 스스로 확인할 것 — 기계가 이 그대로 잽니다]",
     목표글자수
-      ? `1. 공백 제외 ${목표.toLocaleString()}자 이상인가`
+      ? `1. 공백 제외 ${목표글자수.toLocaleString()}자 이상인가`
       : `1. 공백 제외 ${CONFIG.최소글자수.toLocaleString()}자 이상이고 ${권장글자수().toLocaleString()}자 근처인가`,
     `2. 제목에 "${keyword}"가 통째로 들어갔는가`,
     `3. 본문에 "${keyword}"가 통째로(붙여서) ${CONFIG.키워드횟수.min}~${CONFIG.키워드횟수.max}회 들어갔는가 — 단어를 쪼개 흩어 놓으면 0회로 셉니다`,
@@ -576,9 +506,9 @@ const 소진안내 = () => {
 };
 // 어떤 모델이 왜 막혔는지는 관리자만 본다 — 원장에게는 소음이다.
 // 막힌 것만 보여주면 "나머지는 시도는 해봤나?"를 알 수 없다 — 통 전체를 보여준다.
-const 소진진단 = async (ctx) => {
+// 모델 목록은 오류에 실려 온다(오류를 설명하려고 구글에 다시 물어볼 일은 아니다).
+const 소진진단 = (ctx, 전체 = []) => {
   if (!ctx?.isAdmin) return "";
-  const 전체 = await geminiModels().catch(() => []);
   const 표 = 전체.map((m) => `${m}${소진됨(m) ? "(소진)" : ""}`).join(", ");
   return `\n[관리자용] 모델 ${전체.length}개: ${표 || "없음"}`;
 };
@@ -616,20 +546,23 @@ async function streamGemini(messages, send) {
   // 하루치를 다 쓴 모델은 아예 건너뛴다. 전부 그렇다면 두드려 봐야 429만 더 받는다 — 바로 알린다.
   const 순서 = models.filter((m) => !소진됨(m));
   if (!순서.length)
-    throw Object.assign(new Error("하루 한도"), { status: 429, 하루한도: true, engine: "gemini" });
+    throw Object.assign(new Error("하루 한도"), { status: 429, 하루한도: true, engine: "gemini", 모델들: models });
+
+  // 원장은 화면 앞에서 기다리고 있다. 모델을 다 훑느라 몇십 분씩 붙잡고 있으면
+  // 안 되는 것만 못하다 — 전체 시도에 시간 상한을 둔다.
+  const 마감 = Date.now() + 3 * 60_000;
 
   다음모델: for (const [i, model] of 순서.entries()) {
+    if (Date.now() > 마감) break;
     if (i > 0) send({ type: "status", message: `${model}로 바꿔서 다시 시도합니다` });
-    // 설정 이름은 모델 세대마다 다르다. 어느 쪽이 맞는지 넘겨짚지 않고 되는 것을 찾는다.
-    //   Gemini 3.x → thinkingLevel,  2.5 → thinkingBudget,  그 외 → 아무것도 안 붙임
-    // (2026-08-11: 3.6-flash에 thinkingBudget을 보내 빈 응답이 왔다)
-    for (const [이름, cfg] of 설정후보(model)) {
+    for (const cfg of 설정후보(model)) {
       for (let 시도 = 1; 시도 <= 2; 시도++) {
         let r;
         try {
           r = await fetch(
             `${GEMINI_BASE()}/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${encodeURIComponent(GEMINI_KEY())}`,
-            { method: "POST", headers: { "Content-Type": "application/json" }, body: 만들기(cfg) }
+            { method: "POST", headers: { "Content-Type": "application/json" }, body: 만들기(cfg),
+              signal: AbortSignal.timeout(90_000) } // 한 연결이 멎어도 요청 전체가 멎지 않게
           );
         } catch (e) {
           마지막오류 = Object.assign(new Error(String(e?.message || e)), { status: 502, engine: "gemini" });
@@ -638,13 +571,9 @@ async function streamGemini(messages, send) {
 
         if (r.ok) {
           const 결과 = await 읽기(r, send);
-          if (noSpace(결과.out) >= 100) {
-            GEMINI_설정.set(model, 이름); // 다음부터는 이 설정으로 바로 간다
-            return 결과.out;
-          }
+          if (noSpace(결과.out) >= 100) return 결과.out;
           // 200인데 글이 없다 = 이 설정이 이 모델에 안 맞는 것. 다음 후보로.
           마지막오류 = Object.assign(new Error(`글이 거의 나오지 않았습니다 — ${결과.이유}`), { status: 502, engine: "gemini" });
-          GEMINI_설정.delete(model);
           break;
         }
 
@@ -679,7 +608,7 @@ async function streamGemini(messages, send) {
   }
   // 도중에 모든 모델이 하루치를 다 썼다면 방식을 바꿔 봐야 소용없다 — 바로 알린다
   const 남은 = 순서.filter((m) => !소진됨(m));
-  if (!남은.length) throw Object.assign(마지막오류 ?? new Error("하루 한도"), { status: 429, 하루한도: true, engine: "gemini" });
+  if (!남은.length) throw Object.assign(마지막오류 ?? new Error("하루 한도"), { status: 429, 하루한도: true, engine: "gemini", 모델들: models });
 
   // 스트리밍(SSE)이 계속 빈손이면 방식을 바꿔 한 번만 통째로 받아 본다.
   // 스트리밍 쪽 문제라면 이걸로 그냥 되고, 아니면 왜 비었는지가 응답 안에 그대로 들어 있다.
@@ -716,14 +645,8 @@ async function 한번에받기(model, contents) {
     try { o = JSON.parse(raw); } catch { /* JSON이 아니면 원문만 남긴다 */ }
 
     const cand = o.candidates?.[0];
-    const text = (cand?.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || "").join("");
-    const 막힘 = o.promptFeedback?.blockReason;
-    const 끝 = cand?.finishReason;
-    const 이유 =
-      막힘 ? `요청이 안전 필터에 막혔습니다 (${막힘}) — 키워드나 강조 포인트를 바꿔 보세요`
-      : 끝 === "MAX_TOKENS" ? "출력 한도에 먼저 걸렸습니다"
-      : 끝 === "SAFETY" || 끝 === "PROHIBITED_CONTENT" ? "안전 필터에 걸렸습니다 — 키워드를 바꿔 보세요"
-      : 끝 ? `중단 사유: ${끝}` : `빈 응답 (HTTP ${r.status})`;
+    const text = 본문뽑기(cand);
+    const 이유 = 이유설명(o.promptFeedback?.blockReason, cand?.finishReason, ` (HTTP ${r.status})`);
 
     // 무엇이 왔는지 서버 기록에 남긴다 — 원인을 넘겨짚지 않으려고
     if (!text) console.error("[Gemini 빈 응답]", model, r.status, raw.slice(0, 600));
@@ -733,17 +656,30 @@ async function 한번에받기(model, contents) {
   }
 }
 
-// 어느 생각 설정이 통했는지 모델별로 기억한다 — 매번 처음부터 더듬지 않게
-const GEMINI_설정 = new Map();
-function 설정후보(model) {
-  const 전체 = [
-    ["thinkingLevel", { thinkingConfig: { thinkingLevel: "low" } }], // Gemini 3.x
-    ["thinkingBudget", { thinkingConfig: { thinkingBudget: 512 } }], // Gemini 2.5
-    ["없음", {}],                                                    // 둘 다 안 통할 때
-  ];
-  const 아는것 = GEMINI_설정.get(model);
-  return 아는것 ? [...전체.filter(([n]) => n === 아는것), ...전체.filter(([n]) => n !== 아는것)] : 전체;
-}
+// 생각 설정 이름은 모델 세대로 정해진다 — 세 가지를 매번 찔러 볼 일이 아니다.
+// 예전에는 후보 3개를 차례로 시도하며 되는 것을 찾았는데, 그러면 한 모델당 호출이
+// 3배로 불어난다(무료 등급의 분당·하루 한도를 그만큼 빨리 태운다).
+// 이름을 틀려도 빈손으로 끝나지 그냥 거절되므로, 규칙으로 정하고 안 되면 '없음' 한 번만 더 본다.
+const 생각설정 = (model) =>
+  /gemini-(?:[3-9]|\d\d)/.test(model) ? { thinkingConfig: { thinkingLevel: "low" } } // 3.x 이상
+  : /2\.5/.test(model) ? { thinkingConfig: { thinkingBudget: 512 } }                 // 2.5
+  : {};
+const 설정후보 = (model) => {
+  const 규칙 = 생각설정(model);
+  return Object.keys(규칙).length ? [규칙, {}] : [{}];
+};
+
+// 응답 한 덩어리에서 본문만 뽑는다 (스트리밍·일반 호출 양쪽이 같은 모양이다).
+// thought: true 인 조각은 모델의 생각이지 글이 아니다 — 본문에 섞으면 안 된다.
+const 본문뽑기 = (cand) =>
+  (cand?.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || "").join("");
+
+// 글이 안 나왔을 때 '왜'를 사람 말로. 두 경로가 같은 문구를 쓰도록 한곳에 둔다.
+const 이유설명 = (막힘, 끝, 꼬리 = "") =>
+  막힘 ? `요청이 안전 필터에 막혔습니다 (${막힘}) — 키워드나 강조 포인트를 바꿔 보세요`
+  : 끝 === "MAX_TOKENS" ? "출력 한도에 먼저 걸렸습니다"
+  : 끝 === "SAFETY" || 끝 === "PROHIBITED_CONTENT" ? "안전 필터에 걸렸습니다 — 키워드를 바꿔 보세요"
+  : 끝 ? `중단 사유: ${끝}` : `빈 응답이 왔습니다${꼬리}`;
 
 // SSE를 읽어 본문만 모은다. 왜 비었는지도 함께 돌려준다.
 async function 읽기(res, send) {
@@ -762,8 +698,7 @@ async function 읽기(res, send) {
         if (o.promptFeedback?.blockReason) 막힘 = o.promptFeedback.blockReason;
         const cand = o.candidates?.[0];
         if (cand?.finishReason) 끝난이유 = cand.finishReason;
-        // thought: true 인 조각은 모델의 생각이지 글이 아니다 — 본문에 섞으면 안 된다
-        const text = (cand?.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || "").join("");
+        const text = 본문뽑기(cand);
         if (text) {
           out += text;
           send({ type: "delta", text });
@@ -783,13 +718,7 @@ async function 읽기(res, send) {
     처리(events);
   }
   처리(buf.split("\n\n")); // 끝에 빈 줄 없이 끝나는 마지막 이벤트도 챙긴다
-
-  const 이유 =
-    막힘 ? `요청이 안전 필터에 막혔습니다 (${막힘}) — 키워드를 바꿔 보세요`
-    : 끝난이유 === "MAX_TOKENS" ? "출력 한도에 먼저 걸렸습니다"
-    : 끝난이유 === "SAFETY" || 끝난이유 === "PROHIBITED_CONTENT" ? "안전 필터에 걸렸습니다 (키워드를 바꿔 보세요)"
-    : 끝난이유 ? `중단 사유: ${끝난이유}` : "빈 응답이 왔습니다";
-  return { out, 이유 };
+  return { out, 이유: 이유설명(막힘, 끝난이유) };
 }
 
 const streamOnce = (client, messages, send) =>
@@ -855,7 +784,6 @@ async function refundQuota(ctx) {
   if (ctx.unlimited || !ctx.profile) return;
   const p = ctx.profile;
   const mk = monthKey();
-  if (p.usage_month !== mk || !(p.usage_count >= 0)) return;
   const { data } = await supaAdmin.from("profiles").select("usage_month, usage_count").eq("id", p.id).single();
   if (data?.usage_month !== mk || !(data.usage_count > 0)) return;
   await supaAdmin.from("profiles").update({ usage_count: data.usage_count - 1 }).eq("id", p.id);
@@ -908,31 +836,26 @@ async function handleGenerate(res, body, ctx) {
       const 쓸것 = (await geminiModels()).filter((m) => !소진됨(m));
       send({ type: "status", message: `무료 엔진(Gemini ${쓸것[0] || "재확인 중"})으로 작성합니다` });
     }
-    // 원장이 직접 정한 글자수가 있으면 그것이 기준 (프롬프트와 검증이 같은 값을 봐야 한다)
-    const targetChars = 요청글자수(body.chars) || targetCharsFor(ref);
-    if (요청글자수(body.chars)) send({ type: "status", message: `목표 글자수 ${targetChars.toLocaleString()}자로 맞춰 작성합니다` });
-    const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, targetChars) }];
+    // 원장이 직접 정한 글자수가 있으면 그것이 기준 (프롬프트와 검증이 같은 값을 봐야 한다).
+    // 지정이 없으면 null 그대로 넘긴다 — 그래야 프롬프트가 "직접 지정한 값" 대신
+    // 권장 범위로 안내한다. (예전엔 여기서 기본값을 채워 넣어, 안 정했는데도
+    // "원장이 직접 지정한 값 — 반드시 맞출 것"이라고 시키고 있었다.)
+    const 지정 = 요청글자수(body.chars);
+    const targetChars = 지정 || CONFIG.최소글자수;
+    if (지정) send({ type: "status", message: `목표 글자수 ${targetChars.toLocaleString()}자로 맞춰 작성합니다` });
+    const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정) }];
     const check = (d) => {
       const p = parseDraftOutput(d, keyword);
-      return { parsed: p, validation: validateDraft(`${p.title}\n${p.body}`, keyword, targetChars, p.title) };
+      return { parsed: p, validation: validateDraft(`${p.title}\n${p.body}`, keyword, targetChars, p.title, ref) };
     };
 
-    // 첫 응답이 비어 오는 일이 있다(생각만 하다 끝나는 경우). 한 번은 다시 물어본다.
-    let draft;
-    for (let 시도 = 1; ; 시도++) {
-      try {
-        draft = await streamOnce(client, messages, send);
-        break;
-      } catch (e) {
-        if (e?.status !== 502 || 시도 >= 2) throw e;
-        send({ type: "status", message: "글이 안 나와서 다시 요청합니다" });
-        send({ type: "reset" });
-      }
-    }
+    // 엔진이 이미 쓸 수 있는 모델을 모두 훑고 일반 호출까지 해 본 뒤에 던진다.
+    // 여기서 한 번 더 부르면 그 전부를 처음부터 되풀이할 뿐이다 (무료 한도만 두 배로 태운다).
+    let draft = await streamOnce(client, messages, send);
     let { parsed, validation } = check(draft);
     // 마지막 시도가 늘 제일 낫지는 않다. 고쳐 쓰다 더 나빠질 수도 있으므로 제일 좋았던 것을 들고 간다.
     // 순위: 통과 여부 → 남은 고칠 점이 적은 순 → 긴 순.
-    let best = { draft, parsed, validation };
+    let best = { parsed, validation };
     const 더나은가 = (a, b) =>
       a.validation.pass !== b.validation.pass ? a.validation.pass
       : a.validation.issues.length !== b.validation.issues.length ? a.validation.issues.length < b.validation.issues.length
@@ -956,7 +879,7 @@ async function handleGenerate(res, body, ctx) {
         throw e;
       }
       ({ parsed, validation } = check(draft));
-      const 이번 = { draft, parsed, validation };
+      const 이번 = { parsed, validation };
       const 나아졌나 = 더나은가(이번, best);
       if (나아졌나) best = 이번;
       // 안 나아지면 더 불러도 대개 안 나아진다. 무료 등급의 분당 한도를 헛되이 태우지 않는다.
@@ -980,7 +903,7 @@ async function handleGenerate(res, body, ctx) {
     console.error("[generate 실패]", e); // 상세 원인은 서버 로그에 남긴다
     // 글을 못 받았으면 월 한도를 도로 채워 준다 — 실패로 15회가 닳으면 안 된다
     if (차감함) await refundQuota(ctx).catch(() => {});
-    send({ type: "error", message: (await describeError(e, ctx)) + (차감함 ? " (이번 실패는 월 한도에서 차감하지 않았습니다)" : "") });
+    send({ type: "error", message: describeError(e, ctx) + (차감함 ? " (이번 실패는 월 한도에서 차감하지 않았습니다)" : "") });
   } finally {
     res.end();
   }
@@ -997,7 +920,7 @@ const 크레딧부족 = (e) => /credit balance is too low/i.test(String(e?.messa
 // AI가 막혀도 글은 쓸 수 있다 — 막다른 길로 끝내지 않고 다음 수를 알려준다
 const 대안안내 = " AI 없이 쓰시려면 ✍️ 직접 쓰기, 또는 📋 AI 프롬프트 복사로 claude.ai에 붙여넣으세요.";
 
-async function describeError(e, ctx) {
+function describeError(e, ctx) {
   const type = e?.type;
   const status = e?.status;
   if (e?.engine === "gemini") {
@@ -1008,7 +931,7 @@ async function describeError(e, ctx) {
     if (status === 429)
       return e?.하루한도
         ? "무료 엔진의 오늘 몫을 다 썼습니다 (구글 무료 등급의 하루 한도 — 회원님의 월 한도와는 별개입니다). " +
-          `${소진안내()}에 다시 열립니다.` + 대안안내 + (await 소진진단(ctx))
+          `${소진안내()}에 다시 열립니다.` + 대안안내 + 소진진단(ctx, e?.모델들)
         : "무료 엔진이 지금 분당 한도에 걸렸습니다. 1분 뒤에 다시 눌러 주세요. (하루 한도가 끝난 것이 아닙니다)" + 대안안내;
     if (status === 404)
       return adminHint(
@@ -1107,10 +1030,13 @@ const server = http.createServer(async (req, res) => {
       if (!ctx.authOn) return json(res, 400, { error: "로컬 모드에는 회원 명부가 없습니다" });
       if (!ctx.isAdmin) return json(res, 403, { error: "관리자 전용" });
       if (req.method === "GET") {
-        const { data } = await supaAdmin.from("profiles").select("*").order("created_at", { ascending: false });
         // 누가 몇 번 썼는지 한눈에 — 초안을 하나씩 열어보지 않아도 되게.
         // 본문은 가져오지 않는다(목록에 필요 없고 양이 크다). 관리자만 오는 경로다.
-        const { data: rows } = await supaAdmin.from("drafts").select("user_id,updated_at");
+        // 서로 무관한 조회라 함께 보낸다.
+        const [{ data }, { data: rows }] = await Promise.all([
+          supaAdmin.from("profiles").select("*").order("created_at", { ascending: false }),
+          supaAdmin.from("drafts").select("user_id,updated_at"),
+        ]);
         const 통계 = new Map();
         for (const r of rows || []) {
           const s = 통계.get(r.user_id) || { count: 0, last: null };
@@ -1153,7 +1079,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const keyword = (body.keyword || "").trim();
       if (!keyword) return json(res, 400, { error: "키워드를 입력하세요" });
-      const base = `${new Date().toISOString().slice(0, 10)}_${keyword.replace(/[\/\s]+/g, "-")}`;
+      const base = draftBaseName(keyword);
       const file = await store.create(ctx.userId, base, blankDraft(keyword, findReference(keyword), 요청글자수(body.chars)));
       return json(res, 200, { file });
     }

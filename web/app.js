@@ -1,4 +1,10 @@
 // 블로그봇 대시보드 프런트
+// 판정 규칙은 서버와 같은 파일을 쓴다 — 두 벌로 두면 반드시 갈라진다 (web/rules.js)
+import {
+  noSpace, stripPhotos, countWord, despace, countLoose,
+  요청글자수, 적힌목표, pickReference, targetPhotosFor, 평가,
+} from "/rules.js";
+
 const $ = (sel) => document.querySelector(sel);
 let CONFIG = null;
 let REFS = [];
@@ -42,33 +48,7 @@ const api = async (url, opts = {}) => {
   if (!res.ok) throw new Error(data.error || res.statusText);
   return data;
 };
-const noSpace = (t) => t.replace(/\s/g, "").length;
-const stripPhotos = (t) => t.replace(/\[사진:[^\]]*\]/g, "");
-const countWord = (text, w) => (w ? text.split(w).length - 1 : 0);
-// 네이버는 검색어의 띄어쓰기를 무시하고 매칭한다 — 세는 쪽도 양쪽 공백을 지우고 비교해야
-// "여드름 피부관리"로 넣든 "여드름피부관리"로 넣든 같은 결과가 나온다. (server.mjs와 동일 규칙)
-const despace = (t) => (t || "").replace(/\s+/g, "");
-const countLoose = (text, w) => countWord(despace(text), despace(w));
-// 상위글은 사진이 30장을 넘기도 하지만 원장이 실제로 준비할 수 있는 양을 넘으면 의미가 없어
-// 20장에서 끊는다 (server.mjs targetPhotosFor · 인사이트 탭과 같은 기준).
-const targetPhotosOf = (ref) => Math.max(CONFIG.권장이미지최소, Math.min(ref?.avgImages || 0, 20));
-// 참고할 레퍼런스 고르기 (server.mjs pickReference와 같은 규칙)
-// 정확히 같은 키워드 우선, 없으면 한쪽이 다른 쪽을 품는 것 중 길이가 가장 가까운 것.
-// "여드름"만 쳐도 "여드름 피부관리" 레퍼런스를 참고하게 하려는 것.
-function pickReference(list, keyword) {
-  const want = despace(keyword);
-  if (!want) return null;
-  let best = null, bestGap = Infinity;
-  for (const r of list) {
-    const k = despace(r.keyword);
-    if (k === want) return r;
-    if (k.includes(want) || want.includes(k)) {
-      const gap = Math.abs(k.length - want.length);
-      if (gap < bestGap) { best = r; bestGap = gap; }
-    }
-  }
-  return best;
-}
+const targetPhotosOf = (ref) => targetPhotosFor(ref, CONFIG);
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // 초안 파일에서 헤더(--- 위)를 뺀 본문만 추출
@@ -77,14 +57,12 @@ function draftBody(content) {
   return idx >= 0 ? content.slice(idx + 5).trim() : content.trim();
 }
 
-// 원장이 글자수를 직접 지정하고 쓴 글은 그 값으로 판정해야 한다.
-// 그 값은 머리말 메모에 "목표 1,200자"로 적혀 있다 (본문에는 없으니 원본에서 읽는다).
-// 없으면 0 — 그때는 기본 기준(최소글자수)을 쓴다.
-function 적힌목표(content) {
-  const 머리 = content.split("\n---\n")[0];
-  const n = Number((머리.match(/목표[^0-9\n]{0,12}([\d,]+)\s*자/) || [])[1]?.replace(/,/g, ""));
-  return n >= 300 && n <= 20000 ? n : 0;
-}
+const 권장글자수 = () => CONFIG.권장글자수 || CONFIG.최소글자수;
+// 목표를 사람에게 보여 주는 문구 — 생성 안내와 검증 패널이 같은 말을 하도록 한 곳에 둔다
+const 분량표시 = (목표) =>
+  목표 ? `${목표.toLocaleString()}자 (직접 지정)`
+       : `${CONFIG.최소글자수.toLocaleString()}~${권장글자수().toLocaleString()}자`;
+
 
 // ---------- 탭 1: 레퍼런스 보관함 ----------
 async function loadRefs() {
@@ -152,8 +130,6 @@ function renderInsights() {
     const benefitRate = Math.round((titles.filter((t) => benefitWords.some((w) => t.includes(w))).length / titles.length) * 100) || 0;
     const tokens = r.keyword.split(/\s+/);
     const kwInTitle = Math.round((titles.filter((t) => tokens.some((k) => t.includes(k))).length / titles.length) * 100) || 0;
-    const targetChars = CONFIG?.최소글자수 || 1300;
-    const 권장 = CONFIG?.권장글자수 || targetChars;
     return `<div class="card insight-card">
       <h3>${esc(r.keyword)}</h3>
       <div class="stat-row">
@@ -163,7 +139,7 @@ function renderInsights() {
         <div class="stat"><div class="num">${benefitRate}%</div><div class="label">제목에 이득/손해 단어</div></div>
         <div class="stat"><div class="num">${kwInTitle}%</div><div class="label">제목에 키워드 일부 포함</div></div>
       </div>
-      <div class="reco">📌 이 키워드로 쓸 때: 공백제외 <b>${targetChars.toLocaleString()}~${권장.toLocaleString()}자</b>,
+      <div class="reco">📌 이 키워드로 쓸 때: 공백제외 <b>${분량표시(0)}</b>,
       사진 <b>${Math.max(CONFIG?.권장이미지최소 || 10, Math.min(r.avgImages, 20))}장 이상</b>,
       제목에 숫자와 이득/손해 암시 넣기${numRate < 50 ? " (상위글 대부분 숫자가 없으니 숫자로 차별화 가능)" : ""}</div>
     </div>`;
@@ -327,74 +303,12 @@ async function openDraft(name, el) {
   runValidation();
 }
 
-// 초안 하나를 채점한다. 오른쪽 검증 패널과 왼쪽 목록 배지가 같은 기준을 쓰도록
-// 계산은 전부 여기 모아두고, 두 화면은 이 결과를 그리기만 한다.
+// 초안 하나를 채점한다. 규칙은 서버와 같은 파일(rules.js)이 갖고 있고,
+// 여기서는 브라우저 사정(설정·레퍼런스 목록)만 채워 넣는다.
+// 말투 "요약": 검증 패널이 좁아 짧게 말한다. 조건은 서버와 한 글자도 다르지 않다.
 function evaluateDraft(body, keyword, 지정목표 = 0) {
-  const 논문 = CONFIG.논문검증 || {};
-  const chars = noSpace(stripPhotos(body));
-  const photos = (body.match(/\[사진:/g) || []).length;
-  const abstractFound = CONFIG.추상어.filter((w) => body.includes(w));
-  const medicalFound = CONFIG.의료법금지어.filter((w) => body.includes(w));
-  const overclaimFound = (논문.과장표현 || []).filter((w) => body.includes(w));
-  const pmidRe = new RegExp(논문.PMID정규식 || "PMID\\s*\\d{5,8}", "g");
-  const pmids = [...new Set((body.match(pmidRe) || []).map((s) => s.replace(/\s+/g, " ").trim()))];
-  // 논문 근거는 '효능을 주장할 때'만 요구한다 — 단어만 보고 요구하면 평범한 후기도 전부 걸린다
-  // (server.mjs claimSentences와 같은 규칙)
-  const 부위 = 논문.효능키워드 || [];
-  const 주장 = 논문.효능주장패턴 || [];
-  const claims = 부위.length && 주장.length
-    ? body.split(/(?<=[.!?…]|다\.|요\.)\s+|\n+/).map((s) => s.trim())
-        .filter((s) => s && 부위.some((w) => s.includes(w)) && 주장.some((w) => s.includes(w)))
-    : [];
-  const needsEvidence = claims.length > 0;
-  // 합격선은 '키워드 전체'가 몇 번 나왔나 — 네이버가 매칭하는 단위가 그것이다.
-  // 단어별 횟수는 어디가 모자란지 보라고 곁들일 뿐 판정하지 않는다.
-  const kwCount = countLoose(body, keyword);
-  const tokens = keyword.split(/\s+/).filter(Boolean);
-  const kwLack = !!keyword && kwCount < CONFIG.키워드횟수.min;
-  const kwOver = !!keyword && kwCount > CONFIG.키워드횟수.max;
-  // 제목은 상위노출에서 가장 무거운 자리인데 지금까지 아무 검사도 없었다
-  // AI 생성분은 "제목: X" 형식, 손으로 쓴 견본은 마크다운 헤딩("## X")을 쓴다 — 둘 다 받는다
-  const title = (body.match(/^제목:\s*(.+)$/m) || body.match(/^#{1,3}\s+(.+)$/m) || [])[1]?.trim() || "";
-  const titleHasKw = !!title && !!keyword && countLoose(title, keyword) > 0;
-  const titleHasNum = /\d/.test(title);
-  const titleLen = noSpace(title);
-  // 통과선은 최소글자수, 노리는 지점은 권장글자수 (server.mjs targetCharsFor와 동일).
-  // 상위글 평균은 2,000자를 넘기도 하지만 원장이 매번 쓸 수 있는 분량이 아니라 목표로 삼지 않는다.
-  // 원장이 직접 지정한 글자수가 있으면 그것이 기준 — 1,200자로 시켜 놓고
-  // "목표 1,300~1,500자"로 판정하면 원장은 왜 걸렸는지 알 수 없다.
   const refHit = pickReference(REFS, keyword);
-  const targetChars = 지정목표 || CONFIG.최소글자수;
-  const targetPhotos = targetPhotosOf(refHit);
-
-  // 반드시 고쳐야 하는 것(issues)과 고치면 더 좋은 것(advice)을 나눈다.
-  // 섞어 두면 ⚠️ 숫자가 부풀어 진짜 문제가 묻힌다 — 사진 수는 권장치일 뿐 불합격 사유가 아니다.
-  const issues = [];
-  const advice = [];
-  if (title && keyword && !titleHasKw) issues.push(`제목에 키워드 "${keyword}" 없음`);
-  if (chars < targetChars) issues.push(`글자수 ${chars.toLocaleString()}자 (목표 ${targetChars.toLocaleString()}자)`);
-  if (kwLack) {
-    // 단어는 다 들어갔는데 통째로만 없는 경우가 잦다 — 무엇을 하라는 건지 알려준다
-    const eachEnough = tokens.length > 1 && tokens.every((t) => countLoose(body, t) >= CONFIG.키워드횟수.min);
-    issues.push(
-      kwCount === 0 && eachEnough
-        ? `키워드를 통째로 쓴 곳이 없음 — "${keyword}"를 붙여서 ${CONFIG.키워드횟수.min}번 이상 넣으세요`
-        : `키워드 ${kwCount}회 — 최소 ${CONFIG.키워드횟수.min}회`
-    );
-  }
-  if (kwOver) issues.push(`키워드 ${kwCount}회 과다 — 최대 ${CONFIG.키워드횟수.max}회`);
-  if (abstractFound.length) issues.push(`추상어 ${abstractFound.length}개: ${abstractFound.join(", ")}`);
-  if (medicalFound.length) issues.push(`의료법 주의 ${medicalFound.length}개: ${medicalFound.join(", ")}`);
-  if (overclaimFound.length) issues.push(`과장 표현 ${overclaimFound.length}개: ${overclaimFound.join(", ")}`);
-  if (needsEvidence && !pmids.length)
-    issues.push(`효능을 주장한 문장에 논문 근거(PMID) 없음 — "${claims[0].slice(0, 40)}${claims[0].length > 40 ? "…" : ""}"`);
-
-  if (photos < targetPhotos) advice.push(`사진 자리 ${photos}곳 → ${targetPhotos}곳 이상이면 더 좋습니다`);
-  if (title && !titleHasNum) advice.push("제목에 숫자를 넣으면 상위노출에 유리합니다");
-
-  return { chars, targetChars, refHit, photos, targetPhotos, kwCount, tokens, kwLack, kwOver,
-           title, titleHasKw, titleHasNum, titleLen,
-           abstractFound, medicalFound, overclaimFound, pmids, needsEvidence, issues, advice };
+  return { ...평가(body, { keyword, config: CONFIG, 목표글자수: 지정목표, ref: refHit, 말투: "요약" }), refHit };
 }
 
 // 실시간 검증
@@ -408,7 +322,7 @@ function runValidation() {
   }
   const body = draftBody(raw);
   const keyword = $("#draft-keyword").value.trim();
-  const { chars, targetChars, refHit, photos, targetPhotos, kwCount, tokens, kwLack, kwOver,
+  const { chars, targetChars, 지정목표, refHit, photos, targetPhotos, kwCount, tokens, kwLack, kwOver,
           title, titleHasKw, titleHasNum, titleLen,
           abstractFound, medicalFound, overclaimFound, pmids, needsEvidence,
           issues, advice } = evaluateDraft(body, keyword, 적힌목표(raw));
@@ -434,11 +348,7 @@ function runValidation() {
     ${verdict}${tips}
     <h4>3대 기준 검증</h4>
     <div class="v-item"><span>글자수 (공백제외)</span><span class="${ok(chars >= targetChars)}">${chars.toLocaleString()}자</span></div>
-    <div class="v-item"><span>목표 기준</span><span class="muted">${
-      targetChars === CONFIG.최소글자수
-        ? `${targetChars.toLocaleString()}~${(CONFIG.권장글자수 || targetChars).toLocaleString()}자`
-        : `${targetChars.toLocaleString()}자 (직접 지정)`
-    }</span></div>
+    <div class="v-item"><span>목표 기준</span><span class="muted">${분량표시(지정목표)}</span></div>
     <div class="v-item"><span>사진 자리</span><span class="${photos >= targetPhotos ? "v-ok" : "v-warn"}">${photos}곳</span></div>
     ${refHit ? `<div class="v-sub">${targetPhotos}곳 이상 권장 · 상위글 평균 ${refHit.avgImages}장</div>` : ""}
     ${title
@@ -518,17 +428,13 @@ function updateGenHint() {
     return (el.textContent = "");
   }
   const ref = pickReference(REFS, kw);
-  const 지정 = Math.round(Number($("#gen-chars").value));
-  const 목표 = Number.isFinite(지정) && 지정 >= 300 ? Math.min(지정, 20000) : null;
-  const 분량표시 = 목표
-    ? `${목표.toLocaleString()}자 (직접 지정)`
-    : `${CONFIG.최소글자수.toLocaleString()}~${(CONFIG.권장글자수 || CONFIG.최소글자수).toLocaleString()}자`;
+  const 표시 = 분량표시(요청글자수($("#gen-chars").value));
   el.className = `gen-hint ${ref ? "ok" : "warn"}`;
   // 정확히 같은 키워드가 아니면 어느 레퍼런스를 참고하는지 밝힌다 (엉뚱한 걸 참고하는지 원장이 알아야 한다)
   const via = ref && despace(ref.keyword) !== despace(kw) ? `"${ref.keyword}" ` : "";
   el.textContent = ref
-    ? `✅ ${via}레퍼런스 ${ref.posts.length}개 참고 — 목표 ${분량표시} · 사진 ${targetPhotosOf(ref)}곳 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)`
-    : `⚠️ 이 키워드는 레퍼런스가 없어 기본 기준으로 씁니다 — 목표 ${분량표시}. 보관함에 먼저 크롤링하면 품질이 올라갑니다`;
+    ? `✅ ${via}레퍼런스 ${ref.posts.length}개 참고 — 목표 ${표시} · 사진 ${targetPhotosOf(ref)}곳 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)`
+    : `⚠️ 이 키워드는 레퍼런스가 없어 기본 기준으로 씁니다 — 목표 ${표시}. 보관함에 먼저 크롤링하면 품질이 올라갑니다`;
 }
 $("#gen-keyword").addEventListener("input", updateGenHint);
 $("#gen-chars").addEventListener("input", updateGenHint);
