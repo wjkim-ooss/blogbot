@@ -469,11 +469,16 @@ const engineName = () => (process.env.ANTHROPIC_API_KEY ? "claude" : GEMINI_KEY(
 // 그래서 이름을 박아두지 않고, 키로 쓸 수 있는 모델을 직접 물어봐서 고른다.
 // 선호 순서에 없더라도 flash 계열이 있으면 그중 최신을 쓴다 — 다음에 또 바뀌어도 안 깨지게.
 const GEMINI_선호 = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"];
-let geminiModelP = null;
-const geminiModel = () =>
-  process.env.GEMINI_MODEL ? Promise.resolve(process.env.GEMINI_MODEL) : (geminiModelP ??= resolveGeminiModel());
+let geminiModelsP = null;
+// 하나만 고르지 않고 '쓸 수 있는 순서'로 받아 둔다.
+// 무료 모델은 특정 시간대에 붐벼서 "high demand"로 거절당하는데(2026-08-11 겪음),
+// 그럴 때 다음 모델로 넘어가면 원장은 기다리지 않아도 된다.
+const geminiModels = () =>
+  process.env.GEMINI_MODEL
+    ? Promise.resolve([process.env.GEMINI_MODEL])
+    : (geminiModelsP ??= resolveGeminiModels());
 
-async function resolveGeminiModel() {
+async function resolveGeminiModels() {
   try {
     const res = await fetch(`${GEMINI_BASE()}/v1beta/models?key=${encodeURIComponent(GEMINI_KEY())}&pageSize=200`);
     if (!res.ok) throw new Error(`목록 조회 실패 (HTTP ${res.status})`);
@@ -482,23 +487,29 @@ async function resolveGeminiModel() {
       .map((m) => (m.name || "").replace(/^models\//, "")) || [];
     if (!names.length) throw new Error("쓸 수 있는 모델이 없습니다");
 
-    const pick =
-      GEMINI_선호.find((want) => names.includes(want)) ||
-      // 선호 목록에 없으면 flash 계열 중 버전이 가장 높은 것 (preview·특수 모델은 뒤로)
-      names
-        .filter((n) => n.includes("flash") && !/preview|tts|live|image|audio|thinking/.test(n))
-        .sort((a, b) => (parseFloat(b.match(/[\d.]+/)?.[0] || 0)) - (parseFloat(a.match(/[\d.]+/)?.[0] || 0)))[0] ||
-      names[0];
-    console.log(`Gemini 모델 선택: ${pick} (사용 가능 ${names.length}개)`);
-    return pick;
+    // 선호 순서 먼저, 그다음 flash 계열을 최신순으로 (preview·특수 모델은 제외)
+    const 나머지 = names
+      .filter((n) => !GEMINI_선호.includes(n))
+      .filter((n) => n.includes("flash") && !/preview|tts|live|image|audio|thinking|embedding/.test(n))
+      .sort((a, b) => parseFloat(b.match(/[\d.]+/)?.[0] || 0) - parseFloat(a.match(/[\d.]+/)?.[0] || 0));
+    const 순서 = [...GEMINI_선호.filter((w) => names.includes(w)), ...나머지];
+    const 최종 = 순서.length ? 순서 : [names[0]];
+    console.log(`Gemini 모델 순서: ${최종.join(" → ")} (사용 가능 ${names.length}개)`);
+    return 최종;
   } catch (e) {
-    geminiModelP = null; // 실패는 기억하지 않는다 — 다음 요청에서 다시 시도
+    geminiModelsP = null; // 실패는 기억하지 않는다 — 다음 요청에서 다시 시도
     const err = new Error(`쓸 수 있는 모델을 찾지 못했습니다: ${e.message}`);
     err.engine = "gemini";
     err.status = 404;
     throw err;
   }
 }
+
+// 지금 붐비는 것(잠시 뒤 되는 것)과 오늘 한도를 다 쓴 것(내일까지 안 되는 것)은 다르게 다뤄야 한다.
+const 붐빔 = (status, body) =>
+  status === 503 || /high demand|overloaded|unavailable|try again later/i.test(body || "");
+const 한도초과 = (status, body) => status === 429 && !붐빔(status, body);
+const 잠시 = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function streamClaude(client, messages, send) {
   const stream = client.messages.stream({
@@ -514,30 +525,42 @@ async function streamClaude(client, messages, send) {
 }
 
 // Gemini는 SDK 없이 REST로 부른다 (의존성을 늘리지 않으려고).
+// 붐비면 잠깐 쉬었다 다시, 그래도 안 되면 다음 모델로 넘어간다.
+// 원장 입장에서 "나중에 다시 해보세요"는 사실상 못 쓰는 것이나 마찬가지라서.
 async function streamGemini(messages, send) {
-  const model = await geminiModel();
-  const url =
-    `${GEMINI_BASE()}/v1beta/models/${model}:streamGenerateContent` +
-    `?alt=sse&key=${encodeURIComponent(GEMINI_KEY())}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-      // Claude 쪽과 messages 모양을 맞춰 두었으므로 그대로 옮긴다 (보완 호출도 같은 경로를 탄다)
-      contents: messages.map((m) => ({
-        role: m.role === "assistant" ? "model" : "user",
-        parts: [{ text: m.content }],
-      })),
-    }),
+  const models = await geminiModels();
+  const body = JSON.stringify({
+    system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+    // Claude 쪽과 messages 모양을 맞춰 두었으므로 그대로 옮긴다 (보완 호출도 같은 경로를 탄다)
+    contents: messages.map((m) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }],
+    })),
   });
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    const err = new Error(detail || `HTTP ${res.status}`);
-    err.status = res.status;
-    err.engine = "gemini";
-    throw err;
+
+  let res, 마지막오류;
+  바깥: for (const [i, model] of models.entries()) {
+    for (let 시도 = 1; 시도 <= 2; 시도++) {
+      const r = await fetch(
+        `${GEMINI_BASE()}/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${encodeURIComponent(GEMINI_KEY())}`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body }
+      );
+      if (r.ok) { res = r; break 바깥; }
+
+      const detail = await r.text().catch(() => "");
+      마지막오류 = Object.assign(new Error(detail || `HTTP ${r.status}`), { status: r.status, engine: "gemini" });
+      if (한도초과(r.status, detail)) break 바깥; // 한도는 모델을 바꿔도 안 풀린다
+      if (!붐빔(r.status, detail)) break 바깥; // 키·요청 문제는 재시도해도 같다
+
+      if (시도 === 1) {
+        send({ type: "status", message: `${model}이(가) 붐빕니다 — 3초 뒤 다시 시도합니다` });
+        await 잠시(3000);
+      } else if (i < models.length - 1) {
+        send({ type: "status", message: `${model} 대신 ${models[i + 1]}로 바꿔서 작성합니다` });
+      }
+    }
   }
+  if (!res) throw 마지막오류;
 
   let out = "";
   let buf = "";
@@ -665,7 +688,7 @@ async function handleGenerate(res, body, ctx) {
       const { default: Anthropic } = await import("@anthropic-ai/sdk");
       client = new Anthropic();
     } else {
-      send({ type: "status", message: `무료 엔진(Gemini ${await geminiModel()})으로 작성합니다` });
+      send({ type: "status", message: `무료 엔진(Gemini ${(await geminiModels())[0]})으로 작성합니다` });
     }
     const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref) }];
 
@@ -726,6 +749,9 @@ function describeError(e, ctx) {
   const type = e?.type;
   const status = e?.status;
   if (e?.engine === "gemini") {
+    const 원문 = String(e?.message || e);
+    if (붐빔(status, 원문))
+      return "무료 엔진이 지금 많이 붐빕니다. 쓸 수 있는 모델을 모두 시도했지만 전부 대기 중입니다. 잠시 뒤 다시 눌러 주세요." + 대안안내;
     if (status === 429)
       return "무료 엔진의 오늘 사용량을 다 썼습니다. 내일 다시 열립니다." + 대안안내;
     if (status === 404)
