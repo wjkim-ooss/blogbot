@@ -232,9 +232,19 @@ const supaStore = {
 // 저장 백엔드는 시작 시 한 번 결정 (인증 ON=Supabase, OFF=로컬 파일)
 const store = AUTH_ON ? supaStore : fileStore;
 
-// 견본 초안 = 저장소(git)에 함께 배포되는 drafts/*.md — 배포 모드에서 각 회원 계정으로 복사해 준다
-const listSamples = () =>
-  fs.existsSync(DRAFT_DIR) ? fs.readdirSync(DRAFT_DIR).filter((f) => f.endsWith(".md")) : [];
+// 견본 초안 = 배포 모드에서 원장 계정으로 복사해 주는 본보기 글.
+// 무엇이 견본인지는 config.json의 견본초안 목록이 정한다. 폴더에 있는 .md를 전부 견본으로 삼으면
+// 시험 삼아 만든 글이 섞여도 그대로 원장에게 간다 — 실제로 그럴 뻔했다(2026-08-11).
+// 목록이 없으면(로컬에서 굴릴 때) 예전처럼 폴더 전체를 쓴다.
+// 파일명의 한글은 경로에 따라 자모 분리형으로 올 수 있어 NFC로 맞춰 비교한다.
+const listSamples = () => {
+  if (!fs.existsSync(DRAFT_DIR)) return [];
+  const 있는것 = fs.readdirSync(DRAFT_DIR).filter((f) => f.endsWith(".md"));
+  const 목록 = CONFIG.견본초안;
+  if (!Array.isArray(목록) || !목록.length) return 있는것;
+  const 골라야할것 = new Set(목록.map((n) => n.normalize("NFC")));
+  return 있는것.filter((f) => 골라야할것.has(f.normalize("NFC")));
+};
 
 async function importSamples(uid) {
   const mine = new Set((await store.list(uid)).map((d) => d.name));
