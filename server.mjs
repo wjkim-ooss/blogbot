@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveDraftView } from "./permissions.mjs";
 // 초안 판정 규칙은 브라우저와 한 파일을 함께 쓴다 (web/rules.js). 두 벌로 두면 반드시 갈라진다.
-import { noSpace, 요청글자수, pickReference, targetPhotosFor as 사진목표, 평가 } from "./web/rules.js";
+import { noSpace, 요청글자수, 참고레퍼런스, targetPhotosFor as 사진목표, 평가 } from "./web/rules.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
@@ -125,7 +125,15 @@ function loadReferences() {
 
 // 생성용: 파일명이 아니라 파일 안의 keyword로 찾는다.
 // (파일명에 한글이 들어가는데, 업로드 경로에 따라 자모 분리형으로 바뀔 수 있어 이름 비교는 조용히 실패한다)
-const findReference = (keyword) => pickReference(loadReferences(), keyword);
+// 딱 맞는 레퍼런스가 없으면 기본 레퍼런스로 대신한다 — 무엇을 참고했는지는 화면에 밝힌다.
+const findReference = (keyword) => 참고레퍼런스(loadReferences(), keyword, CONFIG);
+
+// 무엇을 보고 쓰는지 원장이 알아야 한다 — 엉뚱한 걸 참고하면 글이 겉돈다
+const 레퍼런스안내 = (keyword, ref, 종류) =>
+  종류 === "정확" ? `"${ref.keyword}" 레퍼런스 ${ref.posts.length}개를 참고해서 작성합니다`
+  : 종류 === "모음" ? `"${keyword}"가 나오는 상위글 ${ref.posts.length}개를 모아 참고합니다 (${ref.출처.map((k) => `"${k}"`).join("·")} 보관함)`
+  : 종류 === "기본" ? `"${keyword}" 레퍼런스는 아직 없어서 "${ref.keyword}" ${ref.posts.length}개를 대신 참고합니다`
+  : "참고할 레퍼런스가 없어 기본 기준으로 작성합니다";
 
 // 레퍼런스 크롤링은 웹에서 하지 않는다 — 채팅(Claude)에서 scripts/crawl.mjs로 수집한다.
 
@@ -829,13 +837,8 @@ async function handleGenerate(res, body, ctx) {
     if (quota === null)
       return fail(`이번 달 초안 생성 한도(${ctx.profile.monthly_limit}회)를 모두 사용했습니다. 다음 달에 초기화됩니다.`);
     차감함 = !quota.unlimited;
-    const ref = findReference(keyword);
-    send({
-      type: "status",
-      message: ref
-        ? `레퍼런스 ${ref.posts.length}개를 참고해서 작성합니다`
-        : "이 키워드의 레퍼런스가 없어 기본 기준으로 작성합니다 (보관함에서 먼저 크롤링하면 품질이 좋아져요)",
-    });
+    const { ref, 종류 } = findReference(keyword);
+    send({ type: "status", message: 레퍼런스안내(keyword, ref, 종류) });
 
     let client = null; // null이면 Gemini 경로
     if (engine === "claude") {
@@ -1090,7 +1093,7 @@ const server = http.createServer(async (req, res) => {
       const keyword = (body.keyword || "").trim();
       if (!keyword) return json(res, 400, { error: "키워드를 입력하세요" });
       const base = draftBaseName(keyword);
-      const file = await store.create(ctx.userId, base, blankDraft(keyword, findReference(keyword), 요청글자수(body.chars)));
+      const file = await store.create(ctx.userId, base, blankDraft(keyword, findReference(keyword).ref, 요청글자수(body.chars)));
       return json(res, 200, { file });
     }
     if (p.startsWith("/api/drafts/")) {
@@ -1117,7 +1120,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const keyword = (body.keyword || "").trim();
       if (!keyword) return json(res, 400, { error: "키워드를 입력하세요" });
-      const ref = findReference(keyword);
+      const ref = findReference(keyword).ref;
       return json(res, 200, {
         prompt: buildFullPrompt(keyword, body.region || "", body.point || "", ref, 요청글자수(body.chars)),
         refKeyword: ref?.keyword || null,
