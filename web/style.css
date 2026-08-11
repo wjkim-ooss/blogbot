@@ -60,6 +60,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .gen-bar { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
 .gen-bar input { flex: 1; min-width: 160px; }
+#gen-chars { flex: 0 0 120px; min-width: 100px; }
 .gen-hint { flex: 1 1 100%; font-size: 12px; line-height: 1.5; }
 .gen-hint:empty { display: none; }
 .gen-hint.ok { color: #1c8c3c; }
@@ -166,6 +167,9 @@ header { justify-content: flex-start; }
 .st.approved { background: #e7f7ea; color: #1c8c3c; }
 .st.blocked { background: #fdeceb; color: #d8483b; }
 .admin-user select { font-size: 13px; }
+/* 누가 몇 번 썼는지 — 관리자에게만 보인다 */
+.admin-user .drafts { font-size: 12px; padding: 2px 8px; border-radius: 6px; background: #eef1ff; color: #3b4bd8; white-space: nowrap; }
+.admin-user .drafts.none { background: #f2f4f8; color: #8a91a0; }
 
 /* 검증 패널 맨 위 결론 박스 */
 .v-verdict { border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; font-size: 12px; line-height: 1.6; }

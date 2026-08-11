@@ -243,8 +243,12 @@ async function setupOwnerPicker() {
   } catch {
     return; // 회원 명부를 못 읽으면 내 초안만 쓰면 된다
   }
+  // 몇 개 썼는지 고르기 전에 보이게 — 빈 계정을 열어보는 헛걸음을 줄인다
   sel.innerHTML = '<option value="">📝 내 초안</option>' +
-    users.filter((u) => u.id !== ME.id).map((u) => `<option value="${esc(u.id)}">👀 ${esc(u.email)}</option>`).join("");
+    users
+      .filter((u) => u.id !== ME.id)
+      .map((u) => `<option value="${esc(u.id)}">👀 ${esc(u.email)} (${u.draftCount ?? 0}개)</option>`)
+      .join("");
   sel.classList.remove("hidden");
   sel.addEventListener("change", async () => {
     viewingUser = sel.value;
@@ -496,14 +500,17 @@ function updateGenHint() {
     return (el.textContent = "");
   }
   const ref = pickReference(REFS, kw);
+  const 지정 = Math.round(Number($("#gen-chars").value));
+  const 목표 = Number.isFinite(지정) && 지정 >= 300 ? Math.min(지정, 20000) : null;
   el.className = `gen-hint ${ref ? "ok" : "warn"}`;
   // 정확히 같은 키워드가 아니면 어느 레퍼런스를 참고하는지 밝힌다 (엉뚱한 걸 참고하는지 원장이 알아야 한다)
   const via = ref && despace(ref.keyword) !== despace(kw) ? `"${ref.keyword}" ` : "";
   el.textContent = ref
-    ? `✅ ${via}레퍼런스 ${ref.posts.length}개 참고 — 목표 ${Math.max(CONFIG.최소글자수, ref.avgChars).toLocaleString()}자 · 사진 ${targetPhotosOf(ref)}곳 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)`
-    : `⚠️ 이 키워드는 레퍼런스가 없어 기본 기준(${CONFIG.최소글자수.toLocaleString()}자)으로 씁니다. 보관함에 먼저 크롤링하면 품질이 올라갑니다`;
+    ? `✅ ${via}레퍼런스 ${ref.posts.length}개 참고 — 목표 ${(목표 ?? Math.max(CONFIG.최소글자수, ref.avgChars)).toLocaleString()}자${목표 ? " (직접 지정)" : ""} · 사진 ${targetPhotosOf(ref)}곳 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)`
+    : `⚠️ 이 키워드는 레퍼런스가 없어 목표 ${(목표 ?? CONFIG.최소글자수).toLocaleString()}자${목표 ? " (직접 지정)" : "(기본 기준)"}로 씁니다. 보관함에 먼저 크롤링하면 품질이 올라갑니다`;
 }
 $("#gen-keyword").addEventListener("input", updateGenHint);
+$("#gen-chars").addEventListener("input", updateGenHint);
 
 // AI 생성 (SSE 스트리밍)
 $("#gen-btn").addEventListener("click", async () => {
@@ -519,7 +526,12 @@ $("#gen-btn").addEventListener("click", async () => {
     const res = await fetch("/api/generate", {
       method: "POST",
       headers: genHeaders,
-      body: JSON.stringify({ keyword, region: $("#gen-region").value.trim(), point: $("#gen-point").value.trim() }),
+      body: JSON.stringify({
+        keyword,
+        region: $("#gen-region").value.trim(),
+        point: $("#gen-point").value.trim(),
+        chars: $("#gen-chars").value.trim(), // 비우면 상위글 평균에 맞춘다
+      }),
     });
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -652,6 +664,12 @@ function statusLabel(s) {
   return { pending: "승인 대기", approved: "승인됨", blocked: "차단" }[s] || s;
 }
 
+// 8/11 처럼 짧게 — 표가 넓어지지 않게
+const 날짜 = (iso) => {
+  const d = new Date(iso);
+  return isNaN(d) ? "" : `${d.getMonth() + 1}/${d.getDate()}`;
+};
+
 async function loadAdminUsers() {
   const box = $("#admin-users");
   box.innerHTML = '<p class="muted">불러오는 중…</p>';
@@ -667,6 +685,7 @@ async function loadAdminUsers() {
       (u) => `<div class="admin-user" data-id="${u.id}">
         <span class="em">${esc(u.email || "(이메일 없음)")}</span>
         <span class="st ${u.status}">${statusLabel(u.status)}</span>
+        <span class="drafts ${u.draftCount ? "" : "none"}" title="${u.lastDraftAt ? "마지막 작성 " + 날짜(u.lastDraftAt) : "아직 작성한 초안이 없습니다"}">📝 ${u.draftCount}개${u.lastDraftAt ? ` · ${날짜(u.lastDraftAt)}` : ""}</span>
         <select class="role">
           <option value="level1" ${u.role === "level1" ? "selected" : ""}>원장(1단계)</option>
           <option value="admin" ${u.role === "admin" ? "selected" : ""}>관리자</option>
@@ -721,7 +740,7 @@ $("#new-btn").addEventListener("click", async (e) => {
     const { file } = await api("/api/drafts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ keyword }),
+      body: JSON.stringify({ keyword, chars: $("#gen-chars").value.trim() }),
     });
     await loadDrafts(file);
     $("#editor").focus();
@@ -748,6 +767,7 @@ $("#prompt-btn").addEventListener("click", async (e) => {
         keyword,
         region: $("#gen-region").value.trim(),
         point: $("#gen-point").value.trim(),
+        chars: $("#gen-chars").value.trim(),
       }),
     });
     const via = refCount ? `"${refKeyword}" 레퍼런스 ${refCount}개를 반영한 ` : "";
