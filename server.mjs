@@ -5,6 +5,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveDraftView } from "./permissions.mjs";
+// 초안 판정 규칙은 브라우저와 한 파일을 함께 쓴다 (web/rules.js). 두 벌로 두면 반드시 갈라진다.
+import { noSpace, 요청글자수, pickReference, targetPhotosFor as 사진목표, 평가 } from "./web/rules.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
@@ -86,77 +88,14 @@ async function context(req) {
 }
 
 // ---------- 공용 유틸 ----------
-const noSpace = (t) => t.replace(/\s/g, "").length;
-const stripPhotos = (t) => t.replace(/\[사진:[^\]]*\]/g, "");
-const countWord = (text, word) => (word ? text.split(word).length - 1 : 0);
-// 네이버는 검색어의 띄어쓰기를 무시하고 매칭한다("여드름 피부관리" = "여드름피부관리").
-// 세는 쪽도 양쪽 공백을 지우고 비교해야 원장이 어떻게 띄어 쓰든 결과가 같다.
-const despace = (t) => (t || "").replace(/\s+/g, "");
-const countLoose = (text, word) => countWord(despace(text), despace(word));
+// 글자 세기·키워드 세기·레퍼런스 고르기는 web/rules.js가 원본이다 (위에서 import).
 
-const 논문 = CONFIG.논문검증 || {};
-const pmidRe = new RegExp(논문.PMID정규식 || "PMID\\s*\\d{5,8}", "g");
+const 논문 = CONFIG.논문검증 || {}; // 프롬프트에 인용한다 (판정 규칙 자체는 rules.js가 갖는다)
 
-// 논문 근거는 '효능을 주장할 때' 필요하다. 단어가 나왔다는 것만으로 요구하면
-// "여드름 관리를 받으러 오셨습니다" 같은 평범한 문장까지 전부 걸려 경고가 무의미해진다.
-// 한 문장 안에 성분·부위(효능키워드)와 주장 표현이 같이 있을 때만 근거를 요구한다.
-// (web/app.js claimSentences와 같은 규칙)
-function claimSentences(text) {
-  const 부위 = 논문.효능키워드 || [];
-  const 주장 = 논문.효능주장패턴 || [];
-  if (!부위.length || !주장.length) return [];
-  return text
-    .split(/(?<=[.!?…]|다\.|요\.)\s+|\n+/)
-    .map((s) => s.trim())
-    .filter((s) => s && 부위.some((w) => s.includes(w)) && 주장.some((w) => s.includes(w)));
-}
-
-function validateDraft(text, keyword, minChars = CONFIG.최소글자수, title = "", ref = null) {
-  const clean = stripPhotos(text);
-  const chars = noSpace(clean);
-  const photos = (text.match(/\[사진:/g) || []).length;
-  // 판정 기준은 키워드 '전체'가 몇 번 나왔나 — 네이버가 실제로 매칭하는 단위가 그것이다.
-  // 단어별 횟수는 어디가 모자란지 보여주는 참고값일 뿐 합격·불합격을 가르지 않는다.
-  const kwCount = countLoose(text, keyword);
-  const kwParts = (keyword || "").trim().split(/\s+/).filter(Boolean)
-    .map((w) => ({ word: w, count: countLoose(text, w) }));
-  const abstractFound = CONFIG.추상어.filter((w) => text.includes(w));
-  const medicalFound = CONFIG.의료법금지어.filter((w) => text.includes(w));
-  const overclaimFound = (논문.과장표현 || []).filter((w) => text.includes(w));
-  const pmids = [...new Set((text.match(pmidRe) || []).map((s) => s.replace(/\s+/g, " ").trim()))];
-  const claims = claimSentences(text);
-  const needsEvidence = claims.length > 0;
-
-  const issues = [];
-  // 제목은 상위노출에서 가장 무거운 자리다 — 키워드가 빠지면 본문이 아무리 좋아도 밀린다
-  if (title && keyword && countLoose(title, keyword) === 0)
-    issues.push(`제목에 키워드 "${keyword}"가 없음 — 제목에 자연스럽게 넣을 것`);
-  if (chars < minChars) issues.push(`글자수 부족: ${chars}자 (최소 ${minChars}자)`);
-  if (keyword && kwCount < CONFIG.키워드횟수.min)
-    issues.push(`키워드 "${keyword}" ${kwCount}회 (최소 ${CONFIG.키워드횟수.min}회 — 문장 안에 자연스럽게 더 넣을 것)`);
-  // 도배도 미달만큼 위험하다 — 네이버는 반복 과다를 키워드 스터핑으로 보고 감점한다.
-  else if (kwCount > CONFIG.키워드횟수.max)
-    issues.push(`키워드 "${keyword}" ${kwCount}회 과다 (최대 ${CONFIG.키워드횟수.max}회 — 일부를 다른 표현으로 바꿔 줄일 것)`);
-  if (abstractFound.length) issues.push(`추상어 사용: ${abstractFound.join(", ")}`);
-  if (medicalFound.length) issues.push(`의료법 주의 표현: ${medicalFound.join(", ")}`);
-  if (overclaimFound.length) issues.push(`과장 표현(논문 근거 없이 단정 금지): ${overclaimFound.join(", ")}`);
-  if (needsEvidence && pmids.length === 0)
-    issues.push(
-      `효능을 주장한 문장에 논문 근거(PMID)가 없음 — ${논문.출처}에서 🟢 확인 후 PMID를 붙이거나, 주장을 빼세요. ` +
-        `해당 문장: "${claims[0].slice(0, 60)}${claims[0].length > 60 ? "…" : ""}"`
-    );
-
-  // 권장 사항은 불합격 사유가 아니다 (화면의 ⚠️ 계산과 같은 규칙).
-  // 다만 AI에게는 함께 알려 준다 — 한 번 더 돌 때 같이 개선되게.
-  const advice = [];
-  // 프롬프트가 요구한 장수와 같은 값으로 조언해야 한다. 예전엔 여기만 최소치(10곳)를 써서,
-  // 프롬프트는 20곳을 시키고 편집기 패널도 20곳을 요구하는데 고쳐쓰기만 10곳으로 만족했다.
-  const 사진목표 = targetPhotosFor(ref);
-  if (photos < 사진목표) advice.push(`사진 자리 ${photos}곳 → ${사진목표}곳 이상이면 더 좋음`);
-
-  return { chars, minChars, photos, kwCount, kwParts, abstractFound, medicalFound, overclaimFound,
-           pmids, needsEvidence, claims, issues, advice, pass: issues.length === 0 };
-}
+// 초안 채점 — 규칙은 web/rules.js에 있고 여기서는 서버 사정만 채워 넣는다.
+// 말투 "지시": AI에게 "무엇을 어떻게 고쳐라"까지 적어 준다. 그래야 실제로 고쳐진다.
+const validateDraft = (text, keyword, minChars = CONFIG.최소글자수, title = "", ref = null) =>
+  평가(text, { keyword, config: CONFIG, 목표글자수: minChars, ref, title, 말투: "지시" });
 
 // ---------- 레퍼런스 ----------
 // 파일명 앞 10자리 날짜로 오래된 순 정렬한 뒤, 키워드는 파일 '내용'으로 판별한다.
@@ -182,27 +121,7 @@ function loadReferences() {
   return 목록;
 }
 
-// 어떤 레퍼런스를 참고할지 고른다. (web/app.js pickReference와 같은 규칙)
-// ① 띄어쓰기는 무시 — "여드름 피부관리" = "여드름피부관리"
-// ② 정확히 같은 키워드가 있으면 그것
-// ③ 없으면 한쪽이 다른 쪽을 품는 것 — "여드름"으로 써도 "여드름 피부관리" 40개를 참고할 수 있게.
-//    (원장은 보관함의 키워드를 통째로 외워 입력하지 않는다. 예전에는 여기서 조용히 빈손이 됐다)
-//    여러 개면 길이가 가장 가까운 것 = 가장 덜 벗어난 것을 고른다.
-export function pickReference(list, keyword) {
-  const want = despace((keyword || "").normalize("NFC"));
-  if (!want) return null;
-  let best = null, bestGap = Infinity;
-  for (const r of list) {
-    const k = despace((r.keyword || "").normalize("NFC"));
-    if (!k) continue;
-    if (k === want) return r;
-    if (k.includes(want) || want.includes(k)) {
-      const gap = Math.abs(k.length - want.length);
-      if (gap < bestGap) { best = r; bestGap = gap; }
-    }
-  }
-  return best;
-}
+// 어떤 레퍼런스를 참고할지 고르는 규칙은 web/rules.js pickReference에 있다.
 
 // 생성용: 파일명이 아니라 파일 안의 keyword로 찾는다.
 // (파일명에 한글이 들어가는데, 업로드 경로에 따라 자모 분리형으로 바뀔 수 있어 이름 비교는 조용히 실패한다)
@@ -413,16 +332,9 @@ const SYSTEM_PROMPT = `당신은 에스테틱(피부관리실) 원장이 자기 
 // 통과선은 최소글자수(1,300자), 노리는 지점은 권장글자수(1,500자)로 고정한다.
 // 상위글 평균은 2,000자를 넘기도 하지만 원장이 매번 쓸 수 있는 분량이 아니라 목표로 삼지 않는다.
 const 권장글자수 = () => CONFIG.권장글자수 || CONFIG.최소글자수;
-// 상위글은 사진이 30장을 넘기도 하지만, 원장이 실제로 준비할 수 있는 양을 넘으면 초안이 무용지물이라
-// 인사이트 탭과 같은 기준(20장)으로 상한을 둔다.
-const targetPhotosFor = (ref) => Math.max(CONFIG.권장이미지최소, Math.min(ref?.avgImages || 0, 20));
+// 사진 목표는 web/rules.js targetPhotosFor가 정한다 — 설정만 여기서 채운다.
+const targetPhotosFor = (ref) => 사진목표(ref, CONFIG);
 
-// 원장이 글자수를 직접 정하면 그 값이 기준이 된다. 비우면 상위글 평균에 맞춘다.
-// 너무 짧으면 상위노출이 안 되고 너무 길면 안 쓰이므로 상식적인 범위로 자른다.
-const 요청글자수 = (v) => {
-  const n = Math.round(Number(v));
-  return Number.isFinite(n) && n >= 300 ? Math.min(n, 20000) : null;
-};
 
 function buildUserPrompt(keyword, region, point, ref, 목표글자수) {
   const lines = [`키워드: ${keyword}`];
