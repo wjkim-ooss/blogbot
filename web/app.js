@@ -52,6 +52,23 @@ const countLoose = (text, w) => countWord(despace(text), despace(w));
 // 상위글은 사진이 30장을 넘기도 하지만 원장이 실제로 준비할 수 있는 양을 넘으면 의미가 없어
 // 20장에서 끊는다 (server.mjs targetPhotosFor · 인사이트 탭과 같은 기준).
 const targetPhotosOf = (ref) => Math.max(CONFIG.권장이미지최소, Math.min(ref?.avgImages || 0, 20));
+// 참고할 레퍼런스 고르기 (server.mjs pickReference와 같은 규칙)
+// 정확히 같은 키워드 우선, 없으면 한쪽이 다른 쪽을 품는 것 중 길이가 가장 가까운 것.
+// "여드름"만 쳐도 "여드름 피부관리" 레퍼런스를 참고하게 하려는 것.
+function pickReference(list, keyword) {
+  const want = despace(keyword);
+  if (!want) return null;
+  let best = null, bestGap = Infinity;
+  for (const r of list) {
+    const k = despace(r.keyword);
+    if (k === want) return r;
+    if (k.includes(want) || want.includes(k)) {
+      const gap = Math.abs(k.length - want.length);
+      if (gap < bestGap) { best = r; bestGap = gap; }
+    }
+  }
+  return best;
+}
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // 초안 파일에서 헤더(--- 위)를 뺀 본문만 추출
@@ -169,7 +186,9 @@ async function loadDrafts(selectName) {
   const drafts = await api(draftsUrl("/api/drafts"));
   const other = viewingOther();
   const list = $("#draft-list");
-  const empty = other ? "이 회원은 아직 작성한 초안이 없습니다." : "초안이 없습니다. AI 생성을 눌러보세요.";
+  const empty = other
+    ? "이 회원은 아직 작성한 초안이 없습니다."
+    : "초안이 없습니다. 키워드를 넣고 <b>✍️ 직접 쓰기</b>를 누르거나, <b>📥 견본 초안 가져오기</b>로 시작해보세요.";
   list.innerHTML = drafts.length ? "" : `<div class="muted card">${empty}</div>`;
   drafts.forEach((d) => {
     const div = document.createElement("div");
@@ -206,6 +225,7 @@ function setReadOnly(on, who) {
   $("#editor").classList.toggle("readonly", on);
   $("#save-btn").classList.toggle("hidden", on);
   $("#gen-btn").classList.toggle("hidden", on);
+  $("#new-btn").classList.toggle("hidden", on);
   $("#import-samples").classList.toggle("hidden", on || !ME?.authOn);
   const banner = $("#readonly-banner");
   banner.classList.toggle("hidden", !on);
@@ -299,7 +319,7 @@ function evaluateDraft(body, keyword) {
   const titleHasNum = /\d/.test(title);
   const titleLen = noSpace(title);
   // 상위글 평균이 최소 기준보다 높으면 그 평균이 진짜 통과선 (server.mjs targetCharsFor와 동일)
-  const refHit = REFS.find((r) => despace(r.keyword) === despace(keyword));
+  const refHit = pickReference(REFS, keyword);
   const targetChars = Math.max(CONFIG.최소글자수, refHit?.avgChars || 0);
   const targetPhotos = targetPhotosOf(refHit);
 
@@ -411,10 +431,12 @@ function updateGenHint() {
     el.className = "gen-hint";
     return (el.textContent = "");
   }
-  const ref = REFS.find((r) => despace(r.keyword) === despace(kw));
+  const ref = pickReference(REFS, kw);
   el.className = `gen-hint ${ref ? "ok" : "warn"}`;
+  // 정확히 같은 키워드가 아니면 어느 레퍼런스를 참고하는지 밝힌다 (엉뚱한 걸 참고하는지 원장이 알아야 한다)
+  const via = ref && despace(ref.keyword) !== despace(kw) ? `"${ref.keyword}" ` : "";
   el.textContent = ref
-    ? `✅ 레퍼런스 ${ref.posts.length}개 — 목표 ${Math.max(CONFIG.최소글자수, ref.avgChars).toLocaleString()}자 · 사진 ${targetPhotosOf(ref)}곳 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)`
+    ? `✅ ${via}레퍼런스 ${ref.posts.length}개 참고 — 목표 ${Math.max(CONFIG.최소글자수, ref.avgChars).toLocaleString()}자 · 사진 ${targetPhotosOf(ref)}곳 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)`
     : `⚠️ 이 키워드는 레퍼런스가 없어 기본 기준(${CONFIG.최소글자수.toLocaleString()}자)으로 씁니다. 보관함에 먼저 크롤링하면 품질이 올라갑니다`;
 }
 $("#gen-keyword").addEventListener("input", updateGenHint);
@@ -617,6 +639,30 @@ $("#import-samples").addEventListener("click", async (e) => {
     if (added.length) await loadDrafts(added[0]);
   } catch (err) {
     alert(err.message);
+  } finally {
+    e.target.disabled = false;
+  }
+});
+
+// 직접 쓰기 — AI 없이 빈 초안을 만들어 편집기를 연다
+$("#new-btn").addEventListener("click", async (e) => {
+  if (viewingOther()) return alert("내 초안으로 돌아온 뒤 만들 수 있습니다");
+  const keyword = $("#gen-keyword").value.trim();
+  if (!keyword) {
+    $("#gen-keyword").focus();
+    return alert("먼저 키워드를 입력하세요");
+  }
+  e.target.disabled = true;
+  try {
+    const { file } = await api("/api/drafts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keyword }),
+    });
+    await loadDrafts(file);
+    $("#editor").focus();
+  } catch (err) {
+    alert("만들지 못했습니다: " + err.message);
   } finally {
     e.target.disabled = false;
   }

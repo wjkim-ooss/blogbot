@@ -146,20 +146,31 @@ function loadReferences() {
   return [...newest.values()].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 }
 
+// 어떤 레퍼런스를 참고할지 고른다. (web/app.js pickReference와 같은 규칙)
+// ① 띄어쓰기는 무시 — "여드름 피부관리" = "여드름피부관리"
+// ② 정확히 같은 키워드가 있으면 그것
+// ③ 없으면 한쪽이 다른 쪽을 품는 것 — "여드름"으로 써도 "여드름 피부관리" 40개를 참고할 수 있게.
+//    (원장은 보관함의 키워드를 통째로 외워 입력하지 않는다. 예전에는 여기서 조용히 빈손이 됐다)
+//    여러 개면 길이가 가장 가까운 것 = 가장 덜 벗어난 것을 고른다.
+export function pickReference(list, keyword) {
+  const want = despace((keyword || "").normalize("NFC"));
+  if (!want) return null;
+  let best = null, bestGap = Infinity;
+  for (const r of list) {
+    const k = despace((r.keyword || "").normalize("NFC"));
+    if (!k) continue;
+    if (k === want) return r;
+    if (k.includes(want) || want.includes(k)) {
+      const gap = Math.abs(k.length - want.length);
+      if (gap < bestGap) { best = r; bestGap = gap; }
+    }
+  }
+  return best;
+}
+
 // 생성용: 파일명이 아니라 파일 안의 keyword로 찾는다.
 // (파일명에 한글이 들어가는데, 업로드 경로에 따라 자모 분리형으로 바뀔 수 있어 이름 비교는 조용히 실패한다)
-// 띄어쓰기는 무시하고 찾는다 — "여드름 피부관리"와 "여드름피부관리"는 같은 레퍼런스로 본다.
-function findReference(keyword) {
-  if (!fs.existsSync(REF_DIR)) return null;
-  const want = despace(keyword.normalize("NFC"));
-  for (const f of fs.readdirSync(REF_DIR).filter((f) => f.endsWith(".json")).sort().reverse()) {
-    try {
-      const r = JSON.parse(fs.readFileSync(path.join(REF_DIR, f), "utf8"));
-      if (r.keyword && despace(r.keyword.normalize("NFC")) === want) return { file: f, ...r };
-    } catch { /* 깨진 파일 무시 */ }
-  }
-  return null;
-}
+const findReference = (keyword) => pickReference(loadReferences(), keyword);
 
 // 레퍼런스 크롤링은 웹에서 하지 않는다 — 채팅(Claude)에서 scripts/crawl.mjs로 수집한다.
 
@@ -276,6 +287,34 @@ async function importSamples(uid) {
 async function draftCreate(ctx, keyword, title, body, v) {
   const base = `${new Date().toISOString().slice(0, 10)}_${keyword.replace(/[\/\s]+/g, "-")}`;
   return store.create(ctx.userId, base, buildDraftContent(keyword, title, body, v));
+}
+
+// 손으로 쓰기 시작할 빈 초안. AI 생성이 막혀 있어도(크레딧·키 문제) 글은 쓸 수 있어야 한다.
+// 뼈대에 3대 기준과 목표치를 적어 둬서 무엇을 채워야 하는지 보이게 한다.
+function blankDraft(keyword, ref) {
+  const target = targetCharsFor(ref).toLocaleString();
+  const photos = targetPhotosFor(ref);
+  return [
+    `# ${keyword}`,
+    "",
+    `- 키워드: ${keyword} / 목표: 공백제외 ${target}자 이상 · 사진 ${photos}곳 이상`,
+    ref
+      ? `- 참고 레퍼런스: "${ref.keyword}" ${ref.posts.length}개 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)`
+      : `- 참고 레퍼런스 없음 — 기본 기준으로 씁니다`,
+    `- 3대 기준: ① 표본 넓히기 ② 이득/손해 암시 ③ 추상어 쓰지 않기`,
+    "",
+    "---",
+    "",
+    `제목: ${keyword} (여기에 숫자와 이득/손해를 넣어 제목을 완성하세요)`,
+    "",
+    "[사진: 첫 장면]",
+    "",
+    "안녕하세요.",
+    "OO동에서 피부관리를 하고 있는 원장입니다.",
+    "",
+    `(여기부터 본문을 쓰세요. 오른쪽 검증 패널이 글자수·키워드·추상어를 실시간으로 잡아줍니다)`,
+    "",
+  ].join("\n");
 }
 
 // ---------- AI 생성 ----------
@@ -565,6 +604,16 @@ const server = http.createServer(async (req, res) => {
     if (denied) return json(res, 403, { error: denied });
 
     if (p === "/api/drafts" && req.method === "GET") return json(res, 200, await store.list(viewing));
+    // 빈 초안 만들기 — AI 없이 손으로 쓰기 시작할 때
+    if (p === "/api/drafts" && req.method === "POST") {
+      if (readOnly) return json(res, 403, { error: "다른 회원의 자리에는 초안을 만들 수 없습니다" });
+      const body = await readBody(req);
+      const keyword = (body.keyword || "").trim();
+      if (!keyword) return json(res, 400, { error: "키워드를 입력하세요" });
+      const base = `${new Date().toISOString().slice(0, 10)}_${keyword.replace(/[\/\s]+/g, "-")}`;
+      const file = await store.create(ctx.userId, base, blankDraft(keyword, findReference(keyword)));
+      return json(res, 200, { file });
+    }
     if (p.startsWith("/api/drafts/")) {
       const name = p.slice("/api/drafts/".length);
       if (!validName(name)) return json(res, 400, { error: "잘못된 파일명" });
