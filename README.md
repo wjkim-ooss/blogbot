@@ -136,17 +136,36 @@ https://blogbot-u7s9.onrender.com
 
 ---
 
-## D. AI 초안 생성 켜기 (선택, 유료)
+## D. AI 초안 생성 켜기
 
-지금은 꺼져 있고, 나머지 기능은 전부 무료로 작동합니다.
+엔진이 **두 가지**입니다. 둘 중 하나만 켜면 됩니다.
 
-켜려면:
-1. `https://console.anthropic.com` → **Billing** → 결제 수단 등록 + 충전 (최소 $5)
+### 🟢 무료 — 구글 Gemini (추천)
+
+**돈이 전혀 안 듭니다. 카드 등록도 필요 없습니다.**
+
+1. `https://aistudio.google.com/apikey` → 구글 계정 로그인 → **Create API key** → 키 복사
+2. Render → Environment → **Add Environment Variable**
+   - Key: `GEMINI_API_KEY`
+   - Value: 복사한 키
+3. **Save** → 2~3분 뒤 켜집니다
+
+원장님들은 아무것도 설치하지 않고 사이트에서 바로 씁니다.
+
+> ⚠️ **알아두실 것**: 무료 등급은 구글이 입력·출력을 자사 제품 개선에 쓸 수 있고, 사람이 열람할 수도 있습니다. 블로그 견본 원고라 문제될 게 없다고 보지만, 고객 개인정보 같은 건 넣지 마세요.
+> 하루 사용량 한도가 있습니다(모델별로 다르며 AI Studio에서 확인). 초과하면 다음 날 다시 열립니다.
+
+모델을 바꾸려면 `GEMINI_MODEL` 변수를 추가하세요 (기본 `gemini-2.5-flash`).
+
+### 💰 유료 — Claude (품질 최상)
+
+1. `https://console.anthropic.com` → **Billing** → 충전 (최소 $5)
 2. **API Keys** → **Create Key** → 키 복사
-3. Render → Environment → `ANTHROPIC_API_KEY` 값에 붙여넣기 → Save
+3. Render → Environment → `ANTHROPIC_API_KEY` → Save
 
-**비용 기준**: 초안 1건당 약 $0.1~0.2. $5로 25~50건.
-더 아끼려면 저에게 "모델을 Sonnet으로 바꿔줘"라고 하시면 40% 절감됩니다.
+초안 1건당 약 $0.1~0.2. $5로 25~50건. "모델을 Sonnet으로 바꿔줘"라고 하시면 60% 절감됩니다.
+
+> **둘 다 넣으면 Claude를 씁니다.** 무료로 쓰시려면 `ANTHROPIC_API_KEY`를 비우거나 삭제하세요.
 
 ---
 

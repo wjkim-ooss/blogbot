@@ -419,7 +419,17 @@ function buildFullPrompt(keyword, region, point, ref) {
   ].join("\n");
 }
 
-async function streamOnce(client, messages, send) {
+// ---------- 생성 엔진 ----------
+// 두 가지를 지원한다. 키가 있는 쪽을 쓰고, 둘 다 있으면 Claude를 먼저 쓴다.
+//   Claude  (ANTHROPIC_API_KEY) — 품질 최상, 크레딧 충전 필요
+//   Gemini  (GEMINI_API_KEY)    — 구글 무료 등급. 카드 등록 없이 발급되고 요금이 0이다.
+// 무료 등급은 구글이 입력·출력을 제품 개선에 쓸 수 있다(사람이 열람할 수도 있다).
+// 블로그 견본 원고라 문제될 것이 없다고 보지만, 민감한 내용은 넣지 않는다.
+const GEMINI_KEY = () => process.env.GEMINI_API_KEY || "";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const engineName = () => (process.env.ANTHROPIC_API_KEY ? "claude" : GEMINI_KEY() ? "gemini" : null);
+
+async function streamClaude(client, messages, send) {
   const stream = client.messages.stream({
     model: MODEL,
     max_tokens: 64000,
@@ -431,6 +441,62 @@ async function streamOnce(client, messages, send) {
   const final = await stream.finalMessage();
   return final.content.filter((b) => b.type === "text").map((b) => b.text).join("");
 }
+
+// Gemini는 SDK 없이 REST로 부른다 (의존성을 늘리지 않으려고).
+async function streamGemini(messages, send) {
+  const url =
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:streamGenerateContent` +
+    `?alt=sse&key=${encodeURIComponent(GEMINI_KEY())}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      // Claude 쪽과 messages 모양을 맞춰 두었으므로 그대로 옮긴다 (보완 호출도 같은 경로를 탄다)
+      contents: messages.map((m) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }],
+      })),
+    }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    const err = new Error(detail || `HTTP ${res.status}`);
+    err.status = res.status;
+    err.engine = "gemini";
+    throw err;
+  }
+
+  let out = "";
+  let buf = "";
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    // SSE는 빈 줄로 이벤트가 끝난다. 마지막 조각은 잘렸을 수 있으니 남겨 둔다.
+    const events = buf.split("\n\n");
+    buf = events.pop() ?? "";
+    for (const ev of events) {
+      const line = ev.split("\n").find((l) => l.startsWith("data:"));
+      if (!line) continue;
+      const payload = line.slice(5).trim();
+      if (!payload || payload === "[DONE]") continue;
+      try {
+        const text = JSON.parse(payload).candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("") || "";
+        if (text) {
+          out += text;
+          send({ type: "delta", text });
+        }
+      } catch { /* 조각난 JSON은 건너뛴다 */ }
+    }
+  }
+  return out;
+}
+
+const streamOnce = (client, messages, send) =>
+  client ? streamClaude(client, messages, send) : streamGemini(messages, send);
 
 // 월 한도 확인·차감 (level1만). 통과 시 남은 횟수 반환, 초과 시 null.
 async function consumeQuota(ctx) {
@@ -458,8 +524,15 @@ async function handleGenerate(res, body, ctx) {
     const keyword = (body.keyword || "").trim();
     if (!keyword) return fail("키워드를 입력하세요");
     // 키 유무는 오류가 아니라 사전 조건 — 실패를 기다리지 않고 여기서 걸러낸다
-    if (!process.env.ANTHROPIC_API_KEY)
-      return fail(adminHint(ctx, "AI 생성이 아직 설정되지 않았습니다.", "서버에 ANTHROPIC_API_KEY 환경변수를 추가하세요."));
+    const engine = engineName();
+    if (!engine)
+      return fail(
+        adminHint(
+          ctx,
+          "AI 생성이 아직 설정되지 않았습니다.",
+          "서버에 GEMINI_API_KEY(무료) 또는 ANTHROPIC_API_KEY 환경변수를 추가하세요."
+        ) + 대안안내
+      );
 
     const quota = await consumeQuota(ctx);
     if (quota === null)
@@ -472,8 +545,13 @@ async function handleGenerate(res, body, ctx) {
         : "이 키워드의 레퍼런스가 없어 기본 기준으로 작성합니다 (보관함에서 먼저 크롤링하면 품질이 좋아져요)",
     });
 
-    const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const client = new Anthropic();
+    let client = null; // null이면 Gemini 경로
+    if (engine === "claude") {
+      const { default: Anthropic } = await import("@anthropic-ai/sdk");
+      client = new Anthropic();
+    } else {
+      send({ type: "status", message: `무료 엔진(Gemini ${GEMINI_MODEL})으로 작성합니다` });
+    }
     const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref) }];
 
     const targetChars = targetCharsFor(ref);
@@ -518,6 +596,13 @@ const 대안안내 = " AI 없이 쓰시려면 ✍️ 직접 쓰기, 또는 📋 
 function describeError(e, ctx) {
   const type = e?.type;
   const status = e?.status;
+  if (e?.engine === "gemini") {
+    if (status === 429)
+      return "무료 엔진의 오늘 사용량을 다 썼습니다. 내일 다시 열립니다." + 대안안내;
+    if (status === 400 || status === 403)
+      return adminHint(ctx, "무료 엔진 키에 문제가 있습니다.", "Render의 GEMINI_API_KEY 값을 확인하세요.") + 대안안내;
+    return adminHint(ctx, "무료 엔진에서 오류가 발생했습니다.", `상세: ${String(e?.message || e).slice(0, 300)}`) + 대안안내;
+  }
   if (type === "authentication_error" || status === 401)
     return adminHint(ctx, "AI 생성 인증에 실패했습니다.", "ANTHROPIC_API_KEY 값이 올바른지 확인하세요.") + 대안안내;
   if (type === "billing_error" || status === 403 || 크레딧부족(e))
