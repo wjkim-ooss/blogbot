@@ -255,18 +255,32 @@ async function setupOwnerPicker() {
 }
 
 // 이미 써 둔 초안도 하나씩 열어보지 않고 위험 신호를 알아챌 수 있게 목록에 요약을 붙인다
+// 직접 쓰기로 만든 뼈대에 심어 둔 문구. 이게 남아 있으면 아직 안 쓴 글이다.
+const BLANK_MARK = "여기부터 본문을 쓰세요";
+
 async function markDraft(name, div) {
   const sub = div.querySelector(".d-sub");
   const badge = div.querySelector(".d-badge");
-  let v;
+  let v, blank;
   try {
-    v = evaluateDraft(draftBody(await draftContent(name)), keywordOf(name));
+    const body = draftBody(await draftContent(name));
+    blank = body.includes(BLANK_MARK);
+    v = evaluateDraft(body, keywordOf(name));
   } catch {
     sub.textContent = ""; // 본문을 못 읽으면 조용히 비워 둔다 — 목록 자체는 계속 쓸 수 있어야 한다
     return;
   }
   sub.className = `d-sub ${v.kwLack ? "v-bad" : v.kwOver ? "v-warn" : "muted"}`;
   sub.textContent = `키워드 ${v.kwCount}회${v.kwLack ? " 부족" : v.kwOver ? " 과다" : ""} · ${v.chars.toLocaleString()}자`;
+  // 아직 손도 안 댄 빈 뼈대를 '실패'처럼 보여주면 원장이 뭘 잘못한 줄 안다.
+  if (blank) {
+    sub.className = "d-sub muted";
+    sub.textContent = "아직 작성 전";
+    badge.className = "d-badge";
+    badge.textContent = "✏️";
+    badge.title = "직접 쓰기로 만든 빈 뼈대입니다. 본문을 채우면 검사가 시작됩니다.";
+    return;
+  }
   // ⚠️ 숫자는 '반드시 고칠 것'만 센다. 권장 사항은 통과를 막지 않는다.
   badge.className = `d-badge ${v.issues.length ? "warn" : "ok"}`;
   badge.textContent = v.issues.length ? `⚠️ ${v.issues.length}` : "✅";
@@ -309,7 +323,15 @@ function evaluateDraft(body, keyword) {
   const overclaimFound = (논문.과장표현 || []).filter((w) => body.includes(w));
   const pmidRe = new RegExp(논문.PMID정규식 || "PMID\\s*\\d{5,8}", "g");
   const pmids = [...new Set((body.match(pmidRe) || []).map((s) => s.replace(/\s+/g, " ").trim()))];
-  const needsEvidence = (논문.효능키워드 || []).some((w) => body.includes(w));
+  // 논문 근거는 '효능을 주장할 때'만 요구한다 — 단어만 보고 요구하면 평범한 후기도 전부 걸린다
+  // (server.mjs claimSentences와 같은 규칙)
+  const 부위 = 논문.효능키워드 || [];
+  const 주장 = 논문.효능주장패턴 || [];
+  const claims = 부위.length && 주장.length
+    ? body.split(/(?<=[.!?…]|다\.|요\.)\s+|\n+/).map((s) => s.trim())
+        .filter((s) => s && 부위.some((w) => s.includes(w)) && 주장.some((w) => s.includes(w)))
+    : [];
+  const needsEvidence = claims.length > 0;
   // 합격선은 '키워드 전체'가 몇 번 나왔나 — 네이버가 매칭하는 단위가 그것이다.
   // 단어별 횟수는 어디가 모자란지 보라고 곁들일 뿐 판정하지 않는다.
   const kwCount = countLoose(body, keyword);
@@ -346,7 +368,8 @@ function evaluateDraft(body, keyword) {
   if (abstractFound.length) issues.push(`추상어 ${abstractFound.length}개: ${abstractFound.join(", ")}`);
   if (medicalFound.length) issues.push(`의료법 주의 ${medicalFound.length}개: ${medicalFound.join(", ")}`);
   if (overclaimFound.length) issues.push(`과장 표현 ${overclaimFound.length}개: ${overclaimFound.join(", ")}`);
-  if (needsEvidence && !pmids.length) issues.push("논문 근거(PMID) 없음");
+  if (needsEvidence && !pmids.length)
+    issues.push(`효능을 주장한 문장에 논문 근거(PMID) 없음 — "${claims[0].slice(0, 40)}${claims[0].length > 40 ? "…" : ""}"`);
 
   if (photos < targetPhotos) advice.push(`사진 자리 ${photos}곳 → ${targetPhotos}곳 이상이면 더 좋습니다`);
   if (title && !titleHasNum) advice.push("제목에 숫자를 넣으면 상위노출에 유리합니다");
@@ -381,7 +404,9 @@ function runValidation() {
     : "";
   const ok = (cond) => (cond ? "v-ok" : "v-bad");
   // 맨 위에 결론부터 — 아래 항목을 하나씩 훑지 않아도 지금 뭘 해야 하는지 보이게
-  const verdict = issues.length
+  const verdict = body.includes(BLANK_MARK)
+    ? `<div class="v-verdict tip"><b>✏️ 아직 작성 전입니다</b><div>안내 문구를 지우고 본문을 채우세요. 쓰는 동안 아래 항목이 실시간으로 채점됩니다.</div></div>`
+    : issues.length
     ? `<div class="v-verdict bad"><b>고칠 점 ${issues.length}개</b>${issues.map((s) => `<div>· ${esc(s)}</div>`).join("")}</div>`
     : `<div class="v-verdict ok"><b>✅ 기준 통과 — 그대로 올리셔도 됩니다</b></div>`;
   const tips = advice.length
