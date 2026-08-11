@@ -488,10 +488,15 @@ let geminiModelsP = null;
 // 하나만 고르지 않고 '쓸 수 있는 순서'로 받아 둔다.
 // 무료 모델은 특정 시간대에 붐벼서 "high demand"로 거절당하는데(2026-08-11 겪음),
 // 그럴 때 다음 모델로 넘어가면 원장은 기다리지 않아도 된다.
-const geminiModels = () =>
-  process.env.GEMINI_MODEL
-    ? Promise.resolve([process.env.GEMINI_MODEL])
-    : (geminiModelsP ??= resolveGeminiModels());
+// GEMINI_MODEL은 '이것부터 써라'는 뜻이지 '이것만 써라'가 아니다.
+// 예전에는 이 값이 있으면 목록을 통째로 그 하나로 갈아치웠다. 그래서 그 모델의 하루치가
+// 끝나면 나머지 6개가 멀쩡한데도 그날은 끝이었다.
+// (2026-08-11: 화면에 "하루치 소진: gemini-3.6-flash" 하나만 뜨고 실패했다 — 이것 때문)
+const geminiModels = async () => {
+  const 자동 = await (geminiModelsP ??= resolveGeminiModels());
+  const 지정 = process.env.GEMINI_MODEL?.trim();
+  return 지정 ? [지정, ...자동.filter((m) => m !== 지정)] : 자동;
+};
 
 async function resolveGeminiModels() {
   try {
@@ -569,11 +574,13 @@ const 소진안내 = () => {
   const 열림 = Math.min(...[...GEMINI_소진.values()].filter((t) => t > Date.now()), 태평양자정());
   return new Date(열림).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", hour: "numeric", minute: "2-digit" });
 };
-// 어떤 모델이 왜 막혔는지는 관리자만 본다 — 원장에게는 소음이다
-const 소진진단 = (ctx) => {
+// 어떤 모델이 왜 막혔는지는 관리자만 본다 — 원장에게는 소음이다.
+// 막힌 것만 보여주면 "나머지는 시도는 해봤나?"를 알 수 없다 — 통 전체를 보여준다.
+const 소진진단 = async (ctx) => {
   if (!ctx?.isAdmin) return "";
-  const 목록 = [...GEMINI_소진].filter(([, t]) => t > Date.now()).map(([m]) => m);
-  return 목록.length ? `\n[관리자용] 하루치 소진: ${목록.join(", ")}` : "";
+  const 전체 = await geminiModels().catch(() => []);
+  const 표 = 전체.map((m) => `${m}${소진됨(m) ? "(소진)" : ""}`).join(", ");
+  return `\n[관리자용] 모델 ${전체.length}개: ${표 || "없음"}`;
 };
 
 async function streamClaude(client, messages, send) {
@@ -897,7 +904,9 @@ async function handleGenerate(res, body, ctx) {
       const { default: Anthropic } = await import("@anthropic-ai/sdk");
       client = new Anthropic();
     } else {
-      send({ type: "status", message: `무료 엔진(Gemini ${(await geminiModels())[0]})으로 작성합니다` });
+      // 하루치가 끝난 모델을 빼고 실제로 쓸 모델을 알린다 (막힌 모델 이름을 알리면 헷갈린다)
+      const 쓸것 = (await geminiModels()).filter((m) => !소진됨(m));
+      send({ type: "status", message: `무료 엔진(Gemini ${쓸것[0] || "재확인 중"})으로 작성합니다` });
     }
     // 원장이 직접 정한 글자수가 있으면 그것이 기준 (프롬프트와 검증이 같은 값을 봐야 한다)
     const targetChars = 요청글자수(body.chars) || targetCharsFor(ref);
@@ -971,7 +980,7 @@ async function handleGenerate(res, body, ctx) {
     console.error("[generate 실패]", e); // 상세 원인은 서버 로그에 남긴다
     // 글을 못 받았으면 월 한도를 도로 채워 준다 — 실패로 15회가 닳으면 안 된다
     if (차감함) await refundQuota(ctx).catch(() => {});
-    send({ type: "error", message: describeError(e, ctx) + (차감함 ? " (이번 실패는 월 한도에서 차감하지 않았습니다)" : "") });
+    send({ type: "error", message: (await describeError(e, ctx)) + (차감함 ? " (이번 실패는 월 한도에서 차감하지 않았습니다)" : "") });
   } finally {
     res.end();
   }
@@ -988,7 +997,7 @@ const 크레딧부족 = (e) => /credit balance is too low/i.test(String(e?.messa
 // AI가 막혀도 글은 쓸 수 있다 — 막다른 길로 끝내지 않고 다음 수를 알려준다
 const 대안안내 = " AI 없이 쓰시려면 ✍️ 직접 쓰기, 또는 📋 AI 프롬프트 복사로 claude.ai에 붙여넣으세요.";
 
-function describeError(e, ctx) {
+async function describeError(e, ctx) {
   const type = e?.type;
   const status = e?.status;
   if (e?.engine === "gemini") {
@@ -999,7 +1008,7 @@ function describeError(e, ctx) {
     if (status === 429)
       return e?.하루한도
         ? "무료 엔진의 오늘 몫을 다 썼습니다 (구글 무료 등급의 하루 한도 — 회원님의 월 한도와는 별개입니다). " +
-          `${소진안내()}에 다시 열립니다.` + 대안안내 + 소진진단(ctx)
+          `${소진안내()}에 다시 열립니다.` + 대안안내 + (await 소진진단(ctx))
         : "무료 엔진이 지금 분당 한도에 걸렸습니다. 1분 뒤에 다시 눌러 주세요. (하루 한도가 끝난 것이 아닙니다)" + 대안안내;
     if (status === 404)
       return adminHint(
