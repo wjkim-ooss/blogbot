@@ -1,8 +1,8 @@
 // 블로그봇 대시보드 프런트
 // 판정 규칙은 서버와 같은 파일을 쓴다 — 두 벌로 두면 반드시 갈라진다 (web/rules.js)
 import {
-  noSpace, stripPhotos, countWord, despace, countLoose,
-  요청글자수, 적힌목표, pickReference, 참고레퍼런스, targetPhotosFor, 평가,
+  countLoose, 요청글자수, 적힌목표, 분량표시 as 분량문구,
+  참고레퍼런스, 레퍼런스안내, targetPhotosFor, 평가,
 } from "/rules.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -57,16 +57,23 @@ function draftBody(content) {
   return idx >= 0 ? content.slice(idx + 5).trim() : content.trim();
 }
 
-const 권장글자수 = () => CONFIG.권장글자수 || CONFIG.최소글자수;
-// 목표를 사람에게 보여 주는 문구 — 생성 안내와 검증 패널이 같은 말을 하도록 한 곳에 둔다
-const 분량표시 = (목표) =>
-  목표 ? `${목표.toLocaleString()}자 (직접 지정)`
-       : `${CONFIG.최소글자수.toLocaleString()}~${권장글자수().toLocaleString()}자`;
+const 분량표시 = (목표) => 분량문구(목표, CONFIG);
+
+// 레퍼런스 고르기는 보관함 본문 전체를 훑는다(지금 175개 글, 크롤링할수록 늘어난다).
+// 그런데 키워드 칸은 한 글자 칠 때마다, 초안 목록은 글 하나마다 이걸 부른다 —
+// 같은 키워드를 몇 번이고 다시 훑게 된다. 키워드별로 한 번만 훑고 기억한다.
+const 레퍼런스캐시 = new Map();
+function 레퍼런스고르기(keyword) {
+  const key = keyword || "";
+  if (!레퍼런스캐시.has(key)) 레퍼런스캐시.set(key, 참고레퍼런스(REFS, key, CONFIG));
+  return 레퍼런스캐시.get(key);
+}
 
 
 // ---------- 탭 1: 레퍼런스 보관함 ----------
 async function loadRefs() {
   REFS = await api("/api/references");
+  레퍼런스캐시.clear(); // 보관함이 바뀌었으니 기억해 둔 결과도 버린다
   const list = $("#ref-list");
   list.innerHTML = REFS.length
     ? ""
@@ -307,7 +314,7 @@ async function openDraft(name, el) {
 // 여기서는 브라우저 사정(설정·레퍼런스 목록)만 채워 넣는다.
 // 말투 "요약": 검증 패널이 좁아 짧게 말한다. 조건은 서버와 한 글자도 다르지 않다.
 function evaluateDraft(body, keyword, 지정목표 = 0) {
-  const { ref: refHit } = 참고레퍼런스(REFS, keyword, CONFIG);
+  const { ref: refHit } = 레퍼런스고르기(keyword);
   return { ...평가(body, { keyword, config: CONFIG, 목표글자수: 지정목표, ref: refHit, 말투: "요약" }), refHit };
 }
 
@@ -427,17 +434,12 @@ function updateGenHint() {
     el.className = "gen-hint";
     return (el.textContent = "");
   }
-  const { ref, 종류 } = 참고레퍼런스(REFS, kw, CONFIG);
+  const { ref, 종류 } = 레퍼런스고르기(kw);
   const 표시 = 분량표시(요청글자수($("#gen-chars").value));
   const 수치 = ref ? ` · 사진 ${targetPhotosOf(ref)}곳 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)` : "";
   // 무엇을 참고하는지 원장이 알아야 한다 — 엉뚱한 걸 보고 쓰면 글이 겉돈다
-  const 앞말 =
-    종류 === "정확" ? `✅ "${ref.keyword}" 레퍼런스 ${ref.posts.length}개 참고`
-    : 종류 === "모음" ? `✅ "${kw}"가 나오는 상위글 ${ref.posts.length}개를 모아 참고 (${ref.출처.map((k) => `"${k}"`).join("·")} 보관함)`
-    : 종류 === "기본" ? `✅ "${kw}" 레퍼런스는 아직 없어서 "${ref.keyword}" ${ref.posts.length}개를 대신 참고`
-    : `⚠️ 참고할 레퍼런스가 없어 기본 기준으로 씁니다`;
   el.className = `gen-hint ${ref ? "ok" : "warn"}`;
-  el.textContent = `${앞말} — 목표 ${표시}${수치}`;
+  el.textContent = `${ref ? "✅" : "⚠️"} ${레퍼런스안내(kw, ref, 종류)} — 목표 ${표시}${수치}`;
 }
 $("#gen-keyword").addEventListener("input", updateGenHint);
 $("#gen-chars").addEventListener("input", updateGenHint);

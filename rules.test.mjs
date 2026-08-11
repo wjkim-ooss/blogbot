@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 적힌목표, 요청글자수, targetPhotosFor, countLoose } from "./web/rules.js";
+import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
@@ -213,4 +213,36 @@ test("③ 아무 데도 없으면 기본 보관함, 그것도 없으면 빈손",
   assert.equal(참고레퍼런스(list, "탈모", { 기본레퍼런스: "피부고민" }).ref.keyword, "피부고민");
   assert.equal(참고레퍼런스(list, "탈모", {}).ref, null);
   assert.equal(참고레퍼런스([], "탈모", { 기본레퍼런스: "피부고민" }).ref, null);
+});
+
+// ---------- 이 파일이 있어야 할 자리 ----------
+// rules.js는 web/ 안에 있어야 한다. 서버는 import로, 브라우저는 /rules.js로 같은 파일을 받는데,
+// 브라우저 쪽은 정적 서빙 폴더(web/)만 닿는다. 옮기면 서버는 부팅에서 바로 터지지만
+// 브라우저는 404 → 모듈 로드 실패 → 화면이 통째로 빈다(콘솔에만 오류). 그래서 여기서 잡는다.
+test("rules.js는 web/ 안에 있어야 브라우저도 받아 갈 수 있다", () => {
+  const 뿌리 = path.dirname(fileURLToPath(import.meta.url));
+  assert.ok(fs.existsSync(path.join(뿌리, "web", "rules.js")), "web/rules.js가 없으면 화면이 통째로 빈다");
+  const html = fs.readFileSync(path.join(뿌리, "web", "index.html"), "utf8");
+  assert.match(html, /<script[^>]+type="module"[^>]+app\.js/, "app.js는 모듈로 불려야 import가 동작한다");
+});
+
+// ---------- 무엇을 참고했는지 알리는 문구 ----------
+// 예전에는 서버와 브라우저가 이 네 갈래를 각자 적고 있었다. 한 곳에서 나오는지 못박는다.
+test("레퍼런스 안내는 네 갈래를 모두 사람 말로 돌려준다", () => {
+  const 통째 = { keyword: "모공", posts: Array(20) };
+  const 모음 = { keyword: "블랙헤드", posts: Array(12), 출처: ["모공", "피부고민"] };
+  assert.match(레퍼런스안내("모공", 통째, "정확"), /"모공" 레퍼런스 20개/);
+  const m = 레퍼런스안내("블랙헤드", 모음, "모음");
+  assert.match(m, /상위글 12개를 모아/);
+  assert.match(m, /"모공"·"피부고민"/, "어느 보관함에서 왔는지 밝혀야 한다");
+  assert.match(레퍼런스안내("기미", 통째, "기본"), /"기미" 레퍼런스는 아직 없어서 "모공"/);
+  assert.match(레퍼런스안내("기미", null, "없음"), /레퍼런스가 없어/);
+});
+
+test("말투는 문구만 바꾸고 사실은 그대로 둔다", () => {
+  const ref = { keyword: "모공", posts: Array(20) };
+  const 요약 = 레퍼런스안내("모공", ref, "정확", "요약");
+  const 지시 = 레퍼런스안내("모공", ref, "정확", "지시");
+  assert.notEqual(요약, 지시);
+  for (const 말 of [요약, 지시]) assert.match(말, /"모공" 레퍼런스 20개/);
 });
