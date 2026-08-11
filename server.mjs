@@ -390,7 +390,10 @@ const SYSTEM_PROMPT = `당신은 에스테틱(피부관리실) 원장이 자기 
 둘째 줄부터: 본문 전체. 제목을 본문에서 반복하지 말고, 설명·머리말·맺음말 코멘트 없이 네이버 에디터에 그대로 붙여넣을 수 있는 본문만 출력한다.`;
 
 // 상위글 평균이 최소 기준보다 높으면 그 평균이 진짜 통과선이다 — 평균에 못 미치면 상위권에 못 낀다.
-const targetCharsFor = (ref) => Math.max(CONFIG.최소글자수, ref?.avgChars || 0);
+// 상위글 평균은 2,000자를 넘기도 하지만, 원장이 실제로 매번 쓸 수 있는 분량이 아니면 의미가 없다.
+// 통과선은 최소글자수(1,300자), 노리는 지점은 권장글자수(1,500자)로 고정한다.
+const targetCharsFor = () => CONFIG.최소글자수;
+const 권장글자수 = () => CONFIG.권장글자수 || CONFIG.최소글자수;
 // 상위글은 사진이 30장을 넘기도 하지만, 원장이 실제로 준비할 수 있는 양을 넘으면 초안이 무용지물이라
 // 인사이트 탭과 같은 기준(20장)으로 상한을 둔다.
 const targetPhotosFor = (ref) => Math.max(CONFIG.권장이미지최소, Math.min(ref?.avgImages || 0, 20));
@@ -424,7 +427,9 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수) {
   }
   lines.push(
     "",
-    `[목표 분량] 공백 제외 ${목표.toLocaleString()}자 이상${목표글자수 ? " (원장이 직접 지정한 값 — 반드시 맞출 것)" : ref?.avgChars > CONFIG.최소글자수 ? ` (상위글 평균 ${ref.avgChars.toLocaleString()}자에 맞춘 값 — 이 아래로는 상위권에 못 낀다)` : ""}`,
+    목표글자수
+      ? `[목표 분량] 공백 제외 ${목표.toLocaleString()}자 이상 (원장이 직접 지정한 값 — 반드시 맞출 것)`
+      : `[목표 분량] 공백 제외 ${CONFIG.최소글자수.toLocaleString()}~${권장글자수().toLocaleString()}자 (이 범위를 노릴 것. 너무 길게 쓰지 말 것)`,
     `[사진 자리] ${targetPhotosFor(ref)}곳 이상${ref?.avgImages ? ` (상위글 평균 ${ref.avgImages}장)` : ""} — [사진: 설명] 형식으로 본문 곳곳에 배치`
   );
   lines.push(
@@ -436,7 +441,9 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수) {
   lines.push(
     "",
     "[제출 전 스스로 확인할 것 — 기계가 이 그대로 잽니다]",
-    `1. 공백 제외 ${목표.toLocaleString()}자 이상인가`,
+    목표글자수
+      ? `1. 공백 제외 ${목표.toLocaleString()}자 이상인가`
+      : `1. 공백 제외 ${CONFIG.최소글자수.toLocaleString()}자 이상이고 ${권장글자수().toLocaleString()}자 근처인가`,
     `2. 제목에 "${keyword}"가 통째로 들어갔는가`,
     `3. 본문에 "${keyword}"가 통째로(붙여서) ${CONFIG.키워드횟수.min}~${CONFIG.키워드횟수.max}회 들어갔는가 — 단어를 쪼개 흩어 놓으면 0회로 셉니다`,
     `4. 추상어(${CONFIG.추상어.slice(0, 8).join(", ")} 등)를 하나도 쓰지 않았는가`,
@@ -544,6 +551,10 @@ async function streamGemini(messages, send) {
       role: m.role === "assistant" ? "model" : "user",
       parts: [{ text: m.content }],
     })),
+    // Gemini 3.x는 '생각'을 켠 채로 나오고, 그 생각이 출력 한도를 먼저 먹는다.
+    // 한도를 안 정해 주면 생각만 하다 끝나 본문이 몇 글자만 남는다(2026-08-11에 6자짜리 초안이 저장됨).
+    // 넉넉히 주고, 생각은 짧게 시킨다 — 품질은 프롬프트가 만들지 긴 사고가 만들지 않는다.
+    generationConfig: { maxOutputTokens: 16384, thinkingConfig: { thinkingBudget: 512 } },
   });
 
   let res, 마지막오류;
@@ -572,6 +583,7 @@ async function streamGemini(messages, send) {
 
   let out = "";
   let buf = "";
+  let 끝난이유 = "";
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   for (;;) {
@@ -587,13 +599,28 @@ async function streamGemini(messages, send) {
       const payload = line.slice(5).trim();
       if (!payload || payload === "[DONE]") continue;
       try {
-        const text = JSON.parse(payload).candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("") || "";
+        const cand = JSON.parse(payload).candidates?.[0];
+        if (cand?.finishReason) 끝난이유 = cand.finishReason;
+        // thought: true 인 조각은 모델의 생각이지 글이 아니다 — 본문에 섞으면 안 된다
+        const text = (cand?.content?.parts || [])
+          .filter((p) => !p.thought)
+          .map((p) => p.text || "")
+          .join("");
         if (text) {
           out += text;
           send({ type: "delta", text });
         }
       } catch { /* 조각난 JSON은 건너뛴다 */ }
     }
+  }
+
+  // 글이라 할 수 없는 분량이면 조용히 넘기지 않는다. 그대로 저장하면 6자짜리 초안이 남는다.
+  if (noSpace(out) < 100) {
+    const 이유 =
+      끝난이유 === "MAX_TOKENS" ? "출력 한도에 먼저 걸렸습니다"
+      : 끝난이유 === "SAFETY" || 끝난이유 === "PROHIBITED_CONTENT" ? "안전 필터에 걸렸습니다 (키워드를 바꿔 보세요)"
+      : 끝난이유 ? `중단 사유: ${끝난이유}` : "빈 응답이 왔습니다";
+    throw Object.assign(new Error(`글이 거의 나오지 않았습니다 — ${이유}`), { engine: "gemini", status: 502 });
   }
   return out;
 }
@@ -707,8 +734,26 @@ async function handleGenerate(res, body, ctx) {
       return { parsed: p, validation: validateDraft(`${p.title}\n${p.body}`, keyword, targetChars, p.title) };
     };
 
-    let draft = await streamOnce(client, messages, send);
+    // 첫 응답이 비어 오는 일이 있다(생각만 하다 끝나는 경우). 한 번은 다시 물어본다.
+    let draft;
+    for (let 시도 = 1; ; 시도++) {
+      try {
+        draft = await streamOnce(client, messages, send);
+        break;
+      } catch (e) {
+        if (e?.status !== 502 || 시도 >= 2) throw e;
+        send({ type: "status", message: "글이 안 나와서 다시 요청합니다" });
+        send({ type: "reset" });
+      }
+    }
     let { parsed, validation } = check(draft);
+    // 마지막 시도가 늘 제일 낫지는 않다. 고쳐 쓰다 더 나빠질 수도 있으므로 제일 좋았던 것을 들고 간다.
+    // 순위: 통과 여부 → 남은 고칠 점이 적은 순 → 긴 순.
+    let best = { draft, parsed, validation };
+    const 더나은가 = (a, b) =>
+      a.validation.pass !== b.validation.pass ? a.validation.pass
+      : a.validation.issues.length !== b.validation.issues.length ? a.validation.issues.length < b.validation.issues.length
+      : a.validation.chars > b.validation.chars;
 
     // 통과할 때까지 고쳐 쓴다. 한 번만 보완하면 미달인 채로 저장되는 일이 잦았다.
     // 매번 '무엇이 얼마나 모자란지'를 수치로 돌려줘야 실제로 고쳐진다.
@@ -720,11 +765,20 @@ async function handleGenerate(res, body, ctx) {
       send({ type: "reset" });
       messages.push({ role: "assistant", content: draft });
       messages.push({ role: "user", content: fixInstruction(validation, keyword) });
-      draft = await streamOnce(client, messages, send);
+      try {
+        draft = await streamOnce(client, messages, send);
+      } catch (e) {
+        // 한 번 실패했다고 앞서 만든 글까지 버리지 않는다
+        if (best.validation.chars >= 100) { send({ type: "status", message: `이번 시도는 실패했습니다 (${e.message}) — 직전 결과를 저장합니다` }); break; }
+        throw e;
+      }
       ({ parsed, validation } = check(draft));
+      const 이번 = { draft, parsed, validation };
+      if (더나은가(이번, best)) best = 이번;
       // 대화가 길어지면 비용·지연이 커진다. 직전 시도만 남기고 앞은 버린다.
       if (messages.length > 5) messages.splice(1, messages.length - 3);
     }
+    ({ parsed, validation } = best);
 
     send({
       type: "status",

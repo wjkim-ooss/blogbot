@@ -143,7 +143,8 @@ function renderInsights() {
     const benefitRate = Math.round((titles.filter((t) => benefitWords.some((w) => t.includes(w))).length / titles.length) * 100) || 0;
     const tokens = r.keyword.split(/\s+/);
     const kwInTitle = Math.round((titles.filter((t) => tokens.some((k) => t.includes(k))).length / titles.length) * 100) || 0;
-    const targetChars = Math.max(CONFIG?.최소글자수 || 1500, r.avgChars);
+    const targetChars = CONFIG?.최소글자수 || 1300;
+    const 권장 = CONFIG?.권장글자수 || targetChars;
     return `<div class="card insight-card">
       <h3>${esc(r.keyword)}</h3>
       <div class="stat-row">
@@ -153,7 +154,7 @@ function renderInsights() {
         <div class="stat"><div class="num">${benefitRate}%</div><div class="label">제목에 이득/손해 단어</div></div>
         <div class="stat"><div class="num">${kwInTitle}%</div><div class="label">제목에 키워드 일부 포함</div></div>
       </div>
-      <div class="reco">📌 이 키워드로 쓸 때: 공백제외 <b>${targetChars.toLocaleString()}자 이상</b>,
+      <div class="reco">📌 이 키워드로 쓸 때: 공백제외 <b>${targetChars.toLocaleString()}~${권장.toLocaleString()}자</b>,
       사진 <b>${Math.max(CONFIG?.권장이미지최소 || 10, Math.min(r.avgImages, 20))}장 이상</b>,
       제목에 숫자와 이득/손해 암시 넣기${numRate < 50 ? " (상위글 대부분 숫자가 없으니 숫자로 차별화 가능)" : ""}</div>
     </div>`;
@@ -348,9 +349,10 @@ function evaluateDraft(body, keyword) {
   const titleHasKw = !!title && !!keyword && countLoose(title, keyword) > 0;
   const titleHasNum = /\d/.test(title);
   const titleLen = noSpace(title);
-  // 상위글 평균이 최소 기준보다 높으면 그 평균이 진짜 통과선 (server.mjs targetCharsFor와 동일)
+  // 통과선은 최소글자수, 노리는 지점은 권장글자수 (server.mjs targetCharsFor와 동일).
+  // 상위글 평균은 2,000자를 넘기도 하지만 원장이 매번 쓸 수 있는 분량이 아니라 목표로 삼지 않는다.
   const refHit = pickReference(REFS, keyword);
-  const targetChars = Math.max(CONFIG.최소글자수, refHit?.avgChars || 0);
+  const targetChars = CONFIG.최소글자수;
   const targetPhotos = targetPhotosOf(refHit);
 
   // 반드시 고쳐야 하는 것(issues)과 고치면 더 좋은 것(advice)을 나눈다.
@@ -420,7 +422,7 @@ function runValidation() {
     ${verdict}${tips}
     <h4>3대 기준 검증</h4>
     <div class="v-item"><span>글자수 (공백제외)</span><span class="${ok(chars >= targetChars)}">${chars.toLocaleString()}자</span></div>
-    <div class="v-item"><span>목표 기준</span><span class="muted">${targetChars.toLocaleString()}자${refHit && refHit.avgChars > CONFIG.최소글자수 ? " (상위글 평균)" : ""}</span></div>
+    <div class="v-item"><span>목표 기준</span><span class="muted">${targetChars.toLocaleString()}~${(CONFIG.권장글자수 || targetChars).toLocaleString()}자</span></div>
     <div class="v-item"><span>사진 자리</span><span class="${photos >= targetPhotos ? "v-ok" : "v-warn"}">${photos}곳</span></div>
     ${refHit ? `<div class="v-sub">${targetPhotos}곳 이상 권장 · 상위글 평균 ${refHit.avgImages}장</div>` : ""}
     ${title
@@ -502,12 +504,15 @@ function updateGenHint() {
   const ref = pickReference(REFS, kw);
   const 지정 = Math.round(Number($("#gen-chars").value));
   const 목표 = Number.isFinite(지정) && 지정 >= 300 ? Math.min(지정, 20000) : null;
+  const 분량표시 = 목표
+    ? `${목표.toLocaleString()}자 (직접 지정)`
+    : `${CONFIG.최소글자수.toLocaleString()}~${(CONFIG.권장글자수 || CONFIG.최소글자수).toLocaleString()}자`;
   el.className = `gen-hint ${ref ? "ok" : "warn"}`;
   // 정확히 같은 키워드가 아니면 어느 레퍼런스를 참고하는지 밝힌다 (엉뚱한 걸 참고하는지 원장이 알아야 한다)
   const via = ref && despace(ref.keyword) !== despace(kw) ? `"${ref.keyword}" ` : "";
   el.textContent = ref
-    ? `✅ ${via}레퍼런스 ${ref.posts.length}개 참고 — 목표 ${(목표 ?? Math.max(CONFIG.최소글자수, ref.avgChars)).toLocaleString()}자${목표 ? " (직접 지정)" : ""} · 사진 ${targetPhotosOf(ref)}곳 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)`
-    : `⚠️ 이 키워드는 레퍼런스가 없어 목표 ${(목표 ?? CONFIG.최소글자수).toLocaleString()}자${목표 ? " (직접 지정)" : "(기본 기준)"}로 씁니다. 보관함에 먼저 크롤링하면 품질이 올라갑니다`;
+    ? `✅ ${via}레퍼런스 ${ref.posts.length}개 참고 — 목표 ${분량표시} · 사진 ${targetPhotosOf(ref)}곳 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)`
+    : `⚠️ 이 키워드는 레퍼런스가 없어 기본 기준으로 씁니다 — 목표 ${분량표시}. 보관함에 먼저 크롤링하면 품질이 올라갑니다`;
 }
 $("#gen-keyword").addEventListener("input", updateGenHint);
 $("#gen-chars").addEventListener("input", updateGenHint);
