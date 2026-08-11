@@ -167,6 +167,13 @@ header { justify-content: flex-start; }
 .st.blocked { background: #fdeceb; color: #d8483b; }
 .admin-user select { font-size: 13px; }
 
+/* 관리자가 다른 회원의 초안을 열람할 때 */
+#readonly-banner {
+  background: #fff6e5; border: 1px solid #f0c987; color: #7a4c00;
+  border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px;
+}
+#editor.readonly { background: #f7f7f9; color: #444; }
+
 /* ---------- 모바일 ---------- */
 /* 이 스타일시트는 원래 데스크톱 폭만 가정하고 있었다. 폰에서는 헤더(제목+탭+계정)와
    본문 2단(목록/편집기 + 검증패널)이 한 줄에 다 들어가지 못해 각 항목이 최소 너비까지
@@ -202,6 +209,7 @@ header { justify-content: flex-start; }
   .admin-user .em { min-width: 0; width: 100%; word-break: break-all; }
   .detail { overflow-x: auto; } /* 레퍼런스 표가 넘칠 때 화면 대신 표만 스크롤 */
   .auth-card { width: 100%; }
+  #draft-owner { width: 100%; }
 }
 
 #gen-output-wrap { margin-bottom: 14px; }

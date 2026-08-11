@@ -4,6 +4,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveDraftView } from "./permissions.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
@@ -28,49 +29,45 @@ const SUPA_URL = process.env.SUPABASE_URL || "";
 const SUPA_ANON = process.env.SUPABASE_ANON_KEY || "";
 const SUPA_SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const AUTH_ON = !!(SUPA_URL && SUPA_ANON && SUPA_SERVICE);
-// PUBLIC_MODE=true → 로그인 없이 누구나 바로 사용. 초안은 공용 계정으로 Supabase에 계속 보관된다
-// (서버 파일에 두면 무료 플랜이 잠들 때마다 초기화되므로).
-const PUBLIC_MODE = process.env.PUBLIC_MODE === "true";
+// 초안은 언제나 쓴 사람 것이다 — 계정끼리 섞이는 경로는 두지 않는다.
+// (예전의 PUBLIC_MODE = 로그인 없이 모두가 초안 하나를 공유하던 모드는 삭제했다)
 let supaAdmin = null;
-let SHARED_USER_ID = null;
 if (AUTH_ON) {
   const { createClient } = await import("@supabase/supabase-js");
   supaAdmin = createClient(SUPA_URL, SUPA_SERVICE, { auth: { persistSession: false } });
-  if (PUBLIC_MODE) console.log("공개 모드 — 로그인 없이 사용, 초안은 공용 계정에 보관");
-  else console.log("인증 ON — Supabase 로그인·승인·등급 활성화");
+  console.log("인증 ON — Supabase 로그인·승인·등급 활성화");
+  keepSupabaseAwake();
 } else {
   console.log("인증 OFF — 관리자 단독 로컬 모드 (Supabase 미설정)");
 }
 
-// 공개 모드에서 모든 초안을 담을 공용 계정.
-// 첫 요청 때 한 번만 해결한다 — 부팅 시점에 잡으면 Supabase가 잠깐 안 될 때 사이트 전체가 안 뜬다.
-async function sharedUserId() {
-  if (SHARED_USER_ID) return SHARED_USER_ID;
-  const email = "shared@blogbot.local";
-  const { data: list } = await supaAdmin.auth.admin.listUsers({ perPage: 200 });
-  const found = list?.users?.find((u) => u.email === email);
-  if (found) return (SHARED_USER_ID = found.id);
-  const { data, error } = await supaAdmin.auth.admin.createUser({
-    email,
-    password: crypto.randomUUID(),
-    email_confirm: true,
-  });
-  if (error) throw new Error(`공용 계정 준비 실패: ${error.message}`);
-  return (SHARED_USER_ID = data.user.id);
+// Supabase 무료 플랜은 일주일쯤 요청이 없으면 프로젝트를 정지시킨다.
+// 그러면 주소 자체가 사라져 로그인이 통째로 안 된다(2026-08-03에 겪음).
+// 원장들이 매일 쓰면 저절로 깨어 있지만, 방학처럼 뜸한 기간을 넘기려고 6시간마다 한 번 두드린다.
+// unref(): 이 타이머 때문에 서버가 종료되지 못하는 일이 없게 한다.
+function keepSupabaseAwake() {
+  const 여섯시간 = 6 * 60 * 60 * 1000;
+  const ping = async () => {
+    const { error } = await supaAdmin.from("profiles").select("id").limit(1);
+    if (error) console.error("[Supabase 깨우기 실패]", error.message);
+  };
+  ping();
+  setInterval(ping, 여섯시간).unref();
 }
 
 const monthKey = () => new Date().toISOString().slice(0, 7); // YYYY-MM
 
-// 요청 컨텍스트: { authOn, isAdmin, approved, profile, userId }
-const ANON_CTX = { authOn: true, isAdmin: false, approved: false, profile: null, uid: async () => null };
+// 요청 컨텍스트 — 평범한 데이터. 필드 뜻:
+//   isAdmin   회원 관리 권한 (관리자 전용 화면·안내문의 기준)
+//   approved  레퍼런스·초안을 쓸 수 있는가
+//   unlimited 월 생성 한도를 적용하지 않는가
+//   needsLogin 로그인부터 해야 하는가
+//   userId    초안 주인. 로그인한 본인 외에는 절대 다른 값이 들어가지 않는다
+const ANON_CTX = { authOn: true, isAdmin: false, approved: false, unlimited: false, needsLogin: true, profile: null, userId: null };
 async function context(req) {
   if (!AUTH_ON) {
     // 로컬 단독 모드: 관리자로 취급, 초안은 로컬 파일(기존 견본 포함)
-    return { authOn: false, isAdmin: true, approved: true, profile: null, uid: async () => null };
-  }
-  if (PUBLIC_MODE) {
-    // 로그인 없이 통과. 저장은 Supabase 공용 계정으로 (초안이 사라지지 않게)
-    return { authOn: true, isAdmin: true, approved: true, profile: null, uid: sharedUserId, publicMode: true };
+    return { authOn: false, isAdmin: true, approved: true, unlimited: true, needsLogin: false, profile: null, userId: null };
   }
   const auth = req.headers["authorization"] || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
@@ -85,7 +82,7 @@ async function context(req) {
   }
   const isAdmin = profile?.role === "admin";
   const approved = isAdmin || profile?.status === "approved";
-  return { authOn: true, isAdmin, approved, profile, uid: async () => data.user.id };
+  return { authOn: true, isAdmin, approved, unlimited: isAdmin, needsLogin: !profile, profile, userId: data.user.id };
 }
 
 // ---------- 공용 유틸 ----------
@@ -149,20 +146,31 @@ function loadReferences() {
   return [...newest.values()].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 }
 
+// 어떤 레퍼런스를 참고할지 고른다. (web/app.js pickReference와 같은 규칙)
+// ① 띄어쓰기는 무시 — "여드름 피부관리" = "여드름피부관리"
+// ② 정확히 같은 키워드가 있으면 그것
+// ③ 없으면 한쪽이 다른 쪽을 품는 것 — "여드름"으로 써도 "여드름 피부관리" 40개를 참고할 수 있게.
+//    (원장은 보관함의 키워드를 통째로 외워 입력하지 않는다. 예전에는 여기서 조용히 빈손이 됐다)
+//    여러 개면 길이가 가장 가까운 것 = 가장 덜 벗어난 것을 고른다.
+export function pickReference(list, keyword) {
+  const want = despace((keyword || "").normalize("NFC"));
+  if (!want) return null;
+  let best = null, bestGap = Infinity;
+  for (const r of list) {
+    const k = despace((r.keyword || "").normalize("NFC"));
+    if (!k) continue;
+    if (k === want) return r;
+    if (k.includes(want) || want.includes(k)) {
+      const gap = Math.abs(k.length - want.length);
+      if (gap < bestGap) { best = r; bestGap = gap; }
+    }
+  }
+  return best;
+}
+
 // 생성용: 파일명이 아니라 파일 안의 keyword로 찾는다.
 // (파일명에 한글이 들어가는데, 업로드 경로에 따라 자모 분리형으로 바뀔 수 있어 이름 비교는 조용히 실패한다)
-// 띄어쓰기는 무시하고 찾는다 — "여드름 피부관리"와 "여드름피부관리"는 같은 레퍼런스로 본다.
-function findReference(keyword) {
-  if (!fs.existsSync(REF_DIR)) return null;
-  const want = despace(keyword.normalize("NFC"));
-  for (const f of fs.readdirSync(REF_DIR).filter((f) => f.endsWith(".json")).sort().reverse()) {
-    try {
-      const r = JSON.parse(fs.readFileSync(path.join(REF_DIR, f), "utf8"));
-      if (r.keyword && despace(r.keyword.normalize("NFC")) === want) return { file: f, ...r };
-    } catch { /* 깨진 파일 무시 */ }
-  }
-  return null;
-}
+const findReference = (keyword) => pickReference(loadReferences(), keyword);
 
 // 레퍼런스 크롤링은 웹에서 하지 않는다 — 채팅(Claude)에서 scripts/crawl.mjs로 수집한다.
 
@@ -224,28 +232,36 @@ const fileStore = {
 };
 
 // Supabase 저장소 (drafts 테이블, user_id별)
+// 모든 조회·저장은 owner(uid)를 거친다. 주인이 없는 요청은 여기서 멈춘다 —
+// 실수로 uid가 비어도 남의 초안이 보이거나 섞이는 일이 없게.
+const owner = (uid) => {
+  if (!uid) throw new Error("초안 주인을 알 수 없습니다");
+  return uid;
+};
+
 const supaStore = {
   async list(uid) {
-    const { data } = await supaAdmin.from("drafts").select("name,updated_at").eq("user_id", uid).order("updated_at", { ascending: false });
+    const { data } = await supaAdmin.from("drafts").select("name,updated_at").eq("user_id", owner(uid)).order("updated_at", { ascending: false });
     return (data || []).map((d) => ({ name: d.name, mtime: new Date(d.updated_at).getTime() }));
   },
   async get(uid, name) {
-    const { data } = await supaAdmin.from("drafts").select("content").eq("user_id", uid).eq("name", name).maybeSingle();
+    const { data } = await supaAdmin.from("drafts").select("content").eq("user_id", owner(uid)).eq("name", name).maybeSingle();
     return data ? data.content : null;
   },
   async put(uid, name, content) {
     await supaAdmin.from("drafts").upsert(
-      { user_id: uid, name, content: content ?? "", updated_at: new Date().toISOString() },
+      { user_id: owner(uid), name, content: content ?? "", updated_at: new Date().toISOString() },
       { onConflict: "user_id,name" }
     );
   },
   async del(uid, name) {
-    await supaAdmin.from("drafts").delete().eq("user_id", uid).eq("name", name);
+    await supaAdmin.from("drafts").delete().eq("user_id", owner(uid)).eq("name", name);
   },
   async create(uid, base, content) {
-    const { data } = await supaAdmin.from("drafts").select("name").eq("user_id", uid).like("name", `${base}%`);
+    const id = owner(uid);
+    const { data } = await supaAdmin.from("drafts").select("name").eq("user_id", id).like("name", `${base}%`);
     const file = pickName(base, new Set((data || []).map((d) => d.name)));
-    await supaAdmin.from("drafts").insert({ user_id: uid, name: file, content });
+    await supaAdmin.from("drafts").insert({ user_id: id, name: file, content });
     return file;
   },
 };
@@ -270,7 +286,35 @@ async function importSamples(uid) {
 
 async function draftCreate(ctx, keyword, title, body, v) {
   const base = `${new Date().toISOString().slice(0, 10)}_${keyword.replace(/[\/\s]+/g, "-")}`;
-  return store.create(await ctx.uid(), base, buildDraftContent(keyword, title, body, v));
+  return store.create(ctx.userId, base, buildDraftContent(keyword, title, body, v));
+}
+
+// 손으로 쓰기 시작할 빈 초안. AI 생성이 막혀 있어도(크레딧·키 문제) 글은 쓸 수 있어야 한다.
+// 뼈대에 3대 기준과 목표치를 적어 둬서 무엇을 채워야 하는지 보이게 한다.
+function blankDraft(keyword, ref) {
+  const target = targetCharsFor(ref).toLocaleString();
+  const photos = targetPhotosFor(ref);
+  return [
+    `# ${keyword}`,
+    "",
+    `- 키워드: ${keyword} / 목표: 공백제외 ${target}자 이상 · 사진 ${photos}곳 이상`,
+    ref
+      ? `- 참고 레퍼런스: "${ref.keyword}" ${ref.posts.length}개 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)`
+      : `- 참고 레퍼런스 없음 — 기본 기준으로 씁니다`,
+    `- 3대 기준: ① 표본 넓히기 ② 이득/손해 암시 ③ 추상어 쓰지 않기`,
+    "",
+    "---",
+    "",
+    `제목: ${keyword} (여기에 숫자와 이득/손해를 넣어 제목을 완성하세요)`,
+    "",
+    "[사진: 첫 장면]",
+    "",
+    "안녕하세요.",
+    "OO동에서 피부관리를 하고 있는 원장입니다.",
+    "",
+    `(여기부터 본문을 쓰세요. 오른쪽 검증 패널이 글자수·키워드·추상어를 실시간으로 잡아줍니다)`,
+    "",
+  ].join("\n");
 }
 
 // ---------- AI 생성 ----------
@@ -360,6 +404,21 @@ function buildUserPrompt(keyword, region, point, ref) {
   return lines.join("\n");
 }
 
+// AI 크레딧 없이 쓰는 길: 프롬프트를 통째로 만들어 준다.
+// 원장이 이걸 복사해 자기 Claude(무료 계정도 가능)에 붙여넣으면 같은 결과를 얻는다.
+// 각자 자기 계정으로 쓰는 것이라 우진님 크레딧도, 구독도 쓰지 않는다.
+function buildFullPrompt(keyword, region, point, ref) {
+  return [
+    "# 역할",
+    SYSTEM_PROMPT,
+    "",
+    "---",
+    "",
+    "# 이번 글 조건",
+    buildUserPrompt(keyword, region, point, ref),
+  ].join("\n");
+}
+
 async function streamOnce(client, messages, send) {
   const stream = client.messages.stream({
     model: MODEL,
@@ -375,7 +434,7 @@ async function streamOnce(client, messages, send) {
 
 // 월 한도 확인·차감 (level1만). 통과 시 남은 횟수 반환, 초과 시 null.
 async function consumeQuota(ctx) {
-  if (!ctx.authOn || ctx.isAdmin) return { unlimited: true };
+  if (ctx.unlimited) return { unlimited: true };
   const p = ctx.profile;
   const mk = monthKey();
   const used = p.usage_month === mk ? p.usage_count : 0;
@@ -449,16 +508,23 @@ async function handleGenerate(res, body, ctx) {
 const adminHint = (ctx, msg, hint) => (ctx.isAdmin || !ctx.authOn ? `${msg} ${hint}` : `${msg} 관리자에게 문의해 주세요.`);
 
 // SDK가 주는 status/type으로 분류한다 (영문 메시지 문자열 매칭은 계약이 아니다)
+// 크레딧이 없을 때는 400 invalid_request_error로 오기 때문에 status/type만으로는 못 가른다.
+// 원문에 credit balance가 들어있으면 결제 문제로 본다.
+const 크레딧부족 = (e) => /credit balance is too low/i.test(String(e?.message || e));
+
+// AI가 막혀도 글은 쓸 수 있다 — 막다른 길로 끝내지 않고 다음 수를 알려준다
+const 대안안내 = " AI 없이 쓰시려면 ✍️ 직접 쓰기, 또는 📋 AI 프롬프트 복사로 claude.ai에 붙여넣으세요.";
+
 function describeError(e, ctx) {
   const type = e?.type;
   const status = e?.status;
   if (type === "authentication_error" || status === 401)
-    return adminHint(ctx, "AI 생성 인증에 실패했습니다.", "ANTHROPIC_API_KEY 값이 올바른지 확인하세요.");
-  if (type === "billing_error" || status === 403)
-    return adminHint(ctx, "AI 생성을 사용할 수 없습니다(결제 문제).", "console.anthropic.com → Billing 에서 크레딧을 충전하세요.");
+    return adminHint(ctx, "AI 생성 인증에 실패했습니다.", "ANTHROPIC_API_KEY 값이 올바른지 확인하세요.") + 대안안내;
+  if (type === "billing_error" || status === 403 || 크레딧부족(e))
+    return adminHint(ctx, "AI 크레딧이 없습니다.", "console.anthropic.com → Billing 에서 충전하면 켜집니다.") + 대안안내;
   if (type === "rate_limit_error" || status === 429)
     return "요청이 잠시 몰렸습니다. 1~2분 뒤 다시 시도해 주세요.";
-  return adminHint(ctx, "생성 중 오류가 발생했습니다.", `상세: ${String(e?.message || e)}`);
+  return adminHint(ctx, "생성 중 오류가 발생했습니다.", `상세: ${String(e?.message || e)}`) + 대안안내;
 }
 
 function parseDraftOutput(text, keyword) {
@@ -502,7 +568,7 @@ const server = http.createServer(async (req, res) => {
   try {
     // --- 공개 API ---
     if (p === "/api/config")
-      return json(res, 200, { ...CONFIG, auth: { enabled: AUTH_ON && !PUBLIC_MODE, publicMode: PUBLIC_MODE, supabaseUrl: SUPA_URL, supabaseAnonKey: SUPA_ANON } });
+      return json(res, 200, { ...CONFIG, auth: { enabled: AUTH_ON, supabaseUrl: SUPA_URL, supabaseAnonKey: SUPA_ANON } });
 
     // --- 인증 컨텍스트 (API 요청에만 필요 — 정적 파일은 거치지 않는다) ---
     if (!p.startsWith("/api/")) return serveStatic(res, p);
@@ -510,26 +576,28 @@ const server = http.createServer(async (req, res) => {
 
     // 내 계정 상태
     if (p === "/api/me") {
-      if (ctx.authOn && !ctx.publicMode && !ctx.profile) return json(res, 401, { error: "로그인이 필요합니다" });
+      if (ctx.needsLogin) return json(res, 401, { error: "로그인이 필요합니다" });
       const p2 = ctx.profile;
       const mk = monthKey();
       const used = p2 && p2.usage_month === mk ? p2.usage_count : 0;
       return json(res, 200, {
-        publicMode: !!ctx.publicMode,
+        id: ctx.userId,
         authOn: ctx.authOn,
         isAdmin: ctx.isAdmin,
         approved: ctx.approved,
         email: p2?.email || null,
         role: ctx.isAdmin ? "admin" : p2?.role || "admin",
-        status: ctx.isAdmin ? "approved" : p2?.status || "approved",
-        limit: ctx.isAdmin ? null : p2?.monthly_limit ?? null,
-        used: ctx.isAdmin ? null : used,
-        remaining: ctx.isAdmin ? null : Math.max(0, (p2?.monthly_limit ?? 0) - used),
+        status: ctx.approved ? "approved" : p2?.status || "pending",
+        limit: ctx.unlimited ? null : p2?.monthly_limit ?? null,
+        used: ctx.unlimited ? null : used,
+        remaining: ctx.unlimited ? null : Math.max(0, (p2?.monthly_limit ?? 0) - used),
       });
     }
 
     // 관리자: 회원 목록 / 승인·등급 변경
     if (p === "/api/admin/users") {
+      // 로컬 단독 모드에는 회원 명부 자체가 없다 (Supabase 미설정)
+      if (!ctx.authOn) return json(res, 400, { error: "로컬 모드에는 회원 명부가 없습니다" });
       if (!ctx.isAdmin) return json(res, 403, { error: "관리자 전용" });
       if (req.method === "GET") {
         const { data } = await supaAdmin.from("profiles").select("*").order("created_at", { ascending: false });
@@ -547,29 +615,57 @@ const server = http.createServer(async (req, res) => {
 
     // --- 승인된 사용자만: 레퍼런스·초안·생성 ---
     if (p === "/api/references" || p.startsWith("/api/drafts") || p === "/api/generate" || p.startsWith("/api/samples")) {
-      if (ctx.authOn && !ctx.publicMode && !ctx.profile) return json(res, 401, { error: "로그인이 필요합니다" });
+      if (ctx.needsLogin) return json(res, 401, { error: "로그인이 필요합니다" });
       if (!ctx.approved) return json(res, 403, { error: "승인 대기 중입니다. 관리자 승인 후 이용할 수 있어요." });
     }
 
     if (p === "/api/references") return json(res, 200, loadReferences());
-    if (p === "/api/drafts" && req.method === "GET") return json(res, 200, await store.list(await ctx.uid()));
+
+    // 초안을 누구 것으로 볼지 (규칙은 permissions.mjs, 시험은 permissions.test.mjs)
+    const { viewing, readOnly, denied } = resolveDraftView(ctx, url.searchParams.get("user"));
+    if (denied) return json(res, 403, { error: denied });
+
+    if (p === "/api/drafts" && req.method === "GET") return json(res, 200, await store.list(viewing));
+    // 빈 초안 만들기 — AI 없이 손으로 쓰기 시작할 때
+    if (p === "/api/drafts" && req.method === "POST") {
+      if (readOnly) return json(res, 403, { error: "다른 회원의 자리에는 초안을 만들 수 없습니다" });
+      const body = await readBody(req);
+      const keyword = (body.keyword || "").trim();
+      if (!keyword) return json(res, 400, { error: "키워드를 입력하세요" });
+      const base = `${new Date().toISOString().slice(0, 10)}_${keyword.replace(/[\/\s]+/g, "-")}`;
+      const file = await store.create(ctx.userId, base, blankDraft(keyword, findReference(keyword)));
+      return json(res, 200, { file });
+    }
     if (p.startsWith("/api/drafts/")) {
       const name = p.slice("/api/drafts/".length);
       if (!validName(name)) return json(res, 400, { error: "잘못된 파일명" });
       if (req.method === "GET") {
-        const content = await store.get(await ctx.uid(), name);
+        const content = await store.get(viewing, name);
         if (content == null) return json(res, 404, { error: "파일 없음" });
-        return json(res, 200, { name, content });
+        return json(res, 200, { name, content, readOnly });
       }
+      if (readOnly) return json(res, 403, { error: "다른 회원의 초안은 열람만 가능합니다" });
       if (req.method === "PUT") {
         const body = await readBody(req);
-        await store.put(await ctx.uid(), name, body.content ?? "");
+        await store.put(ctx.userId, name, body.content ?? "");
         return json(res, 200, { ok: true });
       }
       if (req.method === "DELETE") {
-        await store.del(await ctx.uid(), name);
+        await store.del(ctx.userId, name);
         return json(res, 200, { ok: true });
       }
+    }
+    // 프롬프트만 만들어 준다 — AI 크레딧을 쓰지 않으므로 월 한도도 차감하지 않는다
+    if (p === "/api/prompt" && req.method === "POST") {
+      const body = await readBody(req);
+      const keyword = (body.keyword || "").trim();
+      if (!keyword) return json(res, 400, { error: "키워드를 입력하세요" });
+      const ref = findReference(keyword);
+      return json(res, 200, {
+        prompt: buildFullPrompt(keyword, body.region || "", body.point || "", ref),
+        refKeyword: ref?.keyword || null,
+        refCount: ref?.posts?.length || 0,
+      });
     }
     if (p === "/api/generate" && req.method === "POST") {
       const body = await readBody(req);
@@ -578,7 +674,7 @@ const server = http.createServer(async (req, res) => {
     // 견본 초안 가져오기 (배포 모드에서 회원이 견본을 자기 계정으로 복사)
     if (p === "/api/samples/import" && req.method === "POST") {
       if (!ctx.authOn) return json(res, 400, { error: "로컬 모드에서는 견본이 이미 목록에 있습니다" });
-      const added = await importSamples(await ctx.uid());
+      const added = await importSamples(ctx.userId);
       return json(res, 200, { added });
     }
 

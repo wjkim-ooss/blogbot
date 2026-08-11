@@ -77,6 +77,10 @@
       <input id="gen-region" placeholder="지역 (선택)" />
       <input id="gen-point" placeholder="강조 포인트 (선택)" />
       <button id="gen-btn" class="primary">🤖 AI 초안 생성</button>
+      <!-- AI가 막혀 있어도(크레딧·키 문제) 손으로는 쓸 수 있어야 한다 -->
+      <button id="new-btn">✍️ 직접 쓰기</button>
+      <!-- 크레딧 없이: 프롬프트를 복사해 각자 자기 Claude에 붙여넣는다 -->
+      <button id="prompt-btn">📋 AI 프롬프트 복사</button>
       <button id="import-samples" class="hidden">📥 견본 초안 가져오기</button>
       <span id="gen-quota" class="muted"></span>
       <!-- 생성을 누르기 전에 이 키워드에 참고할 상위노출 레퍼런스가 있는지 알려준다 -->
@@ -87,8 +91,13 @@
       <pre id="gen-output"></pre>
     </div>
     <div class="split">
-      <div id="draft-list" class="side-list"></div>
+      <div class="side-list">
+        <!-- 관리자만 보이는 회원 선택. 남의 초안은 열람만 된다 -->
+        <select id="draft-owner" class="hidden"></select>
+        <div id="draft-list" class="side-list" style="width:auto"></div>
+      </div>
       <div class="editor-wrap">
+        <div id="readonly-banner" class="hidden"></div>
         <div class="editor-tools">
           <input id="draft-keyword" placeholder="검증용 키워드" />
           <button id="save-btn">💾 저장</button>
