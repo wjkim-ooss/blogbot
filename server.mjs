@@ -523,8 +523,41 @@ async function resolveGeminiModels() {
 // 지금 붐비는 것(잠시 뒤 되는 것)과 오늘 한도를 다 쓴 것(내일까지 안 되는 것)은 다르게 다뤄야 한다.
 const 붐빔 = (status, body) =>
   status === 503 || /high demand|overloaded|unavailable|try again later/i.test(body || "");
-const 한도초과 = (status, body) => status === 429 && !붐빔(status, body);
 const 잠시 = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 429는 한 종류가 아니다. 뭉뚱그려 "오늘 다 썼습니다"라고 하면 대개 거짓말이 된다.
+//   분당 한도(PerMinute) — 몇십 초만 쉬면 다시 열린다. 실제로 여기 제일 많이 걸린다.
+//   하루 한도(PerDay)    — '그 모델만' 내일까지 닫힌다. 다른 모델은 몫이 따로다.
+// (2026-08-11: 원장이 3개 쓰고 막혔다. 한 번 누를 때 고쳐쓰기까지 여러 번 부르니
+//  분당 한도에 걸린 것인데, 하루치를 다 쓴 것처럼 안내하고 그대로 포기했다.)
+function 한도해석(body) {
+  let 초 = 0, 하루 = false, 분당 = false;
+  try {
+    for (const d of JSON.parse(body).error?.details || []) {
+      const 종류 = String(d["@type"] || "");
+      if (종류.endsWith("RetryInfo")) 초 = Math.ceil(parseFloat(String(d.retryDelay || "")) || 0);
+      if (종류.endsWith("QuotaFailure"))
+        for (const v of d.violations || []) {
+          const 이름 = `${v.quotaId || ""} ${v.quotaMetric || ""}`;
+          if (/PerDay/i.test(이름)) 하루 = true;
+          if (/PerMinute/i.test(이름)) 분당 = true;
+        }
+    }
+  } catch { /* JSON이 아니면 아래에서 본문 문자열로 본다 */ }
+  if (!하루 && !분당) 하루 = /per ?day|daily limit/i.test(body || ""); // 분당이 기본
+  // 둘 다 걸렸으면 기다려도 안 열린다 — 하루 쪽이 이긴다
+  return { 하루, 쉴초: 하루 ? 0 : Math.min(초 || 20, 45) };
+}
+
+// 하루치를 다 쓴 모델은 기억해 뒀다가 건너뛴다 — 다음 원장이 같은 벽에 또 부딪히지 않게.
+// 구글의 하루 한도는 태평양시 자정에 초기화된다.
+const GEMINI_소진 = new Map(); // model → 다시 열리는 시각(ms)
+const 태평양자정 = () => {
+  const 지금 = new Date();
+  const pt = new Date(지금.toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
+  return 지금.getTime() + ((24 - pt.getHours()) * 60 - pt.getMinutes()) * 60_000;
+};
+const 소진됨 = (model) => (GEMINI_소진.get(model) ?? 0) > Date.now();
 
 async function streamClaude(client, messages, send) {
   const stream = client.messages.stream({
@@ -556,7 +589,13 @@ async function streamGemini(messages, send) {
     });
 
   let 마지막오류;
-  for (const [i, model] of models.entries()) {
+  // 하루치를 다 쓴 모델은 아예 건너뛴다. 전부 그렇다면 두드려 봐야 429만 더 받는다 — 바로 알린다.
+  const 순서 = models.filter((m) => !소진됨(m));
+  if (!순서.length)
+    throw Object.assign(new Error("하루 한도"), { status: 429, 하루한도: true, engine: "gemini" });
+
+  다음모델: for (const [i, model] of 순서.entries()) {
+    if (i > 0) send({ type: "status", message: `${model}로 바꿔서 다시 시도합니다` });
     // 설정 이름은 모델 세대마다 다르다. 어느 쪽이 맞는지 넘겨짚지 않고 되는 것을 찾는다.
     //   Gemini 3.x → thinkingLevel,  2.5 → thinkingBudget,  그 외 → 아무것도 안 붙임
     // (2026-08-11: 3.6-flash에 thinkingBudget을 보내 빈 응답이 왔다)
@@ -587,7 +626,23 @@ async function streamGemini(messages, send) {
 
         const detail = await r.text().catch(() => "");
         마지막오류 = Object.assign(new Error(detail || `HTTP ${r.status}`), { status: r.status, engine: "gemini" });
-        if (한도초과(r.status, detail)) return Promise.reject(마지막오류); // 모델을 바꿔도 안 풀린다
+
+        if (r.status === 429 && !붐빔(r.status, detail)) {
+          const { 하루, 쉴초 } = 한도해석(detail);
+          마지막오류.하루한도 = 하루;
+          if (하루) {
+            // 이 모델은 내일까지 닫혔다. 설정을 바꿔 봐야 똑같이 429다 — 곧장 다음 모델로.
+            GEMINI_소진.set(model, 태평양자정());
+            continue 다음모델;
+          }
+          if (시도 === 1) { // 분당 한도는 기다리면 열린다
+            send({ type: "status", message: `무료 엔진이 분당 한도에 걸렸습니다 — ${쉴초}초 쉬었다 이어서 씁니다` });
+            await 잠시(쉴초 * 1000);
+            continue;
+          }
+          continue 다음모델; // 그래도 안 되면 다음 모델로 (한도는 모델마다 따로 센다)
+        }
+
         if (r.status === 400) break; // 이 설정을 거부한 것 — 다음 후보로
         if (!붐빔(r.status, detail)) break;
 
@@ -597,13 +652,15 @@ async function streamGemini(messages, send) {
         }
       }
     }
-    if (i < models.length - 1) send({ type: "status", message: `${models[i + 1]}로 바꿔서 다시 시도합니다` });
   }
+  // 도중에 모든 모델이 하루치를 다 썼다면 방식을 바꿔 봐야 소용없다 — 바로 알린다
+  const 남은 = 순서.filter((m) => !소진됨(m));
+  if (!남은.length) throw Object.assign(마지막오류 ?? new Error("하루 한도"), { status: 429, 하루한도: true, engine: "gemini" });
 
   // 스트리밍(SSE)이 계속 빈손이면 방식을 바꿔 한 번만 통째로 받아 본다.
   // 스트리밍 쪽 문제라면 이걸로 그냥 되고, 아니면 왜 비었는지가 응답 안에 그대로 들어 있다.
   send({ type: "status", message: "방식을 바꿔 한 번 더 시도합니다" });
-  const 통째로 = await 한번에받기(models[0], contents);
+  const 통째로 = await 한번에받기(남은[0], contents);
   if (통째로.text) {
     send({ type: "delta", text: 통째로.text });
     return 통째로.text;
@@ -768,6 +825,18 @@ async function consumeQuota(ctx) {
   return { remaining: p.monthly_limit - (used + 1), limit: p.monthly_limit };
 }
 
+// 글이 한 줄도 안 나왔으면 월 한도를 도로 돌려준다.
+// AI가 못 쓴 것을 원장이 쓴 것으로 세면 15회가 실패로 다 닳는다.
+async function refundQuota(ctx) {
+  if (ctx.unlimited || !ctx.profile) return;
+  const p = ctx.profile;
+  const mk = monthKey();
+  if (p.usage_month !== mk || !(p.usage_count >= 0)) return;
+  const { data } = await supaAdmin.from("profiles").select("usage_month, usage_count").eq("id", p.id).single();
+  if (data?.usage_month !== mk || !(data.usage_count > 0)) return;
+  await supaAdmin.from("profiles").update({ usage_count: data.usage_count - 1 }).eq("id", p.id);
+}
+
 async function handleGenerate(res, body, ctx) {
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
@@ -779,6 +848,7 @@ async function handleGenerate(res, body, ctx) {
     send({ type: "error", message });
     return res.end();
   };
+  let 차감함 = false; // 실패로 끝나면 도로 돌려주려고 기억해 둔다
   try {
     const keyword = (body.keyword || "").trim();
     if (!keyword) return fail("키워드를 입력하세요");
@@ -796,6 +866,7 @@ async function handleGenerate(res, body, ctx) {
     const quota = await consumeQuota(ctx);
     if (quota === null)
       return fail(`이번 달 초안 생성 한도(${ctx.profile.monthly_limit}회)를 모두 사용했습니다. 다음 달에 초기화됩니다.`);
+    차감함 = !quota.unlimited;
     const ref = findReference(keyword);
     send({
       type: "status",
@@ -860,7 +931,10 @@ async function handleGenerate(res, body, ctx) {
       }
       ({ parsed, validation } = check(draft));
       const 이번 = { draft, parsed, validation };
-      if (더나은가(이번, best)) best = 이번;
+      const 나아졌나 = 더나은가(이번, best);
+      if (나아졌나) best = 이번;
+      // 안 나아지면 더 불러도 대개 안 나아진다. 무료 등급의 분당 한도를 헛되이 태우지 않는다.
+      if (!나아졌나 && !validation.pass) break;
       // 대화가 길어지면 비용·지연이 커진다. 직전 시도만 남기고 앞은 버린다.
       if (messages.length > 5) messages.splice(1, messages.length - 3);
     }
@@ -874,10 +948,13 @@ async function handleGenerate(res, body, ctx) {
     });
 
     const file = await draftCreate(ctx, keyword, parsed.title, parsed.body, validation);
+    차감함 = false; // 글이 나왔으니 정상 사용
     send({ type: "done", file, validation, quota });
   } catch (e) {
     console.error("[generate 실패]", e); // 상세 원인은 서버 로그에 남긴다
-    send({ type: "error", message: describeError(e, ctx) });
+    // 글을 못 받았으면 월 한도를 도로 채워 준다 — 실패로 15회가 닳으면 안 된다
+    if (차감함) await refundQuota(ctx).catch(() => {});
+    send({ type: "error", message: describeError(e, ctx) + (차감함 ? " (이번 실패는 월 한도에서 차감하지 않았습니다)" : "") });
   } finally {
     res.end();
   }
@@ -901,8 +978,12 @@ function describeError(e, ctx) {
     const 원문 = String(e?.message || e);
     if (붐빔(status, 원문))
       return "무료 엔진이 지금 많이 붐빕니다. 쓸 수 있는 모델을 모두 시도했지만 전부 대기 중입니다. 잠시 뒤 다시 눌러 주세요." + 대안안내;
+    // 하루 한도와 분당 한도를 구분해서 말한다. "내일 오세요"는 대개 사실이 아니었다.
     if (status === 429)
-      return "무료 엔진의 오늘 사용량을 다 썼습니다. 내일 다시 열립니다." + 대안안내;
+      return e?.하루한도
+        ? "무료 엔진의 오늘 몫을 다 썼습니다 (구글 무료 등급의 하루 한도 — 회원님의 월 한도와는 별개입니다). " +
+          "한국시간 오후 4~5시경 초기화됩니다." + 대안안내
+        : "무료 엔진이 지금 분당 한도에 걸렸습니다. 1분 뒤에 다시 눌러 주세요. (하루 한도가 끝난 것이 아닙니다)" + 대안안내;
     if (status === 404)
       return adminHint(
         ctx,
@@ -1099,3 +1180,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => console.log(`블로그봇 대시보드: http://localhost:${PORT}`));
+
+// 테스트에서만 쓴다 — 가짜 구글 서버를 세워 놓고 한도·스트리밍 동작을 확인하려고
+export const __test = { streamGemini, describeError, 한도해석, 소진됨 };
