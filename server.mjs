@@ -669,14 +669,9 @@ async function 읽기(res, send) {
   let out = "", buf = "", 끝난이유 = "", 막힘 = "";
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    // SSE는 빈 줄로 이벤트가 끝난다. 마지막 조각은 잘렸을 수 있으니 남겨 둔다.
-    const events = buf.split("\n\n");
-    buf = events.pop() ?? "";
-    for (const ev of events) {
+  // 이벤트 하나를 해석해 본문을 모은다 (아래 두 곳에서 쓴다)
+  const 처리 = (덩어리) => {
+    for (const ev of 덩어리) {
       const line = ev.split("\n").find((l) => l.startsWith("data:"));
       if (!line) continue;
       const payload = line.slice(5).trim();
@@ -694,7 +689,20 @@ async function 읽기(res, send) {
         }
       } catch { /* 조각난 JSON은 건너뛴다 */ }
     }
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    // 줄바꿈을 \n으로 통일한다. 구글이 \r\n으로 보내면 이벤트 경계를 못 찾아
+    // 본문을 한 글자도 못 읽는다 — 실서버에서만 "빈 응답"이 나던 원인이었다.
+    buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+    const events = buf.split("\n\n");
+    buf = events.pop() ?? ""; // 마지막 조각은 잘렸을 수 있으니 남겨 둔다
+    처리(events);
   }
+  처리(buf.split("\n\n")); // 끝에 빈 줄 없이 끝나는 마지막 이벤트도 챙긴다
+
   const 이유 =
     막힘 ? `요청이 안전 필터에 막혔습니다 (${막힘}) — 키워드를 바꿔 보세요`
     : 끝난이유 === "MAX_TOKENS" ? "출력 한도에 먼저 걸렸습니다"
