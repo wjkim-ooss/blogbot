@@ -461,8 +461,44 @@ function buildFullPrompt(keyword, region, point, ref) {
 // 무료 등급은 구글이 입력·출력을 제품 개선에 쓸 수 있다(사람이 열람할 수도 있다).
 // 블로그 견본 원고라 문제될 것이 없다고 보지만, 민감한 내용은 넣지 않는다.
 const GEMINI_KEY = () => process.env.GEMINI_API_KEY || "";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const GEMINI_BASE = () => process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com";
 const engineName = () => (process.env.ANTHROPIC_API_KEY ? "claude" : GEMINI_KEY() ? "gemini" : null);
+
+// 구글은 모델을 자주 갈아치우고, 구형은 신규 사용자에게 아예 막는다.
+// (2026-08-11: gemini-2.5-flash가 "no longer available to new users" 404)
+// 그래서 이름을 박아두지 않고, 키로 쓸 수 있는 모델을 직접 물어봐서 고른다.
+// 선호 순서에 없더라도 flash 계열이 있으면 그중 최신을 쓴다 — 다음에 또 바뀌어도 안 깨지게.
+const GEMINI_선호 = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"];
+let geminiModelP = null;
+const geminiModel = () =>
+  process.env.GEMINI_MODEL ? Promise.resolve(process.env.GEMINI_MODEL) : (geminiModelP ??= resolveGeminiModel());
+
+async function resolveGeminiModel() {
+  try {
+    const res = await fetch(`${GEMINI_BASE()}/v1beta/models?key=${encodeURIComponent(GEMINI_KEY())}&pageSize=200`);
+    if (!res.ok) throw new Error(`목록 조회 실패 (HTTP ${res.status})`);
+    const names = (await res.json()).models
+      ?.filter((m) => m.supportedGenerationMethods?.includes("generateContent"))
+      .map((m) => (m.name || "").replace(/^models\//, "")) || [];
+    if (!names.length) throw new Error("쓸 수 있는 모델이 없습니다");
+
+    const pick =
+      GEMINI_선호.find((want) => names.includes(want)) ||
+      // 선호 목록에 없으면 flash 계열 중 버전이 가장 높은 것 (preview·특수 모델은 뒤로)
+      names
+        .filter((n) => n.includes("flash") && !/preview|tts|live|image|audio|thinking/.test(n))
+        .sort((a, b) => (parseFloat(b.match(/[\d.]+/)?.[0] || 0)) - (parseFloat(a.match(/[\d.]+/)?.[0] || 0)))[0] ||
+      names[0];
+    console.log(`Gemini 모델 선택: ${pick} (사용 가능 ${names.length}개)`);
+    return pick;
+  } catch (e) {
+    geminiModelP = null; // 실패는 기억하지 않는다 — 다음 요청에서 다시 시도
+    const err = new Error(`쓸 수 있는 모델을 찾지 못했습니다: ${e.message}`);
+    err.engine = "gemini";
+    err.status = 404;
+    throw err;
+  }
+}
 
 async function streamClaude(client, messages, send) {
   const stream = client.messages.stream({
@@ -479,10 +515,9 @@ async function streamClaude(client, messages, send) {
 
 // Gemini는 SDK 없이 REST로 부른다 (의존성을 늘리지 않으려고).
 async function streamGemini(messages, send) {
-  // 주소를 갈아끼울 수 있게 해 둔다 — 실제 키 없이 생성·재시도 흐름을 시험하려고
-  const base = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com";
+  const model = await geminiModel();
   const url =
-    `${base}/v1beta/models/${GEMINI_MODEL}:streamGenerateContent` +
+    `${GEMINI_BASE()}/v1beta/models/${model}:streamGenerateContent` +
     `?alt=sse&key=${encodeURIComponent(GEMINI_KEY())}`;
   const res = await fetch(url, {
     method: "POST",
@@ -630,7 +665,7 @@ async function handleGenerate(res, body, ctx) {
       const { default: Anthropic } = await import("@anthropic-ai/sdk");
       client = new Anthropic();
     } else {
-      send({ type: "status", message: `무료 엔진(Gemini ${GEMINI_MODEL})으로 작성합니다` });
+      send({ type: "status", message: `무료 엔진(Gemini ${await geminiModel()})으로 작성합니다` });
     }
     const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref) }];
 
@@ -693,9 +728,18 @@ function describeError(e, ctx) {
   if (e?.engine === "gemini") {
     if (status === 429)
       return "무료 엔진의 오늘 사용량을 다 썼습니다. 내일 다시 열립니다." + 대안안내;
+    if (status === 404)
+      return adminHint(
+        ctx,
+        "무료 엔진에서 쓸 수 있는 모델을 찾지 못했습니다.",
+        "구글이 모델을 교체한 것일 수 있습니다. 서버를 재시작하면 다시 찾아봅니다."
+      ) + 대안안내;
     if (status === 400 || status === 403)
       return adminHint(ctx, "무료 엔진 키에 문제가 있습니다.", "Render의 GEMINI_API_KEY 값을 확인하세요.") + 대안안내;
-    return adminHint(ctx, "무료 엔진에서 오류가 발생했습니다.", `상세: ${String(e?.message || e).slice(0, 300)}`) + 대안안내;
+    // 구글이 돌려준 영어 JSON을 그대로 보여주면 원장은 읽을 수 없다 — message만 뽑아 짧게
+    let 요약 = String(e?.message || e);
+    try { 요약 = JSON.parse(요약).error?.message || 요약; } catch { /* JSON이 아니면 그대로 */ }
+    return adminHint(ctx, "무료 엔진에서 오류가 발생했습니다.", `상세: ${요약.slice(0, 200)}`) + 대안안내;
   }
   if (type === "authentication_error" || status === 401)
     return adminHint(ctx, "AI 생성 인증에 실패했습니다.", "ANTHROPIC_API_KEY 값이 올바른지 확인하세요.") + 대안안내;
