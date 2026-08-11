@@ -167,6 +167,13 @@ header { justify-content: flex-start; }
 .st.blocked { background: #fdeceb; color: #d8483b; }
 .admin-user select { font-size: 13px; }
 
+/* 검증 패널 맨 위 결론 박스 */
+.v-verdict { border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; font-size: 12px; line-height: 1.6; }
+.v-verdict b { display: block; font-size: 13px; margin-bottom: 2px; }
+.v-verdict.bad { background: #fdeceb; color: #93312a; }
+.v-verdict.ok { background: #e7f7ea; color: #1c6b33; }
+.v-verdict.tip { background: #fff6e5; color: #7a4c00; }
+
 /* 관리자가 다른 회원의 초안을 열람할 때 */
 #readonly-banner {
   background: #fff6e5; border: 1px solid #f0c987; color: #7a4c00;

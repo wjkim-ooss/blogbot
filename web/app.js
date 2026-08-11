@@ -267,9 +267,12 @@ async function markDraft(name, div) {
   }
   sub.className = `d-sub ${v.kwLack ? "v-bad" : v.kwOver ? "v-warn" : "muted"}`;
   sub.textContent = `키워드 ${v.kwCount}회${v.kwLack ? " 부족" : v.kwOver ? " 과다" : ""} · ${v.chars.toLocaleString()}자`;
+  // ⚠️ 숫자는 '반드시 고칠 것'만 센다. 권장 사항은 통과를 막지 않는다.
   badge.className = `d-badge ${v.issues.length ? "warn" : "ok"}`;
   badge.textContent = v.issues.length ? `⚠️ ${v.issues.length}` : "✅";
-  badge.title = v.issues.length ? `고칠 점 ${v.issues.length}개\n· ${v.issues.join("\n· ")}` : "기준 통과";
+  const tip = v.issues.length ? [`고칠 점 ${v.issues.length}개`, ...v.issues.map((s) => "· " + s)] : ["기준 통과"];
+  if (v.advice.length) tip.push("", "더 좋게 하려면", ...v.advice.map((s) => "· " + s));
+  badge.title = tip.join("\n");
 }
 
 async function deleteDraft(name) {
@@ -324,20 +327,33 @@ function evaluateDraft(body, keyword) {
   const targetChars = Math.max(CONFIG.최소글자수, refHit?.avgChars || 0);
   const targetPhotos = targetPhotosOf(refHit);
 
+  // 반드시 고쳐야 하는 것(issues)과 고치면 더 좋은 것(advice)을 나눈다.
+  // 섞어 두면 ⚠️ 숫자가 부풀어 진짜 문제가 묻힌다 — 사진 수는 권장치일 뿐 불합격 사유가 아니다.
   const issues = [];
+  const advice = [];
   if (title && keyword && !titleHasKw) issues.push(`제목에 키워드 "${keyword}" 없음`);
   if (chars < targetChars) issues.push(`글자수 ${chars.toLocaleString()}자 (목표 ${targetChars.toLocaleString()}자)`);
-  if (kwLack) issues.push(`키워드 ${kwCount}회 — 최소 ${CONFIG.키워드횟수.min}회`);
+  if (kwLack) {
+    // 단어는 다 들어갔는데 통째로만 없는 경우가 잦다 — 무엇을 하라는 건지 알려준다
+    const eachEnough = tokens.length > 1 && tokens.every((t) => countLoose(body, t) >= CONFIG.키워드횟수.min);
+    issues.push(
+      kwCount === 0 && eachEnough
+        ? `키워드를 통째로 쓴 곳이 없음 — "${keyword}"를 붙여서 ${CONFIG.키워드횟수.min}번 이상 넣으세요`
+        : `키워드 ${kwCount}회 — 최소 ${CONFIG.키워드횟수.min}회`
+    );
+  }
   if (kwOver) issues.push(`키워드 ${kwCount}회 과다 — 최대 ${CONFIG.키워드횟수.max}회`);
-  if (photos < CONFIG.권장이미지최소) issues.push(`사진 자리 ${photos}곳 (권장 ${CONFIG.권장이미지최소}곳)`);
   if (abstractFound.length) issues.push(`추상어 ${abstractFound.length}개: ${abstractFound.join(", ")}`);
   if (medicalFound.length) issues.push(`의료법 주의 ${medicalFound.length}개: ${medicalFound.join(", ")}`);
   if (overclaimFound.length) issues.push(`과장 표현 ${overclaimFound.length}개: ${overclaimFound.join(", ")}`);
   if (needsEvidence && !pmids.length) issues.push("논문 근거(PMID) 없음");
 
+  if (photos < targetPhotos) advice.push(`사진 자리 ${photos}곳 → ${targetPhotos}곳 이상이면 더 좋습니다`);
+  if (title && !titleHasNum) advice.push("제목에 숫자를 넣으면 상위노출에 유리합니다");
+
   return { chars, targetChars, refHit, photos, targetPhotos, kwCount, tokens, kwLack, kwOver,
            title, titleHasKw, titleHasNum, titleLen,
-           abstractFound, medicalFound, overclaimFound, pmids, needsEvidence, issues };
+           abstractFound, medicalFound, overclaimFound, pmids, needsEvidence, issues, advice };
 }
 
 // 실시간 검증
@@ -353,7 +369,8 @@ function runValidation() {
   const keyword = $("#draft-keyword").value.trim();
   const { chars, targetChars, refHit, photos, targetPhotos, kwCount, tokens, kwLack, kwOver,
           title, titleHasKw, titleHasNum, titleLen,
-          abstractFound, medicalFound, overclaimFound, pmids, needsEvidence } = evaluateDraft(body, keyword);
+          abstractFound, medicalFound, overclaimFound, pmids, needsEvidence,
+          issues, advice } = evaluateDraft(body, keyword);
   const kwCls = kwLack ? "v-bad" : kwOver ? "v-warn" : "v-ok";
   const kwNote = kwLack ? " 부족" : kwOver ? " 과다" : "";
   const kwRows = keyword
@@ -363,11 +380,19 @@ function runValidation() {
         : "")
     : "";
   const ok = (cond) => (cond ? "v-ok" : "v-bad");
+  // 맨 위에 결론부터 — 아래 항목을 하나씩 훑지 않아도 지금 뭘 해야 하는지 보이게
+  const verdict = issues.length
+    ? `<div class="v-verdict bad"><b>고칠 점 ${issues.length}개</b>${issues.map((s) => `<div>· ${esc(s)}</div>`).join("")}</div>`
+    : `<div class="v-verdict ok"><b>✅ 기준 통과 — 그대로 올리셔도 됩니다</b></div>`;
+  const tips = advice.length
+    ? `<div class="v-verdict tip"><b>더 좋게 하려면 (선택)</b>${advice.map((s) => `<div>· ${esc(s)}</div>`).join("")}</div>`
+    : "";
   panel.innerHTML = `
+    ${verdict}${tips}
     <h4>3대 기준 검증</h4>
     <div class="v-item"><span>글자수 (공백제외)</span><span class="${ok(chars >= targetChars)}">${chars.toLocaleString()}자</span></div>
     <div class="v-item"><span>목표 기준</span><span class="muted">${targetChars.toLocaleString()}자${refHit && refHit.avgChars > CONFIG.최소글자수 ? " (상위글 평균)" : ""}</span></div>
-    <div class="v-item"><span>사진 자리</span><span class="${ok(photos >= CONFIG.권장이미지최소)}">${photos}곳</span></div>
+    <div class="v-item"><span>사진 자리</span><span class="${photos >= targetPhotos ? "v-ok" : "v-warn"}">${photos}곳</span></div>
     ${refHit ? `<div class="v-sub">${targetPhotos}곳 이상 권장 · 상위글 평균 ${refHit.avgImages}장</div>` : ""}
     ${title
       ? `<h4>제목</h4>
@@ -377,6 +402,9 @@ function runValidation() {
       : ""}
     <h4>키워드 배치 (본문 ${CONFIG.키워드횟수.min}~${CONFIG.키워드횟수.max}회)</h4>
     ${kwRows || '<span class="muted">위 입력칸에 키워드를 넣으세요</span>'}
+    ${kwLack && tokens.length > 1
+      ? '<div class="v-sub">이 키워드는 파일명에서 자동으로 뽑은 값입니다. 실제로 노리는 검색어와 다르면 위 <b>검증용 키워드</b> 칸에서 고치세요.</div>'
+      : ""}
     <h4>추상어 <span class="${ok(!abstractFound.length)}">${abstractFound.length ? abstractFound.length + "개 발견" : "통과"}</span></h4>
     <div class="v-tags">${abstractFound.map((w) => `<span class="v-tag">${esc(w)}</span>`).join("")}</div>
     <h4>의료법 주의 <span class="${ok(!medicalFound.length)}">${medicalFound.length ? medicalFound.length + "개 발견" : "통과"}</span></h4>

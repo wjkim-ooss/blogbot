@@ -127,8 +127,14 @@ function validateDraft(text, keyword, minChars = CONFIG.최소글자수, title =
   if (overclaimFound.length) issues.push(`과장 표현(논문 근거 없이 단정 금지): ${overclaimFound.join(", ")}`);
   if (needsEvidence && pmids.length === 0)
     issues.push(`성분·효능을 다루는데 논문 근거(PMID)가 하나도 없음 — skin-study.vercel.app에서 🟢 확인 후 PMID를 인용할 것`);
-  if (photos < CONFIG.권장이미지최소) issues.push(`사진 자리 ${photos}곳 (권장 ${CONFIG.권장이미지최소}곳 이상)`);
-  return { chars, minChars, photos, kwCount, kwParts, abstractFound, medicalFound, overclaimFound, pmids, needsEvidence, issues, pass: issues.length === 0 };
+
+  // 권장 사항은 불합격 사유가 아니다 (화면의 ⚠️ 계산과 같은 규칙).
+  // 다만 AI에게는 함께 알려 준다 — 한 번 더 돌 때 같이 개선되게.
+  const advice = [];
+  if (photos < CONFIG.권장이미지최소) advice.push(`사진 자리 ${photos}곳 → ${CONFIG.권장이미지최소}곳 이상이면 더 좋음`);
+
+  return { chars, minChars, photos, kwCount, kwParts, abstractFound, medicalFound, overclaimFound,
+           pmids, needsEvidence, issues, advice, pass: issues.length === 0 };
 }
 
 // ---------- 레퍼런스 ----------
@@ -565,7 +571,9 @@ async function handleGenerate(res, body, ctx) {
       messages.push({ role: "assistant", content: draft });
       messages.push({
         role: "user",
-        content: `기계 검증 결과 아래 항목이 미달입니다. 전부 고쳐서 같은 출력 형식으로 글 전체를 다시 출력하세요.\n- ${validation.issues.join("\n- ")}`,
+        content:
+          `기계 검증 결과 아래 항목이 미달입니다. 전부 고쳐서 같은 출력 형식으로 글 전체를 다시 출력하세요.\n- ${validation.issues.join("\n- ")}` +
+          (validation.advice.length ? `\n\n필수는 아니지만 함께 개선하면 좋은 것:\n- ${validation.advice.join("\n- ")}` : ""),
       });
       draft = await streamOnce(client, messages, send);
       parsed = parseDraftOutput(draft, keyword);
