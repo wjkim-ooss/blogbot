@@ -97,6 +97,20 @@ const countLoose = (text, word) => countWord(despace(text), despace(word));
 const 논문 = CONFIG.논문검증 || {};
 const pmidRe = new RegExp(논문.PMID정규식 || "PMID\\s*\\d{5,8}", "g");
 
+// 논문 근거는 '효능을 주장할 때' 필요하다. 단어가 나왔다는 것만으로 요구하면
+// "여드름 관리를 받으러 오셨습니다" 같은 평범한 문장까지 전부 걸려 경고가 무의미해진다.
+// 한 문장 안에 성분·부위(효능키워드)와 주장 표현이 같이 있을 때만 근거를 요구한다.
+// (web/app.js claimSentences와 같은 규칙)
+function claimSentences(text) {
+  const 부위 = 논문.효능키워드 || [];
+  const 주장 = 논문.효능주장패턴 || [];
+  if (!부위.length || !주장.length) return [];
+  return text
+    .split(/(?<=[.!?…]|다\.|요\.)\s+|\n+/)
+    .map((s) => s.trim())
+    .filter((s) => s && 부위.some((w) => s.includes(w)) && 주장.some((w) => s.includes(w)));
+}
+
 function validateDraft(text, keyword, minChars = CONFIG.최소글자수, title = "") {
   const clean = stripPhotos(text);
   const chars = noSpace(clean);
@@ -110,7 +124,8 @@ function validateDraft(text, keyword, minChars = CONFIG.최소글자수, title =
   const medicalFound = CONFIG.의료법금지어.filter((w) => text.includes(w));
   const overclaimFound = (논문.과장표현 || []).filter((w) => text.includes(w));
   const pmids = [...new Set((text.match(pmidRe) || []).map((s) => s.replace(/\s+/g, " ").trim()))];
-  const needsEvidence = (논문.효능키워드 || []).some((w) => text.includes(w));
+  const claims = claimSentences(text);
+  const needsEvidence = claims.length > 0;
 
   const issues = [];
   // 제목은 상위노출에서 가장 무거운 자리다 — 키워드가 빠지면 본문이 아무리 좋아도 밀린다
@@ -126,7 +141,10 @@ function validateDraft(text, keyword, minChars = CONFIG.최소글자수, title =
   if (medicalFound.length) issues.push(`의료법 주의 표현: ${medicalFound.join(", ")}`);
   if (overclaimFound.length) issues.push(`과장 표현(논문 근거 없이 단정 금지): ${overclaimFound.join(", ")}`);
   if (needsEvidence && pmids.length === 0)
-    issues.push(`성분·효능을 다루는데 논문 근거(PMID)가 하나도 없음 — skin-study.vercel.app에서 🟢 확인 후 PMID를 인용할 것`);
+    issues.push(
+      `효능을 주장한 문장에 논문 근거(PMID)가 없음 — ${논문.출처}에서 🟢 확인 후 PMID를 붙이거나, 주장을 빼세요. ` +
+        `해당 문장: "${claims[0].slice(0, 60)}${claims[0].length > 60 ? "…" : ""}"`
+    );
 
   // 권장 사항은 불합격 사유가 아니다 (화면의 ⚠️ 계산과 같은 규칙).
   // 다만 AI에게는 함께 알려 준다 — 한 번 더 돌 때 같이 개선되게.
@@ -134,7 +152,7 @@ function validateDraft(text, keyword, minChars = CONFIG.최소글자수, title =
   if (photos < CONFIG.권장이미지최소) advice.push(`사진 자리 ${photos}곳 → ${CONFIG.권장이미지최소}곳 이상이면 더 좋음`);
 
   return { chars, minChars, photos, kwCount, kwParts, abstractFound, medicalFound, overclaimFound,
-           pmids, needsEvidence, issues, advice, pass: issues.length === 0 };
+           pmids, needsEvidence, claims, issues, advice, pass: issues.length === 0 };
 }
 
 // ---------- 레퍼런스 ----------
@@ -406,6 +424,17 @@ function buildUserPrompt(keyword, region, point, ref) {
     "[논문 근거]",
     `성분·효능·수치를 언급한다면 ${논문.출처}에서 🟢로 검증된 것만 쓰고 PMID를 인용하세요. 확실한 근거가 없으면 그 주장은 빼거나 보수적으로 표현하세요. PMID를 지어내지 마세요.`
   );
+  // 기계 검증이 실제로 재는 값을 미리 못박아 준다 — 첫 시도에서 통과할 확률이 크게 오른다
+  lines.push(
+    "",
+    "[제출 전 스스로 확인할 것 — 기계가 이 그대로 잽니다]",
+    `1. 공백 제외 ${targetCharsFor(ref).toLocaleString()}자 이상인가`,
+    `2. 제목에 "${keyword}"가 통째로 들어갔는가`,
+    `3. 본문에 "${keyword}"가 통째로(붙여서) ${CONFIG.키워드횟수.min}~${CONFIG.키워드횟수.max}회 들어갔는가 — 단어를 쪼개 흩어 놓으면 0회로 셉니다`,
+    `4. 추상어(${CONFIG.추상어.slice(0, 8).join(", ")} 등)를 하나도 쓰지 않았는가`,
+    `5. [사진: ...] 자리가 ${targetPhotosFor(ref)}곳 이상인가`,
+    "위 다섯 개를 다 만족한 뒤에 출력하세요."
+  );
   lines.push("", "위 조건으로 견본 글을 작성하세요.");
   return lines.join("\n");
 }
@@ -450,8 +479,10 @@ async function streamClaude(client, messages, send) {
 
 // Gemini는 SDK 없이 REST로 부른다 (의존성을 늘리지 않으려고).
 async function streamGemini(messages, send) {
+  // 주소를 갈아끼울 수 있게 해 둔다 — 실제 키 없이 생성·재시도 흐름을 시험하려고
+  const base = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com";
   const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:streamGenerateContent` +
+    `${base}/v1beta/models/${GEMINI_MODEL}:streamGenerateContent` +
     `?alt=sse&key=${encodeURIComponent(GEMINI_KEY())}`;
   const res = await fetch(url, {
     method: "POST",
@@ -503,6 +534,49 @@ async function streamGemini(messages, send) {
 
 const streamOnce = (client, messages, send) =>
   client ? streamClaude(client, messages, send) : streamGemini(messages, send);
+
+// 통과할 때까지 고쳐 쓰는 최대 횟수. 넘기면 미달인 채로 저장하고 무엇이 남았는지 알린다.
+const MAX_FIX_ROUNDS = 3;
+
+// "글자수 부족" 같은 말만으로는 잘 안 고쳐진다. 얼마나 모자란지, 무엇을 하라는 건지 숫자로 준다.
+function fixInstruction(v, keyword) {
+  const todo = [];
+  for (const issue of v.issues) {
+    if (issue.startsWith("글자수 부족")) {
+      const 모자란 = v.minChars - v.chars;
+      todo.push(
+        `글자수: 지금 ${v.chars.toLocaleString()}자 → ${v.minChars.toLocaleString()}자 이상. ` +
+          `약 ${모자란.toLocaleString()}자가 부족하다. 소제목 1~2개를 더 만들어 원장의 구체적인 경험(수치·시간·비용)을 채워라. ` +
+          `기존 문장을 늘려 쓰지 말고 새 내용을 더해라.`
+      );
+    } else if (issue.includes("최소") && issue.includes("키워드")) {
+      todo.push(
+        `키워드: "${keyword}"를 통째로(붙여서) 본문에 ${CONFIG.키워드횟수.min}~${CONFIG.키워드횟수.max}회 넣어라. ` +
+          `지금 ${v.kwCount}회다. 단어를 쪼개 흩어 놓으면 세어지지 않는다.`
+      );
+    } else if (issue.includes("과다")) {
+      todo.push(`키워드: "${keyword}"가 ${v.kwCount}회로 많다. ${CONFIG.키워드횟수.max}회 이하로 줄이고 나머지는 지시어·유의어로 바꿔라.`);
+    } else if (issue.startsWith("제목에 키워드")) {
+      todo.push(`제목: "${keyword}"를 제목 안에 통째로 넣어라.`);
+    } else if (issue.startsWith("추상어")) {
+      todo.push(`추상어 삭제: ${v.abstractFound.join(", ")} — 각각을 숫자·시간·금액이 들어간 구체적 서술로 바꿔라.`);
+    } else if (issue.startsWith("의료법")) {
+      todo.push(`의료법 표현 삭제: ${v.medicalFound.join(", ")} — 에스테틱이 쓸 수 있는 표현으로 바꿔라.`);
+    } else if (issue.startsWith("과장 표현")) {
+      todo.push(`과장 표현 삭제: ${v.overclaimFound.join(", ")} — 근거가 없으면 그 주장을 빼거나 보수적으로 바꿔라.`);
+    } else {
+      todo.push(issue);
+    }
+  }
+  return [
+    "아래를 전부 고쳐서 글 **전체**를 같은 출력 형식으로 다시 출력하라. 요약·설명 없이 글만 출력한다.",
+    ...todo.map((t) => `- ${t}`),
+    v.advice.length ? `\n필수는 아니지만 함께 개선하면 좋은 것:\n- ${v.advice.join("\n- ")}` : "",
+    "\n고치면서 이미 통과한 항목(글자수·키워드 횟수·추상어 없음 등)을 깨뜨리지 마라.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
 
 // 월 한도 확인·차감 (level1만). 통과 시 남은 횟수 반환, 초과 시 null.
 async function consumeQuota(ctx) {
@@ -561,24 +635,36 @@ async function handleGenerate(res, body, ctx) {
     const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref) }];
 
     const targetChars = targetCharsFor(ref);
-    let draft = await streamOnce(client, messages, send);
-    let parsed = parseDraftOutput(draft, keyword);
-    let validation = validateDraft(`${parsed.title}\n${parsed.body}`, keyword, targetChars, parsed.title);
+    const check = (d) => {
+      const p = parseDraftOutput(d, keyword);
+      return { parsed: p, validation: validateDraft(`${p.title}\n${p.body}`, keyword, targetChars, p.title) };
+    };
 
-    if (!validation.pass) {
-      send({ type: "status", message: `검증 미달 → 자동 보완 1회: ${validation.issues.join(" / ")}` });
+    let draft = await streamOnce(client, messages, send);
+    let { parsed, validation } = check(draft);
+
+    // 통과할 때까지 고쳐 쓴다. 한 번만 보완하면 미달인 채로 저장되는 일이 잦았다.
+    // 매번 '무엇이 얼마나 모자란지'를 수치로 돌려줘야 실제로 고쳐진다.
+    for (let round = 1; round <= MAX_FIX_ROUNDS && !validation.pass; round++) {
+      send({
+        type: "status",
+        message: `검증 미달 → 고쳐 쓰는 중 (${round}/${MAX_FIX_ROUNDS}): ${validation.issues.join(" / ")}`,
+      });
       send({ type: "reset" });
       messages.push({ role: "assistant", content: draft });
-      messages.push({
-        role: "user",
-        content:
-          `기계 검증 결과 아래 항목이 미달입니다. 전부 고쳐서 같은 출력 형식으로 글 전체를 다시 출력하세요.\n- ${validation.issues.join("\n- ")}` +
-          (validation.advice.length ? `\n\n필수는 아니지만 함께 개선하면 좋은 것:\n- ${validation.advice.join("\n- ")}` : ""),
-      });
+      messages.push({ role: "user", content: fixInstruction(validation, keyword) });
       draft = await streamOnce(client, messages, send);
-      parsed = parseDraftOutput(draft, keyword);
-      validation = validateDraft(`${parsed.title}\n${parsed.body}`, keyword, targetChars, parsed.title);
+      ({ parsed, validation } = check(draft));
+      // 대화가 길어지면 비용·지연이 커진다. 직전 시도만 남기고 앞은 버린다.
+      if (messages.length > 5) messages.splice(1, messages.length - 3);
     }
+
+    send({
+      type: "status",
+      message: validation.pass
+        ? "✅ 모든 기준을 통과했습니다"
+        : `일부 기준이 남았습니다: ${validation.issues.join(" / ")} — 편집기에서 직접 고쳐 주세요`,
+    });
 
     const file = await draftCreate(ctx, keyword, parsed.title, parsed.body, validation);
     send({ type: "done", file, validation, quota });
