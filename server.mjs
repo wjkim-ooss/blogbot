@@ -599,7 +599,57 @@ async function streamGemini(messages, send) {
     }
     if (i < models.length - 1) send({ type: "status", message: `${models[i + 1]}로 바꿔서 다시 시도합니다` });
   }
-  throw 마지막오류;
+
+  // 스트리밍(SSE)이 계속 빈손이면 방식을 바꿔 한 번만 통째로 받아 본다.
+  // 스트리밍 쪽 문제라면 이걸로 그냥 되고, 아니면 왜 비었는지가 응답 안에 그대로 들어 있다.
+  send({ type: "status", message: "방식을 바꿔 한 번 더 시도합니다" });
+  const 통째로 = await 한번에받기(models[0], contents);
+  if (통째로.text) {
+    send({ type: "delta", text: 통째로.text });
+    return 통째로.text;
+  }
+  throw Object.assign(new Error(통째로.이유 || 마지막오류?.message || "빈 응답"), {
+    status: 502,
+    engine: "gemini",
+    진단: 통째로.진단, // 관리자에게만 보여 준다 — 다음 수정의 단서가 된다
+  });
+}
+
+// 스트리밍이 아닌 일반 호출. 한 덩어리 JSON이라 차단 사유·중단 사유가 그대로 보인다.
+async function 한번에받기(model, contents) {
+  try {
+    const r = await fetch(
+      `${GEMINI_BASE()}/v1beta/models/${model}:generateContent?key=${encodeURIComponent(GEMINI_KEY())}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          contents,
+          generationConfig: { maxOutputTokens: 16384 },
+        }),
+      }
+    );
+    const raw = await r.text();
+    let o = {};
+    try { o = JSON.parse(raw); } catch { /* JSON이 아니면 원문만 남긴다 */ }
+
+    const cand = o.candidates?.[0];
+    const text = (cand?.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || "").join("");
+    const 막힘 = o.promptFeedback?.blockReason;
+    const 끝 = cand?.finishReason;
+    const 이유 =
+      막힘 ? `요청이 안전 필터에 막혔습니다 (${막힘}) — 키워드나 강조 포인트를 바꿔 보세요`
+      : 끝 === "MAX_TOKENS" ? "출력 한도에 먼저 걸렸습니다"
+      : 끝 === "SAFETY" || 끝 === "PROHIBITED_CONTENT" ? "안전 필터에 걸렸습니다 — 키워드를 바꿔 보세요"
+      : 끝 ? `중단 사유: ${끝}` : `빈 응답 (HTTP ${r.status})`;
+
+    // 무엇이 왔는지 서버 기록에 남긴다 — 원인을 넘겨짚지 않으려고
+    if (!text) console.error("[Gemini 빈 응답]", model, r.status, raw.slice(0, 600));
+    return { text, 이유, 진단: text ? "" : `HTTP ${r.status} · ${raw.slice(0, 300)}` };
+  } catch (e) {
+    return { text: "", 이유: String(e?.message || e), 진단: "" };
+  }
 }
 
 // 어느 생각 설정이 통했는지 모델별로 기억한다 — 매번 처음부터 더듬지 않게
@@ -619,14 +669,9 @@ async function 읽기(res, send) {
   let out = "", buf = "", 끝난이유 = "", 막힘 = "";
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    // SSE는 빈 줄로 이벤트가 끝난다. 마지막 조각은 잘렸을 수 있으니 남겨 둔다.
-    const events = buf.split("\n\n");
-    buf = events.pop() ?? "";
-    for (const ev of events) {
+  // 이벤트 하나를 해석해 본문을 모은다 (아래 두 곳에서 쓴다)
+  const 처리 = (덩어리) => {
+    for (const ev of 덩어리) {
       const line = ev.split("\n").find((l) => l.startsWith("data:"));
       if (!line) continue;
       const payload = line.slice(5).trim();
@@ -644,7 +689,20 @@ async function 읽기(res, send) {
         }
       } catch { /* 조각난 JSON은 건너뛴다 */ }
     }
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    // 줄바꿈을 \n으로 통일한다. 구글이 \r\n으로 보내면 이벤트 경계를 못 찾아
+    // 본문을 한 글자도 못 읽는다 — 실서버에서만 "빈 응답"이 나던 원인이었다.
+    buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+    const events = buf.split("\n\n");
+    buf = events.pop() ?? ""; // 마지막 조각은 잘렸을 수 있으니 남겨 둔다
+    처리(events);
   }
+  처리(buf.split("\n\n")); // 끝에 빈 줄 없이 끝나는 마지막 이벤트도 챙긴다
+
   const 이유 =
     막힘 ? `요청이 안전 필터에 막혔습니다 (${막힘}) — 키워드를 바꿔 보세요`
     : 끝난이유 === "MAX_TOKENS" ? "출력 한도에 먼저 걸렸습니다"
@@ -856,7 +914,9 @@ function describeError(e, ctx) {
     // 구글이 돌려준 영어 JSON을 그대로 보여주면 원장은 읽을 수 없다 — message만 뽑아 짧게
     let 요약 = String(e?.message || e);
     try { 요약 = JSON.parse(요약).error?.message || 요약; } catch { /* JSON이 아니면 그대로 */ }
-    return adminHint(ctx, "무료 엔진에서 오류가 발생했습니다.", `상세: ${요약.slice(0, 200)}`) + 대안안내;
+    // 진단 원문은 관리자에게만 — 원인을 넘겨짚지 않고 눈으로 확인하려는 것
+    const 진단 = ctx.isAdmin && e?.진단 ? `\n[관리자용 진단] ${e.진단}` : "";
+    return adminHint(ctx, "무료 엔진에서 오류가 발생했습니다.", `상세: ${요약.slice(0, 200)}`) + 대안안내 + 진단;
   }
   if (type === "authentication_error" || status === 401)
     return adminHint(ctx, "AI 생성 인증에 실패했습니다.", "ANTHROPIC_API_KEY 값이 올바른지 확인하세요.") + 대안안내;
