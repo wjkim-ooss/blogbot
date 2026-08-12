@@ -6,15 +6,18 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose } from "./web/rules.js";
+import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록 } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
 );
 
+// 실제 초안처럼 숫자가 섞인 글 — 구체성 기준(1,000자당 3개)을 넘도록 만든다.
+// 밋밋한 "가가가…"로 재면 새 기준에 걸려서, 검사하려던 것과 다른 게 걸린다.
 const 본문 = (n = 1400, 키워드 = "여드름") =>
   `제목: ${키워드} 피부관리, 8년차 원장이 본 3가지\n\n` +
-  `${키워드} 관리로 오시는 분이 한 달에 20명입니다. `.repeat(3) +
+  `${키워드} 관리로 오시는 분이 한 달에 20명입니다. 1회 70분, 10회권 기준 3개월을 봅니다. `.repeat(3) +
+  `8년간 2000명을 봤고 재방문율은 74%입니다. `.repeat(Math.max(1, Math.round(n / 700))) +
   "가".repeat(n);
 
 const 재기 = (text, opts = {}) =>
@@ -245,4 +248,61 @@ test("말투는 문구만 바꾸고 사실은 그대로 둔다", () => {
   const 지시 = 레퍼런스안내("모공", ref, "정확", "지시");
   assert.notEqual(요약, 지시);
   for (const 말 of [요약, 지시]) assert.match(말, /"모공" 레퍼런스 20개/);
+});
+
+// ---------- 추상 vs 구체 ----------
+// 핵심은 금지어 목록이 아니라 "검증할 수 있게 썼는가"다.
+const 구체글 = (n = 1400) =>
+  "제목: 여드름 피부관리 8년차가 본 3가지\n\n" +
+  "여드름으로 오시는 분이 한 달에 20명입니다. 1회 70분이고 10회권은 3개월을 봅니다. ".repeat(4) +
+  "가".repeat(n);
+
+test("추상어를 갈래별로 잡고, 무엇으로 바꿀지까지 알려준다", () => {
+  const v = 평가(구체글() + "\n정성껏 최고의 프리미엄 관리를 해드립니다.", { keyword: "여드름", config: CONFIG, 말투: "지시" });
+  assert.equal(v.pass, false);
+  const 말 = v.issues.find((i) => i.startsWith("추상어"));
+  assert.ok(말.includes("부풀린 수식"), "어느 갈래에 걸렸는지 말해야 한다");
+  assert.ok(말.includes("검증 안 되는 약속"));
+  assert.ok(말.includes("→"), "무엇으로 바꿀지 본보기를 줘야 실제로 고쳐진다");
+  assert.ok(말.includes("정성껏 최고의"), "걸린 문장을 통째로 보여줘야 어디를 고칠지 안다");
+});
+
+test("화면에는 갈래 이름과 단어만 짧게", () => {
+  const v = 평가(구체글() + "\n최고의 퀄리티입니다.", { keyword: "여드름", config: CONFIG, 말투: "요약" });
+  const 말 = v.issues.find((i) => i.startsWith("추상어"));
+  assert.match(말, /추상어 2개 \(부풀린 수식·두루뭉술한 명사\)/);
+});
+
+test("숫자가 없으면 금지어를 안 써도 추상적인 글이다", () => {
+  const 밋밋 = "제목: 여드름 피부관리 이야기\n\n" + "여드름 관리는 꾸준함이 중요합니다. ".repeat(30);
+  const v = 평가(밋밋, { keyword: "여드름", config: CONFIG, 말투: "요약" });
+  assert.equal(v.abstractFound.length, 0, "금지어는 하나도 없는 글이다");
+  assert.equal(v.pass, false, "그래도 통과시키면 안 된다 — 아무것도 알려주지 않는 글이다");
+  assert.ok(v.issues.some((i) => i.includes("숫자가")));
+});
+
+test("단위 붙은 숫자만 구체로 센다", () => {
+  assert.equal(구체수("2023년에 20명이 70분씩 12만원"), 4); // 년·명·분·원
+  assert.equal(구체수("숫자 12345 만 있으면"), 0, "단위 없는 숫자는 구체가 아니다");
+});
+
+test("구체성 기준을 넘으면 통과하고, 권장까지 못 가면 권장으로만 알린다", () => {
+  const v = 평가(구체글(), { keyword: "여드름", config: CONFIG, 말투: "요약" });
+  assert.ok(v.구체밀도 >= v.구체최소, `밀도 ${v.구체밀도}가 최소 ${v.구체최소} 이상이어야 한다`);
+  assert.equal(v.pass, true);
+  if (v.구체밀도 < v.구체권장) assert.ok(v.advice.some((a) => a.includes("올리면")), "권장은 불합격 사유가 아니다");
+});
+
+test("정도 부사는 없애라가 아니라 줄이라고 — 불합격 사유가 아니다", () => {
+  const v = 평가(구체글() + "\n정말 너무 굉장히 엄청 좋았습니다.", { keyword: "여드름", config: CONFIG, 말투: "요약" });
+  assert.ok(v.정도부사횟수 >= 4);
+  assert.ok(v.advice.some((a) => a.includes("정도 부사")), "권장으로 알린다");
+  assert.ok(!v.issues.some((i) => i.includes("정도 부사")), "한두 번은 자연스럽다 — 불합격은 과하다");
+});
+
+test("설정이 옛 모양(납작한 배열)이어도 돌아간다", () => {
+  const 옛설정 = { ...CONFIG, 추상어: ["최고의", "정성껏"] };
+  assert.deepEqual(추상어목록(옛설정), ["최고의", "정성껏"]);
+  const v = 평가(구체글() + "\n최고의 관리입니다.", { keyword: "여드름", config: 옛설정, 말투: "요약" });
+  assert.deepEqual(v.abstractFound, ["최고의"]);
 });

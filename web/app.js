@@ -331,7 +331,8 @@ function runValidation() {
   const keyword = $("#draft-keyword").value.trim();
   const { chars, targetChars, 지정목표, refHit, photos, targetPhotos, kwCount, tokens, kwLack, kwOver,
           title, titleHasKw, titleHasNum, titleLen,
-          abstractFound, medicalFound, overclaimFound, pmids, needsEvidence,
+          abstractFound, abstractByKind, medicalFound, overclaimFound, pmids, needsEvidence,
+          구체, 구체밀도, 구체최소, 구체권장, 정도부사, 정도부사횟수,
           issues, advice } = evaluateDraft(body, keyword, 적힌목표(raw));
   const kwCls = kwLack ? "v-bad" : kwOver ? "v-warn" : "v-ok";
   const kwNote = kwLack ? " 부족" : kwOver ? " 과다" : "";
@@ -369,8 +370,12 @@ function runValidation() {
     ${kwLack && tokens.length > 1
       ? '<div class="v-sub">이 키워드는 파일명에서 자동으로 뽑은 값입니다. 실제로 노리는 검색어와 다르면 위 <b>검증용 키워드</b> 칸에서 고치세요.</div>'
       : ""}
+    <h4>구체성 <span class="${구체밀도 >= 구체권장 ? "v-ok" : 구체밀도 >= 구체최소 ? "v-warn" : "v-bad"}">1,000자당 ${구체밀도}개</span></h4>
+    <div class="v-sub">숫자 ${구체}개 · 최소 ${구체최소} / 권장 ${구체권장} — 상위글 중앙값은 2~3개입니다</div>
     <h4>추상어 <span class="${ok(!abstractFound.length)}">${abstractFound.length ? abstractFound.length + "개 발견" : "통과"}</span></h4>
-    <div class="v-tags">${abstractFound.map((w) => `<span class="v-tag">${esc(w)}</span>`).join("")}</div>
+    ${Object.entries(abstractByKind || {}).map(([갈래, 말들]) =>
+        `<div class="v-sub">${esc(갈래)}</div><div class="v-tags">${말들.map((w) => `<span class="v-tag">${esc(w)}</span>`).join("")}</div>`).join("")}
+    ${정도부사횟수 ? `<div class="v-sub">정도 부사 ${정도부사횟수}회 — ${정도부사.map((x) => esc(x.word) + " " + x.count).join(", ")}</div>` : ""}
     <h4>의료법 주의 <span class="${ok(!medicalFound.length)}">${medicalFound.length ? medicalFound.length + "개 발견" : "통과"}</span></h4>
     <div class="v-tags">${medicalFound.map((w) => `<span class="v-tag">${esc(w)}</span>`).join("")}</div>
     <h4>📄 논문 근거</h4>
