@@ -152,12 +152,12 @@ export const 문장나누기 = (text) =>
 // 근거는 '효능을 주장할 때' 필요하다. 단어가 나왔다는 것만으로 요구하면
 // "여드름 관리를 받으러 오셨습니다" 같은 평범한 문장까지 걸려 경고가 무의미해진다.
 // 한 문장 안에 성분·부위와 주장 표현이 같이 있을 때만 근거를 요구한다.
-export function claimSentences(text, config) {
+export function claimSentences(text, config, 문장들 = null) {
   const 논문 = config.논문검증 || {};
   const 부위 = 논문.효능키워드 || [];
   const 주장 = 논문.효능주장패턴 || [];
   if (!부위.length || !주장.length) return [];
-  return 문장나누기(text).filter((s) => 부위.some((w) => s.includes(w)) && 주장.some((w) => s.includes(w)));
+  return (문장들 || 문장나누기(text)).filter((s) => 부위.some((w) => s.includes(w)) && 주장.some((w) => s.includes(w)));
 }
 
 // ---------- 추상 vs 구체 ----------
@@ -176,10 +176,10 @@ const 수량표현 = /\d+\s*(?:년|개월|주일|주|일|시간|분|초|회|번|
 export const 구체수 = (text) => ((text || "").match(수량표현) || []).length;
 
 // 추상어가 든 문장을 통째로 돌려준다 — 단어만 알려주면 어디를 고칠지 못 찾는다.
-export function 추상문장(text, config) {
+export function 추상문장(text, config, 문장들 = null) {
   const 목록 = 추상어목록(config);
   if (!목록.length) return [];
-  return 문장나누기(text).filter((s) => 목록.some((w) => s.includes(w)));
+  return (문장들 || 문장나누기(text)).filter((s) => 목록.some((w) => s.includes(w)));
 }
 
 // "쓰지 마라"만으로는 안 고쳐진다. 실제로 쓴 단어에 맞는 본보기를 붙여 준다.
@@ -218,13 +218,13 @@ export const 허용숫자 = (원장값들) => {
 };
 
 // 어디서 왔는지 알 수 없는 숫자를 문장째로 돌려준다
-export function 출처불명(text, config, 허용 = new Set()) {
+export function 출처불명(text, config, 허용 = new Set(), 문장들 = null) {
   const 설정 = config.출처검사;
   if (!설정) return [];
   const 주어 = 설정.샵주어 || [];
   const 위험 = new Set((설정.위험단위 || []).map((u) => u.replace(/\s/g, "")));
   const 나온것 = [];
-  for (const 문장 of 문장나누기(text)) {
+  for (const 문장 of 문장들 || 문장나누기(text)) {
     const 샵얘기 = 주어.some((w) => 문장.includes(w));
     for (const m of 문장.matchAll(숫자꼴)) {
       const 단위 = m[2].replace(/\s/g, "");
@@ -254,42 +254,56 @@ const 정규식이스케이프 = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 // 긴 말부터 늘어놓아야 "피부관리사"가 "관리사"로 먼저 잘리지 않는다
 const 갈래 = (말들) => (말들 || []).map(정규식이스케이프).sort((a, b) => b.length - a.length).join("|");
 
-// 로직은 두 가지 꼴만 안다: "중첩"과 "촉발". 유형을 늘리려면 config만 고치면 된다.
+// 로직은 두 가지 꼴만 안다: "중첩"과 "촉발".
+// 정규식은 config가 바뀌지 않는 한 같으므로 한 번만 만들어 둔다 —
+// 편집기가 한 글자마다 평가()를 부르는데, 매번 41+18+23+14개 낱말을 escape·정렬하고 있었다.
+const 유형캐시 = new WeakMap();
 function 압축유형들(config) {
+  let 만든것 = 유형캐시.get(config);
+  if (만든것) return 만든것;
   const 묶음 = config.압축표현?.유형 || {};
-  return Object.entries(묶음).map(([이름, d]) => {
+  만든것 = Object.entries(묶음).map(([이름, d]) => {
     if (d.수식어) {
       const n = d.최소중첩 ?? 2;
-      return { 이름, ...d, 찾기: new RegExp(`(?:(?:${갈래(d.수식어)})\\s*){${n},}(?:[가-힣]{0,4})?(?:${갈래(d.핵명사)})`, "g") };
+      return { 이름, ...d,
+        찾기: new RegExp(`(?:(?:${갈래(d.수식어)})\\s*){${n},}(?:[가-힣]{0,4})?(?:${갈래(d.핵명사)})`, "g"),
+        신호: Object.values(d.풀림?.신호 || {}).map((re) => new RegExp(re)) };
     }
     // 촉발형은 config 안에서 @분야·@직무로 목록을 끌어다 쓴다 (목록을 두 번 적지 않게)
     const 촉발 = (d.촉발 || "").replace(/@분야/g, 갈래(d.분야)).replace(/@직무/g, 갈래(d.직무));
-    return { 이름, ...d, 찾기: new RegExp(촉발, "g") };
+    return { 이름, ...d, 찾기: new RegExp(촉발, "g"), 직무찾기: new RegExp(갈래(d.직무), "g") };
   });
+  유형캐시.set(config, 만든것);
+  return 만든것;
 }
 
-// 겹치는 말을 두 번 세지 않는다 — "피부관리사"는 하나지 '관리사'까지 둘이 아니다
-const 겹침없이 = (문장, 말들) => new Set(문장.match(new RegExp(갈래(말들), "g")) || []).size;
-
 function 펴졌나(문장, 유형) {
-  if (유형.수식어) {
-    const 신호 = Object.values(유형.풀림?.신호 || {});
-    return 신호.filter((re) => new RegExp(re).test(문장)).length >= (유형.풀림?.최소 ?? 2);
-  }
+  if (유형.수식어) return 유형.신호.filter((re) => re.test(문장)).length >= (유형.풀림?.최소 ?? 2);
   // 경력형: 그 년수 안에 어떤 자리들이 있었는지가 보이면 펴진 것이다.
-  const 직무수 = 겹침없이(문장, 유형.직무);
+  // 겹치는 말은 한 번만 센다 — "피부관리사"는 하나지 '관리사'까지 둘이 아니다.
+  유형.직무찾기.lastIndex = 0;
+  const 직무수 = new Set(문장.match(유형.직무찾기) || []).size;
   return 직무수 >= (유형.최소직무 ?? 2) || (직무수 >= 1 && (유형.진행표시 || []).some((w) => 문장.includes(w)));
 }
 
 // 압축된 곳을 문장째로 돌려준다. 도구가 대신 채워 줄 수 없는 값이라 어디를 고칠지 보여 줘야 한다.
 //   걸림 — 원장이 지금 고쳐야 하는 것
 //   채움 — AI가 "[원장확인: ...]"로 비워 둔 것. 지어내지 않은 것은 잘한 것이라 불합격이 아니다.
-export function 압축찾기(text, config) {
+// AI가 "모르는 값"이라고 비워 둔 자리. 압축 규칙과 상관없이 글 전체에서 찾는다 —
+// 예전엔 압축찾기 안에 묻혀 있어서, 압축이 아닌 문장의 [원장확인:]은 아무도 못 봤다.
+export function 채움자리(text, config, 문장들 = null) {
+  const 표시 = config.압축표현?.채움표시;
+  if (!표시) return [];
+  const re = new RegExp(표시, "g");
+  return (문장들 || 문장나누기(text)).filter((s) => { re.lastIndex = 0; return re.test(s); }).map((문장) => ({ 문장 }));
+}
+
+export function 압축찾기(text, config, 문장들 = null) {
   const 유형들 = 압축유형들(config);
-  if (!유형들.length) return { 걸림: [], 채움: [] };
+  if (!유형들.length) return { 걸림: [] };
   const 채움표시 = config.압축표현?.채움표시 ? new RegExp(config.압축표현.채움표시, "g") : null;
-  const 걸림 = [], 채움 = [];
-  for (const 원문장 of 문장나누기(text)) {
+  const 걸림 = [];
+  for (const 원문장 of 문장들 || 문장나누기(text)) {
     // 빈칸 표시는 재기 전에 걷어낸다 — "[원장확인: 누가 어디부터 어디까지]" 안의 '원장'·'부터…까지'가
     // 펴진 신호로 잘못 읽혀서, 정작 비워 둔 문장이 아무 표시 없이 통과해 버린다.
     const 비었나 = !!채움표시 && (채움표시.lastIndex = 0, 채움표시.test(원문장));
@@ -297,11 +311,12 @@ export function 압축찾기(text, config) {
     for (const 유형 of 유형들) {
       유형.찾기.lastIndex = 0;
       const m = 유형.찾기.exec(s);
-      if (!m || 펴졌나(s, 유형)) continue;
-      (비었나 ? 채움 : 걸림).push({ 유형: 유형.이름, 말: m[0].trim(), 문장: 원문장, 채울것: 유형.채울것, 본보기: 유형.본보기 });
+      // 비워 둔 자리는 '아직 안 쓴 것'이지 '잘못 쓴 것'이 아니다 — 채움자리가 따로 센다
+      if (!m || 비었나 || 펴졌나(s, 유형)) continue;
+      걸림.push({ 유형: 유형.이름, 말: m[0].trim(), 문장: 원문장, 채울것: 유형.채울것, 본보기: 유형.본보기 });
     }
   }
-  return { 걸림, 채움 };
+  return { 걸림 };
 }
 
 // ---------- 문구 ----------
@@ -402,10 +417,15 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const pmids = [...new Set((text.match(pmidRe) || []).map((s) => s.replace(/\s+/g, " ").trim()))];
   // 1,000자당 몇 개인가 — 글이 길수록 더 많이 요구하는 게 맞다
   const 구체밀도 = chars ? Number(((구체 / chars) * 1000).toFixed(1)) : 0;
-  const { 걸림: 압축, 채움 } = 압축찾기(text, config);
+  const 문장들 = 문장나누기(text); // 아래 검사들이 같은 쪼갬을 돌려쓴다
+  const { 걸림: 압축 } = 압축찾기(text, config, 문장들);
+  const 채움 = 채움자리(text, config, 문장들);
   // 원장이 값을 준 적이 없으면 따질 근거가 없다 — 값을 받기 시작한 뒤부터 검사한다
-  const 출처없음 = 원장값 ? 출처불명(text, config, 허용숫자(원장값)) : [];
-  const claims = claimSentences(text, config);
+  // 빈 객체도 '준 적 없음'이다 — 예전엔 {…shop} 이 늘 truthy라, 아무것도 안 채운 원장에게
+  // 글의 숫자를 전부 "내가 준 값이 아닙니다"로 들이밀었다.
+  const 준값있나 = !!원장값 && Object.entries(원장값).some(([k, v]) => k !== "확인일" && typeof v === "string" && v.trim());
+  const 출처없음 = 준값있나 ? 출처불명(text, config, 허용숫자(원장값), 문장들) : [];
+  const claims = claimSentences(text, config, 문장들);
   const needsEvidence = claims.length > 0;
 
   // 판정 기준은 키워드 '전체'가 몇 번 나왔나 — 네이버가 실제로 매칭하는 단위가 그것이다.
@@ -436,7 +456,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
     갈래이름: Object.keys(abstractByKind).join("·"),
     갈래설명: Object.entries(abstractByKind).map(([갈래, 말]) => `${갈래}(${말.join(", ")})`).join(" / "),
     바꿔쓰기: 바꿔쓰기예시(abstractFound, config),
-    추상문장: 추상문장(text, config),
+    추상문장: abstractFound.length ? 추상문장(text, config, 문장들) : [],
     정도부사횟수, 정도부사말: 정도부사.map((x) => `${x.word} ${x.count}회`).join(", "),
     부사허용: config.줄일말?.허용횟수 ?? 3,
     구체, 구체밀도, 구체최소: config.구체성?.["1000자당_최소"] ?? 0, 구체권장: config.구체성?.["1000자당_권장"] ?? 0,
