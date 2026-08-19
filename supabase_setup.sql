@@ -54,3 +54,9 @@ create policy "own drafts" on public.drafts
 
 -- ▼▼ 관리자 지정: 우진님 계정으로 회원가입한 뒤, 이 한 줄을 실행하세요 ▼▼
 -- update public.profiles set role='admin', status='approved' where email='kwjin4039@gmail.com';
+
+-- ── 원장 샵 정보 (2026-08-19 추가) ────────────────────────────────
+-- 원장만 아는 값(관리 구성·가격·이력·운영 형태)을 담는다.
+-- 이게 없으면 AI가 "8년째", "30만 원 회원권" 같은 숫자를 지어낸다.
+-- 이 한 줄만 실행하면 된다. 이미 있으면 아무 일도 안 일어난다.
+alter table public.profiles add column if not exists shop jsonb default '{}'::jsonb;
