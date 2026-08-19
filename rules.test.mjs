@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 출처불명, 허용숫자 } from "./web/rules.js";
+import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자 } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
@@ -377,7 +377,7 @@ test("걸린 곳은 문장째로 알려 준다 — 단어만 주면 어디를 �
 
 test("설정에 압축표현이 없으면 조용히 넘어간다", () => {
   const 옛설정 = { ...CONFIG }; delete 옛설정.압축표현;
-  assert.deepEqual(압축찾기("1:1 맞춤형 프라이빗 관리", 옛설정), { 걸림: [], 채움: [] });
+  assert.deepEqual(압축찾기("1:1 맞춤형 프라이빗 관리", 옛설정), { 걸림: [] });
 });
 
 // ---------- 출처 검사 ----------
@@ -427,4 +427,21 @@ test("허용숫자는 표기가 달라도 같은 값으로 본다", () => {
   const 모음 = 허용숫자({ 가격: "30만 원, 1,000원" });
   assert.ok(모음.has("30만원"), "'30만 원'과 '30만원'은 같다");
   assert.ok(모음.has("1000원"), "쉼표는 무시한다");
+});
+
+test("[원장확인:]은 압축과 무관한 문장에서도 잡힌다", () => {
+  // 예전엔 압축찾기 안에 묻혀 있어서, 압축이 아닌 문장의 빈칸은 아무도 못 봤다
+  const 글 = "회당 [원장확인: 회당 얼마]입니다. 재방문율은 [원장확인: 몇 퍼센트]입니다.";
+  assert.equal(채움자리(글, CONFIG).length, 2);
+  const v = 압축재기("회당 [원장확인: 회당 얼마]입니다.");
+  assert.equal(v.채움.length, 1);
+  assert.ok(v.advice.some((a) => a.includes("채울 자리")));
+});
+
+test("샵 정보를 안 채운 원장에게 출처 경고를 들이밀지 않는다", () => {
+  const 글 = "제목: 여드름\n\n저희는 8년째 운영하며 10회권 68만원입니다." + " 관리는 꾸준합니다.".repeat(40);
+  const 재기2 = (원장값) => 평가(글, { keyword: "여드름", config: CONFIG, 말투: "요약", 원장값 });
+  assert.deepEqual(재기2({}).출처없음, [], "빈 객체는 '준 적 없음'이다");
+  assert.deepEqual(재기2({ 확인일: "2026-08-19" }).출처없음, [], "확인일만 있는 것도 준 적 없음이다");
+  assert.ok(재기2({ 가격: "10회권 68만원" }).출처없음.length >= 1, "실제로 채웠으면 검사한다");
 });

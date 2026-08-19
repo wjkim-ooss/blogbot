@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveDraftView } from "./permissions.mjs";
 // 초안 판정 규칙은 브라우저와 한 파일을 함께 쓴다 (web/rules.js). 두 벌로 두면 반드시 갈라진다.
-import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 추상어목록, 평가 } from "./web/rules.js";
+import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 추상어목록, 압축찾기, 평가 } from "./web/rules.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
@@ -168,11 +168,22 @@ async function 샵쓰기(ctx, 값) {
 // 원장이 손으로 고쳐 넣은 자리가 곧 진짜 값이다.
 function 초벌뽑기(글들) {
   const 전부 = 글들.join("\n");
-  const 첫줄 = (re) => (전부.match(re) || [])[0]?.trim() || "";
+  // 초안은 AI가 쓴 글이다. 거기서 뽑은 값에는 지어낸 숫자가 섞여 있을 수 있고,
+  // 그걸 그대로 저장하면 '원장이 준 값'이 되어 출처 검사가 영영 못 잡는다.
+  // 그래서 압축 규칙에 걸리는 후보(= 뭉뚱그린 말)는 아예 제안하지 않는다.
+  const 첫줄 = (re) => {
+    for (const m of 전부.match(new RegExp(re, "g")) || []) {
+      const t = m.trim();
+      if (t && !압축찾기(t, CONFIG).걸림.length) return t;
+    }
+    return "";
+  };
   return {
     관리구성: 첫줄(/[^\n.]*\d+\s*분[^\n.]*\d+\s*분[^\n.]*/),          // 분이 두 번 이상 나오는 줄 = 단계별 시간
     가격: 첫줄(/[^\n.]*\d[\d,]*\s*(?:만\s?원|원)[^\n.]*/),
-    이력: 첫줄(/[^\n.]*\d+\s*년(?:째|차)?[^\n.]*(?:경력|운영|원장)[^\n.]*/),
+    // 이력은 '맡았던 자리'가 실제로 적힌 줄만 뽑는다. "8년째 운영하며…" 같은 줄을 제안하면
+    // 원장이 그대로 저장하고, AI가 지어낸 연차가 '원장이 준 값'으로 둔갑한다.
+    이력: 첫줄(new RegExp(`[^\\n.]*\\d+\\s*년[^\\n.]*(?:${(CONFIG.압축표현?.유형?.경력압축?.직무 || []).join("|")})[^\\n.]*`)),
     운영: 첫줄(/[^\n.]*(?:1인샵|베드|예약제|하루\s*\d+\s*명)[^\n.]*/),
   };
 }
@@ -454,15 +465,6 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = nu
   return lines.join("\n");
 }
 
-// AI 크레딧 없이 쓰는 길: 프롬프트를 통째로 만들어 준다.
-// 원장이 이걸 복사해 자기 Claude(무료 계정도 가능)에 붙여넣으면 같은 결과를 얻는다.
-// 각자 자기 계정으로 쓰는 것이라 우진님 크레딧도, 구독도 쓰지 않는다.
-// ---------- 생성 엔진 ----------
-// 두 가지를 지원한다. 키가 있는 쪽을 쓰고, 둘 다 있으면 Claude를 먼저 쓴다.
-//   Claude  (ANTHROPIC_API_KEY) — 품질 최상, 크레딧 충전 필요
-//   Gemini  (GEMINI_API_KEY)    — 구글 무료 등급. 카드 등록 없이 발급되고 요금이 0이다.
-// 무료 등급은 구글이 입력·출력을 제품 개선에 쓸 수 있다(사람이 열람할 수도 있다).
-// 블로그 견본 원고라 문제될 것이 없다고 보지만, 민감한 내용은 넣지 않는다.
 const GEMINI_KEY = () => process.env.GEMINI_API_KEY || "";
 const GEMINI_BASE = () => process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com";
 const engineName = () => (process.env.ANTHROPIC_API_KEY ? "claude" : GEMINI_KEY() ? "gemini" : null);
@@ -805,8 +807,6 @@ function fixInstruction(v, keyword) {
       todo.push(`키워드: "${keyword}"가 ${v.kwCount}회로 많다. ${CONFIG.키워드횟수.max}회 이하로 줄이고 나머지는 지시어·유의어로 바꿔라.`);
     } else if (issue.startsWith("제목에 키워드")) {
       todo.push(`제목: "${keyword}"를 제목 안에 통째로 넣어라.`);
-    } else if (issue.startsWith("추상어")) {
-      todo.push(`추상어 삭제: ${v.abstractFound.join(", ")} — 각각을 숫자·시간·금액이 들어간 구체적 서술로 바꿔라.`);
     } else if (issue.startsWith("의료법")) {
       todo.push(`의료법 표현 삭제: ${v.medicalFound.join(", ")} — 에스테틱이 쓸 수 있는 표현으로 바꿔라.`);
     } else if (issue.startsWith("과장 표현")) {
@@ -1169,14 +1169,11 @@ const server = http.createServer(async (req, res) => {
     // 빈 칸을 내미는 대신, 원장이 이미 고쳐 저장한 초안에서 값을 뽑아 "맞나요?"로 묻는다
     if (p === "/api/shop/추천" && req.method === "GET") {
       // 로컬 store.get은 동기, 배포는 비동기라 await로 둘 다 받는다
+      // 5편을 줄세워 부르면 배포 모드에서 왕복이 5번이다 — 함께 보낸다
       const 목록 = await store.list(ctx.userId);
-      const 글들 = [];
-      for (const d of 목록.slice(0, 5)) {
-        try {
-          const c = await store.get(ctx.userId, d.name);
-          if (c) 글들.push(typeof c === "string" ? c : c.content || "");
-        } catch { /* 한 편을 못 읽어도 나머지로 뽑는다 */ }
-      }
+      const 글들 = (await Promise.all(
+        목록.slice(0, 5).map((d) => Promise.resolve(store.get(ctx.userId, d.name)).catch(() => null))
+      )).filter(Boolean);
       return json(res, 200, { 추천: 초벌뽑기(글들), 본글수: 글들.length });
     }
     if (p === "/api/generate" && req.method === "POST") {

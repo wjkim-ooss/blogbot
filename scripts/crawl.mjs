@@ -6,6 +6,7 @@
 import { chromium } from "playwright-core";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import { 추상어목록 } from "../web/rules.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -151,7 +152,7 @@ function scorePost(text) {
   const per1k = (n) => (n / chars) * 1000;
   // 단어별로 센다 — "장단점"처럼 겹치는 단어를 각각 세는 기존 집계 방식 유지 (저장된 점수와 호환)
   const hits = (words) => words.reduce((a, w) => a + countOccurrences(text, w), 0);
-  const abstract = hits(CONFIG.추상어);
+  const abstract = hits(추상어목록(CONFIG)); // 추상어는 갈래별 객체다 — 납작하게 펴서 센다
   const concrete = (text.match(구체성RX) || []).length;
   const story = hits(Q.스토리텔링어);
   const rebut = hits(Q.반박제거어);

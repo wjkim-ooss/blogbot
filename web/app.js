@@ -12,6 +12,7 @@ let currentDraft = null;
 let authToken = null; // 로그인 후 Supabase 액세스 토큰
 let supa = null; // Supabase 클라이언트 (인증 ON일 때)
 let ME = null; // 내 계정 상태
+let SHOP = null; // 원장이 저장한 샵 정보 — 출처 검사에 쓴다 (서버와 같은 값을 봐야 한다)
 
 // ---------- 탭 (주소 #drafts 처럼 붙여 특정 탭으로 바로 들어올 수 있게) ----------
 const DEFAULT_TAB = "refs";
@@ -314,7 +315,7 @@ async function openDraft(name, el) {
 // 말투 "요약": 검증 패널이 좁아 짧게 말한다. 조건은 서버와 한 글자도 다르지 않다.
 function evaluateDraft(body, keyword, 지정목표 = 0) {
   const { ref: refHit } = 레퍼런스고르기(keyword);
-  return { ...평가(body, { keyword, config: CONFIG, 목표글자수: 지정목표, ref: refHit, 말투: "요약" }), refHit };
+  return { ...평가(body, { keyword, config: CONFIG, 목표글자수: 지정목표, ref: refHit, 말투: "요약", 원장값: SHOP }), refHit };
 }
 
 // 실시간 검증
@@ -524,6 +525,7 @@ $("#gen-btn").addEventListener("click", async () => {
 
 // ---------- 인증 · 회원 관리 ----------
 function hideOverlays() {
+  $("#shop-overlay")?.classList.add("hidden"); // 세션이 끊겨 로그인 창이 뜰 때 위에 남지 않게
   $("#auth-overlay").classList.add("hidden");
   $("#pending-overlay").classList.add("hidden");
 }
@@ -558,6 +560,9 @@ async function enterApp() {
     if (ME.isAdmin) $("#admin-tab-btn").classList.remove("hidden");
   }
   updateQuota();
+  // 샵 정보가 있어야 '출처 없는 숫자' 검사가 화면에서도 돈다 (서버와 같은 값을 봐야 한다).
+  // 저장 자리가 아직 없어도 화면은 그대로 떠야 하므로 실패는 삼킨다.
+  SHOP = await api("/api/shop").then((r) => r.shop).catch(() => null);
   // 레퍼런스가 먼저 있어야 초안 채점의 목표 글자수(상위글 평균)가 제대로 잡힌다
   await loadRefs();
   updateGenHint();
@@ -717,11 +722,9 @@ $("#auth-pw").addEventListener("keydown", (e) => { if (e.key === "Enter") authAc
 // ---------- 내 샵 정보 ----------
 // 원장만 아는 값(관리 구성·가격·이력·운영 형태)을 한 번 받아 둔다.
 // 이 값이 없으면 AI가 "8년째"·"30만 원 회원권" 같은 숫자를 지어낸다 — 실제로 그랬다.
-let 샵항목 = [];
-
 async function 샵열기() {
   const { shop, 항목 } = await api("/api/shop");
-  샵항목 = 항목;
+  SHOP = shop;
   const 칸 = $("#shop-fields");
   칸.innerHTML = 항목.map((x) => `
     <label class="shop-row">
@@ -731,7 +734,10 @@ async function 샵열기() {
         ? `<textarea data-k="${esc(x.key)}" rows="3" placeholder="${esc(x.예시)}"></textarea>`
         : `<input data-k="${esc(x.key)}" placeholder="${esc(x.예시)}" />`}
     </label>`).join("");
-  for (const el of 칸.querySelectorAll("[data-k]")) el.value = shop[el.dataset.k] || "";
+  for (const el of 칸.querySelectorAll("[data-k]")) {
+    el.value = shop[el.dataset.k] || "";
+    el.addEventListener("input", () => el.classList.remove("뽑은값"), { once: true }); // 고치면 확인된 값이다
+  }
   $("#shop-msg").textContent = shop.확인일 ? `마지막 확인: ${shop.확인일}` : "아직 채우지 않았습니다";
   $("#shop-msg").style.color = shop.확인일 ? "var(--muted, #8a91a0)" : "";
   $("#shop-overlay").classList.remove("hidden");
@@ -742,6 +748,13 @@ $("#shop-close").addEventListener("click", () => $("#shop-overlay").classList.ad
 $("#shop-overlay").addEventListener("click", (e) => { if (e.target.id === "shop-overlay") $("#shop-overlay").classList.add("hidden"); });
 
 $("#shop-save").addEventListener("click", async (e) => {
+  // 초안에서 뽑은 값은 AI가 지어낸 숫자일 수 있다. 손대지 않은 채 저장하면
+  // 그 숫자가 '원장이 준 값'이 되어 출처 검사가 영영 못 잡는다 — 한 번 묻는다.
+  const 안고친것 = [...$("#shop-fields").querySelectorAll(".뽑은값")].filter((el) => el.value.trim());
+  if (안고친것.length && !confirm(
+    `초안에서 뽑은 값 ${안고친것.length}칸을 그대로 저장합니다.\n\n` +
+    "이 값은 AI가 지어낸 숫자일 수 있습니다.\n실제 값이 맞는지 확인하셨나요?"
+  )) return;
   e.target.disabled = true;
   try {
     const 값 = {};
@@ -749,6 +762,8 @@ $("#shop-save").addEventListener("click", async (e) => {
     const { shop } = await api("/api/shop", {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(값),
     });
+    SHOP = shop; // 화면 검증도 바로 새 값을 쓴다
+    runValidation();
     $("#shop-msg").textContent = `저장했습니다 (${shop.확인일})`;
     $("#shop-msg").style.color = "var(--go, #1c8c3c)";
   } catch (err) {
@@ -769,7 +784,7 @@ $("#shop-suggest").addEventListener("click", async (e) => {
       if (v && !el.value.trim()) { el.value = v; el.classList.add("뽑은값"); 채움++; }
     }
     $("#shop-msg").textContent = 채움
-      ? `초안 ${본글수}편에서 ${채움}칸을 뽑았습니다 — 맞는지 확인하고 고쳐서 저장하세요`
+      ? `초안 ${본글수}편에서 ${채움}칸을 뽑았습니다 — AI가 지어낸 숫자일 수 있으니 실제 값으로 고쳐 주세요`
       : `초안 ${본글수}편을 봤지만 뽑을 값을 못 찾았습니다. 직접 채워 주세요`;
     $("#shop-msg").style.color = "";
   } catch (err) {
