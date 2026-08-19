@@ -315,7 +315,10 @@ async function openDraft(name, el) {
 // 말투 "요약": 검증 패널이 좁아 짧게 말한다. 조건은 서버와 한 글자도 다르지 않다.
 function evaluateDraft(body, keyword, 지정목표 = 0) {
   const { ref: refHit } = 레퍼런스고르기(keyword);
-  return { ...평가(body, { keyword, config: CONFIG, 목표글자수: 지정목표, ref: refHit, 말투: "요약", 원장값: SHOP }), refHit };
+  // 남의 초안을 열람할 때는 출처 검사를 하지 않는다. 그 원장의 샵 값은 내가 볼 수 없고,
+  // 내 값으로 대조하면 멀쩡한 숫자를 "출처 없음"이라고 지적하게 된다.
+  const 원장값 = viewingOther() ? null : SHOP;
+  return { ...평가(body, { keyword, config: CONFIG, 목표글자수: 지정목표, ref: refHit, 말투: "요약", 원장값 }), refHit };
 }
 
 // 실시간 검증
