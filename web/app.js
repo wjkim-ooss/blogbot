@@ -1,8 +1,8 @@
 // 블로그봇 대시보드 프런트
 // 판정 규칙은 서버와 같은 파일을 쓴다 — 두 벌로 두면 반드시 갈라진다 (web/rules.js)
 import {
-  noSpace, stripPhotos, countWord, despace, countLoose,
-  요청글자수, 적힌목표, pickReference, 참고레퍼런스, targetPhotosFor, 평가,
+  countLoose, 요청글자수, 적힌목표, 분량표시 as 분량문구,
+  참고레퍼런스, 레퍼런스안내, targetPhotosFor, 평가,
 } from "/rules.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -57,16 +57,23 @@ function draftBody(content) {
   return idx >= 0 ? content.slice(idx + 5).trim() : content.trim();
 }
 
-const 권장글자수 = () => CONFIG.권장글자수 || CONFIG.최소글자수;
-// 목표를 사람에게 보여 주는 문구 — 생성 안내와 검증 패널이 같은 말을 하도록 한 곳에 둔다
-const 분량표시 = (목표) =>
-  목표 ? `${목표.toLocaleString()}자 (직접 지정)`
-       : `${CONFIG.최소글자수.toLocaleString()}~${권장글자수().toLocaleString()}자`;
+const 분량표시 = (목표) => 분량문구(목표, CONFIG);
+
+// 레퍼런스 고르기는 보관함 본문 전체를 훑는다(지금 175개 글, 크롤링할수록 늘어난다).
+// 그런데 키워드 칸은 한 글자 칠 때마다, 초안 목록은 글 하나마다 이걸 부른다 —
+// 같은 키워드를 몇 번이고 다시 훑게 된다. 키워드별로 한 번만 훑고 기억한다.
+const 레퍼런스캐시 = new Map();
+function 레퍼런스고르기(keyword) {
+  const key = keyword || "";
+  if (!레퍼런스캐시.has(key)) 레퍼런스캐시.set(key, 참고레퍼런스(REFS, key, CONFIG));
+  return 레퍼런스캐시.get(key);
+}
 
 
 // ---------- 탭 1: 레퍼런스 보관함 ----------
 async function loadRefs() {
   REFS = await api("/api/references");
+  레퍼런스캐시.clear(); // 보관함이 바뀌었으니 기억해 둔 결과도 버린다
   const list = $("#ref-list");
   list.innerHTML = REFS.length
     ? ""
@@ -174,7 +181,7 @@ async function loadDrafts(selectName) {
   const list = $("#draft-list");
   const empty = other
     ? "이 회원은 아직 작성한 초안이 없습니다."
-    : "초안이 없습니다. 키워드를 넣고 <b>✍️ 직접 쓰기</b>를 누르거나, <b>📥 견본 초안 가져오기</b>로 시작해보세요.";
+    : "초안이 없습니다. 키워드를 넣고 <b>🤖 AI 초안 생성</b> 또는 <b>✍️ 직접 쓰기</b>를 눌러 시작하세요.";
   list.innerHTML = drafts.length ? "" : `<div class="muted card">${empty}</div>`;
   drafts.forEach((d) => {
     const div = document.createElement("div");
@@ -212,8 +219,6 @@ function setReadOnly(on, who) {
   $("#save-btn").classList.toggle("hidden", on);
   $("#gen-btn").classList.toggle("hidden", on);
   $("#new-btn").classList.toggle("hidden", on);
-  $("#prompt-btn").classList.toggle("hidden", on);
-  $("#import-samples").classList.toggle("hidden", on || !ME?.authOn);
   const banner = $("#readonly-banner");
   banner.classList.toggle("hidden", !on);
   if (on) banner.textContent = `👀 ${who} 님의 초안을 열람 중입니다 — 읽기만 되고 고치거나 지울 수 없습니다.`;
@@ -307,7 +312,7 @@ async function openDraft(name, el) {
 // 여기서는 브라우저 사정(설정·레퍼런스 목록)만 채워 넣는다.
 // 말투 "요약": 검증 패널이 좁아 짧게 말한다. 조건은 서버와 한 글자도 다르지 않다.
 function evaluateDraft(body, keyword, 지정목표 = 0) {
-  const { ref: refHit } = 참고레퍼런스(REFS, keyword, CONFIG);
+  const { ref: refHit } = 레퍼런스고르기(keyword);
   return { ...평가(body, { keyword, config: CONFIG, 목표글자수: 지정목표, ref: refHit, 말투: "요약" }), refHit };
 }
 
@@ -324,7 +329,8 @@ function runValidation() {
   const keyword = $("#draft-keyword").value.trim();
   const { chars, targetChars, 지정목표, refHit, photos, targetPhotos, kwCount, tokens, kwLack, kwOver,
           title, titleHasKw, titleHasNum, titleLen,
-          abstractFound, medicalFound, overclaimFound, pmids, needsEvidence,
+          abstractFound, abstractByKind, medicalFound, overclaimFound, pmids, needsEvidence,
+          구체, 구체밀도, 구체최소, 구체권장, 정도부사, 정도부사횟수,
           issues, advice } = evaluateDraft(body, keyword, 적힌목표(raw));
   const kwCls = kwLack ? "v-bad" : kwOver ? "v-warn" : "v-ok";
   const kwNote = kwLack ? " 부족" : kwOver ? " 과다" : "";
@@ -362,8 +368,12 @@ function runValidation() {
     ${kwLack && tokens.length > 1
       ? '<div class="v-sub">이 키워드는 파일명에서 자동으로 뽑은 값입니다. 실제로 노리는 검색어와 다르면 위 <b>검증용 키워드</b> 칸에서 고치세요.</div>'
       : ""}
+    <h4>구체성 <span class="${구체밀도 >= 구체권장 ? "v-ok" : 구체밀도 >= 구체최소 ? "v-warn" : "v-bad"}">1,000자당 ${구체밀도}개</span></h4>
+    <div class="v-sub">숫자 ${구체}개 · 최소 ${구체최소} / 권장 ${구체권장} — 상위글 중앙값은 2~3개입니다</div>
     <h4>추상어 <span class="${ok(!abstractFound.length)}">${abstractFound.length ? abstractFound.length + "개 발견" : "통과"}</span></h4>
-    <div class="v-tags">${abstractFound.map((w) => `<span class="v-tag">${esc(w)}</span>`).join("")}</div>
+    ${Object.entries(abstractByKind || {}).map(([갈래, 말들]) =>
+        `<div class="v-sub">${esc(갈래)}</div><div class="v-tags">${말들.map((w) => `<span class="v-tag">${esc(w)}</span>`).join("")}</div>`).join("")}
+    ${정도부사횟수 ? `<div class="v-sub">정도 부사 ${정도부사횟수}회 — ${정도부사.map((x) => esc(x.word) + " " + x.count).join(", ")}</div>` : ""}
     <h4>의료법 주의 <span class="${ok(!medicalFound.length)}">${medicalFound.length ? medicalFound.length + "개 발견" : "통과"}</span></h4>
     <div class="v-tags">${medicalFound.map((w) => `<span class="v-tag">${esc(w)}</span>`).join("")}</div>
     <h4>📄 논문 근거</h4>
@@ -427,17 +437,12 @@ function updateGenHint() {
     el.className = "gen-hint";
     return (el.textContent = "");
   }
-  const { ref, 종류 } = 참고레퍼런스(REFS, kw, CONFIG);
+  const { ref, 종류 } = 레퍼런스고르기(kw);
   const 표시 = 분량표시(요청글자수($("#gen-chars").value));
   const 수치 = ref ? ` · 사진 ${targetPhotosOf(ref)}곳 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)` : "";
   // 무엇을 참고하는지 원장이 알아야 한다 — 엉뚱한 걸 보고 쓰면 글이 겉돈다
-  const 앞말 =
-    종류 === "정확" ? `✅ "${ref.keyword}" 레퍼런스 ${ref.posts.length}개 참고`
-    : 종류 === "모음" ? `✅ "${kw}"가 나오는 상위글 ${ref.posts.length}개를 모아 참고 (${ref.출처.map((k) => `"${k}"`).join("·")} 보관함)`
-    : 종류 === "기본" ? `✅ "${kw}" 레퍼런스는 아직 없어서 "${ref.keyword}" ${ref.posts.length}개를 대신 참고`
-    : `⚠️ 참고할 레퍼런스가 없어 기본 기준으로 씁니다`;
   el.className = `gen-hint ${ref ? "ok" : "warn"}`;
-  el.textContent = `${앞말} — 목표 ${표시}${수치}`;
+  el.textContent = `${ref ? "✅" : "⚠️"} ${레퍼런스안내(kw, ref, 종류)} — 목표 ${표시}${수치}`;
 }
 $("#gen-keyword").addEventListener("input", updateGenHint);
 $("#gen-chars").addEventListener("input", updateGenHint);
@@ -529,7 +534,6 @@ function updateQuota() {
 async function enterApp() {
   hideOverlays();
   if (ME.authOn) {
-    $("#import-samples").classList.remove("hidden"); // 배포 모드에서만 필요
     $("#user-chip").classList.remove("hidden");
     $("#user-email").textContent = ME.email || "";
     const badge = $("#user-badge");
@@ -644,19 +648,6 @@ async function loadAdminUsers() {
   });
 }
 
-$("#import-samples").addEventListener("click", async (e) => {
-  e.target.disabled = true;
-  try {
-    const { added } = await api("/api/samples/import", { method: "POST" });
-    alert(added.length ? `견본 초안 ${added.length}개를 가져왔습니다.` : "이미 모든 견본을 가지고 있습니다.");
-    if (added.length) await loadDrafts(added[0]);
-  } catch (err) {
-    alert(err.message);
-  } finally {
-    e.target.disabled = false;
-  }
-});
-
 // 직접 쓰기 — AI 없이 빈 초안을 만들어 편집기를 연다
 $("#new-btn").addEventListener("click", async (e) => {
   if (viewingOther()) return alert("내 초안으로 돌아온 뒤 만들 수 있습니다");
@@ -681,44 +672,6 @@ $("#new-btn").addEventListener("click", async (e) => {
   }
 });
 
-// AI 프롬프트 복사 — 크레딧 없이, 각자 자기 Claude에 붙여넣어 쓴다
-$("#prompt-btn").addEventListener("click", async (e) => {
-  const keyword = $("#gen-keyword").value.trim();
-  if (!keyword) {
-    $("#gen-keyword").focus();
-    return alert("먼저 키워드를 입력하세요");
-  }
-  e.target.disabled = true;
-  try {
-    const { prompt, refKeyword, refCount } = await api("/api/prompt", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        keyword,
-        region: $("#gen-region").value.trim(),
-        point: $("#gen-point").value.trim(),
-        chars: $("#gen-chars").value.trim(),
-      }),
-    });
-    const via = refCount ? `"${refKeyword}" 레퍼런스 ${refCount}개를 반영한 ` : "";
-    if (await copyText(prompt)) {
-      alert(
-        `${via}프롬프트를 복사했습니다.\n\n` +
-          "claude.ai 에 붙여넣으면 초안이 나옵니다.\n" +
-          "받은 글은 ✍️ 직접 쓰기로 만든 초안에 붙여넣고 저장하세요."
-      );
-    } else {
-      // 복사가 막힌 브라우저: 편집기에 띄워 직접 긁어가게 한다
-      $("#editor").value = prompt;
-      $("#editor").select();
-      alert("자동 복사가 막혀 있어 편집기에 띄웠습니다.\nCmd+C(또는 Ctrl+C)로 복사해 claude.ai에 붙여넣으세요.");
-    }
-  } catch (err) {
-    alert("만들지 못했습니다: " + err.message);
-  } finally {
-    e.target.disabled = false;
-  }
-});
 
 $("#login-btn").addEventListener("click", () => authAction("login"));
 $("#signup-btn").addEventListener("click", () => authAction("signup"));

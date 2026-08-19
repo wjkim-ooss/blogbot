@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveDraftView } from "./permissions.mjs";
 // 초안 판정 규칙은 브라우저와 한 파일을 함께 쓴다 (web/rules.js). 두 벌로 두면 반드시 갈라진다.
-import { noSpace, 요청글자수, 참고레퍼런스, targetPhotosFor as 사진목표, 평가 } from "./web/rules.js";
+import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 추상어목록, 평가 } from "./web/rules.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
@@ -87,8 +87,6 @@ async function context(req) {
   return { authOn: true, isAdmin, approved, unlimited: isAdmin, needsLogin: !profile, profile, userId: data.user.id };
 }
 
-// ---------- 공용 유틸 ----------
-// 글자 세기·키워드 세기·레퍼런스 고르기는 web/rules.js가 원본이다 (위에서 import).
 
 const 논문 = CONFIG.논문검증 || {}; // 프롬프트에 인용한다 (판정 규칙 자체는 rules.js가 갖는다)
 
@@ -101,7 +99,7 @@ const validateDraft = (text, keyword, minChars = CONFIG.최소글자수, title =
 // 파일명 앞 10자리 날짜로 오래된 순 정렬한 뒤, 키워드는 파일 '내용'으로 판별한다.
 // (파일명의 한글은 업로드 경로에 따라 자모 분리형이 될 수 있어 키로 쓰지 않는다)
 // 한 번 읽어 두고 폴더가 바뀔 때만 다시 읽는다.
-// 레퍼런스는 지금도 4MB이고 크롤링할수록 커지는데, 초안 생성·프롬프트 복사 때마다
+// 레퍼런스는 지금도 4MB이고 크롤링할수록 커지는데, 초안을 만들 때마다
 // 통째로 JSON.parse 하면 그동안 서버가 통으로 멈춘다(Node는 한 줄로 돈다).
 let 레퍼런스캐시 = null;
 function loadReferences() {
@@ -125,15 +123,10 @@ function loadReferences() {
 
 // 생성용: 파일명이 아니라 파일 안의 keyword로 찾는다.
 // (파일명에 한글이 들어가는데, 업로드 경로에 따라 자모 분리형으로 바뀔 수 있어 이름 비교는 조용히 실패한다)
-// 딱 맞는 레퍼런스가 없으면 기본 레퍼런스로 대신한다 — 무엇을 참고했는지는 화면에 밝힌다.
-const findReference = (keyword) => 참고레퍼런스(loadReferences(), keyword, CONFIG);
-
-// 무엇을 보고 쓰는지 원장이 알아야 한다 — 엉뚱한 걸 참고하면 글이 겉돈다
-const 레퍼런스안내 = (keyword, ref, 종류) =>
-  종류 === "정확" ? `"${ref.keyword}" 레퍼런스 ${ref.posts.length}개를 참고해서 작성합니다`
-  : 종류 === "모음" ? `"${keyword}"가 나오는 상위글 ${ref.posts.length}개를 모아 참고합니다 (${ref.출처.map((k) => `"${k}"`).join("·")} 보관함)`
-  : 종류 === "기본" ? `"${keyword}" 레퍼런스는 아직 없어서 "${ref.keyword}" ${ref.posts.length}개를 대신 참고합니다`
-  : "참고할 레퍼런스가 없어 기본 기준으로 작성합니다";
+// 어느 레퍼런스를 참고할지 고르는 규칙은 web/rules.js 참고레퍼런스에 있다.
+// 대부분의 호출부는 고른 결과만 쓰고, 무엇을 보고 쓰는지 알려야 하는 곳만 종류까지 받는다.
+const 레퍼런스고르기 = (keyword) => 참고레퍼런스(loadReferences(), keyword, CONFIG);
+const findReference = (keyword) => 레퍼런스고르기(keyword).ref;
 
 // 레퍼런스 크롤링은 웹에서 하지 않는다 — 채팅(Claude)에서 scripts/crawl.mjs로 수집한다.
 
@@ -152,10 +145,10 @@ function buildDraftContent(keyword, title, body, v) {
     `# ${title}`,
     "",
     `- 키워드: ${keyword} / 글자수(공백제외): ${v.chars.toLocaleString()}자 / 사진 자리: ${v.photos}곳`,
-    `- 기계 검증: 글자수 ${ok(v.chars >= v.minChars)} (목표 ${v.minChars.toLocaleString()}자) · 키워드 ${v.kwCount}회 ${ok(v.kwCount >= CONFIG.키워드횟수.min && v.kwCount <= CONFIG.키워드횟수.max)} (${v.kwParts.map((k) => `${k.word} ${k.count}`).join(" / ")}) · 추상어 ${ok(!v.abstractFound.length)}${v.abstractFound.length ? ` (${v.abstractFound.join(", ")})` : ""} · 의료법 ${ok(!v.medicalFound.length)}${v.medicalFound.length ? ` (${v.medicalFound.join(", ")})` : ""}`,
+    `- 기계 검증: 글자수 ${ok(v.chars >= v.targetChars)} (목표 ${v.targetChars.toLocaleString()}자) · 키워드 ${v.kwCount}회 ${ok(v.kwCount >= CONFIG.키워드횟수.min && v.kwCount <= CONFIG.키워드횟수.max)} (${v.kwParts.map((k) => `${k.word} ${k.count}`).join(" / ")}) · 추상어 ${ok(!v.abstractFound.length)}${v.abstractFound.length ? ` (${v.abstractFound.join(", ")})` : ""} · 의료법 ${ok(!v.medicalFound.length)}${v.medicalFound.length ? ` (${v.medicalFound.join(", ")})` : ""}`,
     // 편집기가 이 글을 다시 판정할 때 쓰는 값. 사람 문장에서 정규식으로 캐내지 않도록
     // 기계가 읽을 자리를 따로 둔다 (문구를 다듬어도 판정이 조용히 틀어지지 않게).
-    `- 목표글자수: ${v.minChars}`,
+    `- 목표글자수: ${v.targetChars}`,
     `- 생성: 웹 대시보드 (${MODEL})`,
     "",
     "---",
@@ -240,31 +233,6 @@ const supaStore = {
 // 저장 백엔드는 시작 시 한 번 결정 (인증 ON=Supabase, OFF=로컬 파일)
 const store = AUTH_ON ? supaStore : fileStore;
 
-// 견본 초안 = 배포 모드에서 원장 계정으로 복사해 주는 본보기 글.
-// 무엇이 견본인지는 config.json의 견본초안 목록이 정한다. 폴더에 있는 .md를 전부 견본으로 삼으면
-// 시험 삼아 만든 글이 섞여도 그대로 원장에게 간다 — 실제로 그럴 뻔했다(2026-08-11).
-// 목록이 없으면(로컬에서 굴릴 때) 예전처럼 폴더 전체를 쓴다.
-// 파일명의 한글은 경로에 따라 자모 분리형으로 올 수 있어 NFC로 맞춰 비교한다.
-const listSamples = () => {
-  if (!fs.existsSync(DRAFT_DIR)) return [];
-  const 있는것 = fs.readdirSync(DRAFT_DIR).filter((f) => f.endsWith(".md"));
-  const 목록 = CONFIG.견본초안;
-  if (!Array.isArray(목록) || !목록.length) return 있는것;
-  const 골라야할것 = new Set(목록.map((n) => n.normalize("NFC")));
-  return 있는것.filter((f) => 골라야할것.has(f.normalize("NFC")));
-};
-
-async function importSamples(uid) {
-  const mine = new Set((await store.list(uid)).map((d) => d.name));
-  const added = [];
-  for (const name of listSamples()) {
-    if (mine.has(name)) continue;
-    await store.put(uid, name, fs.readFileSync(path.join(DRAFT_DIR, name), "utf8"));
-    added.push(name);
-  }
-  return added;
-}
-
 async function draftCreate(ctx, keyword, title, body, v) {
   const base = draftBaseName(keyword);
   return store.create(ctx.userId, base, buildDraftContent(keyword, title, body, v));
@@ -274,16 +242,16 @@ async function draftCreate(ctx, keyword, title, body, v) {
 // 뼈대에 3대 기준과 목표치를 적어 둬서 무엇을 채워야 하는지 보이게 한다.
 function blankDraft(keyword, ref, 목표글자수) {
   const target = (목표글자수 || CONFIG.최소글자수).toLocaleString();
-  const photos = targetPhotosFor(ref);
+  const photos = 사진목표(ref);
   return [
     `# ${keyword}`,
     "",
     `- 키워드: ${keyword} / 목표: 공백제외 ${target}자 이상 · 사진 ${photos}곳 이상`,
     `- 목표글자수: ${목표글자수 || CONFIG.최소글자수}`,
     ref
-      ? `- 참고 레퍼런스: "${ref.keyword}" ${ref.posts.length}개 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)`
+      ? `- 참고 레퍼런스: "${ref.keyword}" ${ref.posts.length}개${ref.출처?.length ? ` (${ref.출처.map((k) => `"${k}"`).join("·")} 보관함에서 모음)` : ""} (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)`
       : `- 참고 레퍼런스 없음 — 기본 기준으로 씁니다`,
-    `- 3대 기준: ① 표본 넓히기 ② 이득/손해 암시 ③ 추상어 쓰지 않기`,
+    `- 3대 기준: ① 표본 넓히기 ② 이득/손해 암시 ③ 추상어 쓰지 않기(숫자로 말하기 — 1,000자당 ${CONFIG.구체성?.["1000자당_권장"] ?? 8}개)`,
     "",
     "---",
     "",
@@ -335,7 +303,18 @@ const SYSTEM_PROMPT = `당신은 에스테틱(피부관리실) 원장이 자기 
 [3대 기준 — 반드시 통과]
 1. 표본을 넓혔는가: 제목·서두가 업계 사람만 아는 얘기가 아니라 일반인 다수가 아는 상황에서 출발
 2. 이득 암시가 있는가: 제목과 서두에 읽으면 얻는 것 또는 피할 수 있는 손해가 보임
-3. 추상어를 쓰지 않았는가: 다음 단어 사용 금지 — ${CONFIG.추상어.join(", ")}. 숫자와 구체어로만 말한다 (예: "정성껏 케어해드립니다" → "1회 70분, 앰플 1병을 통째로 씁니다")
+3. 추상어를 쓰지 않았는가 — 이게 셋 중 제일 중요하다.
+   추상은 아무도 반박할 수 없고 아무것도 알려주지 않는다. 읽는 사람은 "그래서 뭐가 다른데?"로 끝난다.
+   판단 기준은 단어 목록이 아니라 이것 하나다: **그 문장을 읽고 사실 여부를 확인할 수 있는가.**
+   - "정성껏 케어해드립니다" → 확인 불가. "1회 70분, 앰플 1병을 통째로 씁니다" → 확인 가능.
+   - "만족도가 높습니다" → 확인 불가. "10회권 재등록률이 62%입니다" → 확인 가능.
+   - "꼼꼼하게 봐드립니다" → 확인 불가. "얼굴을 8곳으로 나눠 순서대로 봅니다" → 확인 가능.
+   지켜야 할 것:
+   a) 다음 단어는 쓰지 않는다 — ${추상어목록(CONFIG).join(", ")}
+   b) 정도 부사(${(CONFIG.줄일말?.정도부사 || []).join(", ")})는 글 전체에서 ${CONFIG.줄일말?.허용횟수 ?? 3}번 이하. 정도는 숫자로 말한다.
+   c) 단위가 붙은 숫자(년·개월·분·회·명·원·%)를 공백제외 1,000자당 ${CONFIG.구체성?.["1000자당_권장"] ?? 8}개 이상 쓴다.
+      상위노출 글들의 중앙값이 1,000자당 2~3개뿐이다 — 숫자를 더 쓰는 것만으로 확실히 갈린다.
+   d) 형용사를 쓰고 싶으면 그 자리에 숫자를 넣어라. 형용사는 의견이고 숫자는 증거다.
 
 [의료법 주의]
 다음 표현 금지: ${CONFIG.의료법금지어.join(", ")}. 에스테틱은 의료기관이 아니므로 의료 행위로 오인될 표현을 쓰지 않는다.
@@ -349,9 +328,8 @@ const SYSTEM_PROMPT = `당신은 에스테틱(피부관리실) 원장이 자기 
 
 // 통과선은 최소글자수(1,300자), 노리는 지점은 권장글자수(1,500자)로 고정한다.
 // 상위글 평균은 2,000자를 넘기도 하지만 원장이 매번 쓸 수 있는 분량이 아니라 목표로 삼지 않는다.
-const 권장글자수 = () => CONFIG.권장글자수 || CONFIG.최소글자수;
-// 사진 목표는 web/rules.js targetPhotosFor가 정한다 — 설정만 여기서 채운다.
-const targetPhotosFor = (ref) => 사진목표(ref, CONFIG);
+// 사진 목표는 web/rules.js가 정한다 — 설정만 여기서 채운다.
+const 사진목표 = (ref) => targetPhotosFor(ref, CONFIG);
 
 
 function buildUserPrompt(keyword, region, point, ref, 목표글자수) {
@@ -360,6 +338,10 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수) {
   if (point) lines.push(`강조 포인트: ${point}`);
   if (ref && ref.posts?.length) {
     lines.push("", "[상위노출 레퍼런스 분석]");
+    // 통째 보관함이 아니라 여러 보관함에서 골라 모은 묶음일 수 있다 — 그 사실을 숨기면
+    // AI가 "이 키워드 상위글의 경향"으로 오해한다.
+    if (ref.출처?.length)
+      lines.push(`- 이 글들은 "${keyword}"가 본문에 나오는 상위글만 ${ref.출처.map((k) => `"${k}"`).join("·")} 보관함에서 골라 모은 것이다 (그 키워드 전용 보관함은 아직 없다)`);
     lines.push(`- 상위 ${ref.posts.length}개 글 평균: 공백제외 ${ref.avgChars}자, 이미지 ${ref.avgImages}장`);
     lines.push(`- 상위 글 제목들 (그대로 베끼지 말 것):`);
     ref.posts.forEach((p) => lines.push(`  · ${p.title}`));
@@ -377,8 +359,8 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수) {
     "",
     목표글자수
       ? `[목표 분량] 공백 제외 ${목표글자수.toLocaleString()}자 이상 (원장이 직접 지정한 값 — 반드시 맞출 것)`
-      : `[목표 분량] 공백 제외 ${CONFIG.최소글자수.toLocaleString()}~${권장글자수().toLocaleString()}자 (이 범위를 노릴 것. 너무 길게 쓰지 말 것)`,
-    `[사진 자리] ${targetPhotosFor(ref)}곳 이상${ref?.avgImages ? ` (상위글 평균 ${ref.avgImages}장)` : ""} — [사진: 설명] 형식으로 본문 곳곳에 배치`
+      : `[목표 분량] 공백 제외 ${분량표시(0, CONFIG)} (이 범위를 노릴 것. 너무 길게 쓰지 말 것)`,
+    `[사진 자리] ${사진목표(ref)}곳 이상${ref?.avgImages ? ` (상위글 평균 ${ref.avgImages}장)` : ""} — [사진: 설명] 형식으로 본문 곳곳에 배치`
   );
   lines.push(
     "",
@@ -391,12 +373,14 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수) {
     "[제출 전 스스로 확인할 것 — 기계가 이 그대로 잽니다]",
     목표글자수
       ? `1. 공백 제외 ${목표글자수.toLocaleString()}자 이상인가`
-      : `1. 공백 제외 ${CONFIG.최소글자수.toLocaleString()}자 이상이고 ${권장글자수().toLocaleString()}자 근처인가`,
+      : `1. 공백 제외 ${CONFIG.최소글자수.toLocaleString()}자 이상이고 ${권장글자수(CONFIG).toLocaleString()}자 근처인가`,
     `2. 제목에 "${keyword}"가 통째로 들어갔는가`,
     `3. 본문에 "${keyword}"가 통째로(붙여서) ${CONFIG.키워드횟수.min}~${CONFIG.키워드횟수.max}회 들어갔는가 — 단어를 쪼개 흩어 놓으면 0회로 셉니다`,
-    `4. 추상어(${CONFIG.추상어.slice(0, 8).join(", ")} 등)를 하나도 쓰지 않았는가`,
-    `5. [사진: ...] 자리가 ${targetPhotosFor(ref)}곳 이상인가`,
-    "위 다섯 개를 다 만족한 뒤에 출력하세요."
+    `4. 추상어(${추상어목록(CONFIG).slice(0, 8).join(", ")} 등)를 하나도 쓰지 않았는가`,
+    `5. 단위 붙은 숫자를 1,000자당 ${CONFIG.구체성?.["1000자당_권장"] ?? 8}개 이상 썼는가 (지금 목표 분량이면 ${Math.ceil((목표글자수 || CONFIG.최소글자수) / 1000 * (CONFIG.구체성?.["1000자당_권장"] ?? 8))}개 이상)`,
+    `6. 정도 부사(정말·너무·굉장히 등)가 ${CONFIG.줄일말?.허용횟수 ?? 3}번 이하인가`,
+    `7. [사진: ...] 자리가 ${사진목표(ref)}곳 이상인가`,
+    "위 일곱 개를 다 만족한 뒤에 출력하세요."
   );
   lines.push("", "위 조건으로 견본 글을 작성하세요.");
   return lines.join("\n");
@@ -405,18 +389,6 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수) {
 // AI 크레딧 없이 쓰는 길: 프롬프트를 통째로 만들어 준다.
 // 원장이 이걸 복사해 자기 Claude(무료 계정도 가능)에 붙여넣으면 같은 결과를 얻는다.
 // 각자 자기 계정으로 쓰는 것이라 우진님 크레딧도, 구독도 쓰지 않는다.
-function buildFullPrompt(keyword, region, point, ref, 목표글자수) {
-  return [
-    "# 역할",
-    SYSTEM_PROMPT,
-    "",
-    "---",
-    "",
-    "# 이번 글 조건",
-    buildUserPrompt(keyword, region, point, ref, 목표글자수),
-  ].join("\n");
-}
-
 // ---------- 생성 엔진 ----------
 // 두 가지를 지원한다. 키가 있는 쪽을 쓰고, 둘 다 있으면 Claude를 먼저 쓴다.
 //   Claude  (ANTHROPIC_API_KEY) — 품질 최상, 크레딧 충전 필요
@@ -750,9 +722,9 @@ function fixInstruction(v, keyword) {
   const todo = [];
   for (const issue of v.issues) {
     if (issue.startsWith("글자수 부족")) {
-      const 모자란 = v.minChars - v.chars;
+      const 모자란 = v.targetChars - v.chars;
       todo.push(
-        `글자수: 지금 ${v.chars.toLocaleString()}자 → ${v.minChars.toLocaleString()}자 이상. ` +
+        `글자수: 지금 ${v.chars.toLocaleString()}자 → ${v.targetChars.toLocaleString()}자 이상. ` +
           `약 ${모자란.toLocaleString()}자가 부족하다. 소제목 1~2개를 더 만들어 원장의 구체적인 경험(수치·시간·비용)을 채워라. ` +
           `기존 문장을 늘려 쓰지 말고 새 내용을 더해라.`
       );
@@ -837,8 +809,8 @@ async function handleGenerate(res, body, ctx) {
     if (quota === null)
       return fail(`이번 달 초안 생성 한도(${ctx.profile.monthly_limit}회)를 모두 사용했습니다. 다음 달에 초기화됩니다.`);
     차감함 = !quota.unlimited;
-    const { ref, 종류 } = findReference(keyword);
-    send({ type: "status", message: 레퍼런스안내(keyword, ref, 종류) });
+    const { ref, 종류 } = 레퍼런스고르기(keyword);
+    send({ type: "status", message: 레퍼런스안내(keyword, ref, 종류, "지시") });
 
     let client = null; // null이면 Gemini 경로
     if (engine === "claude") {
@@ -931,7 +903,7 @@ const adminHint = (ctx, msg, hint) => (ctx.isAdmin || !ctx.authOn ? `${msg} ${hi
 const 크레딧부족 = (e) => /credit balance is too low/i.test(String(e?.message || e));
 
 // AI가 막혀도 글은 쓸 수 있다 — 막다른 길로 끝내지 않고 다음 수를 알려준다
-const 대안안내 = " AI 없이 쓰시려면 ✍️ 직접 쓰기, 또는 📋 AI 프롬프트 복사로 claude.ai에 붙여넣으세요.";
+const 대안안내 = " AI 없이 쓰시려면 ✍️ 직접 쓰기로 뼈대를 만들어 손으로 채우시면 됩니다.";
 
 function describeError(e, ctx) {
   const type = e?.type;
@@ -1093,7 +1065,7 @@ const server = http.createServer(async (req, res) => {
       const keyword = (body.keyword || "").trim();
       if (!keyword) return json(res, 400, { error: "키워드를 입력하세요" });
       const base = draftBaseName(keyword);
-      const file = await store.create(ctx.userId, base, blankDraft(keyword, findReference(keyword).ref, 요청글자수(body.chars)));
+      const file = await store.create(ctx.userId, base, blankDraft(keyword, findReference(keyword), 요청글자수(body.chars)));
       return json(res, 200, { file });
     }
     if (p.startsWith("/api/drafts/")) {
@@ -1115,27 +1087,9 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true });
       }
     }
-    // 프롬프트만 만들어 준다 — AI 크레딧을 쓰지 않으므로 월 한도도 차감하지 않는다
-    if (p === "/api/prompt" && req.method === "POST") {
-      const body = await readBody(req);
-      const keyword = (body.keyword || "").trim();
-      if (!keyword) return json(res, 400, { error: "키워드를 입력하세요" });
-      const ref = findReference(keyword).ref;
-      return json(res, 200, {
-        prompt: buildFullPrompt(keyword, body.region || "", body.point || "", ref, 요청글자수(body.chars)),
-        refKeyword: ref?.keyword || null,
-        refCount: ref?.posts?.length || 0,
-      });
-    }
     if (p === "/api/generate" && req.method === "POST") {
       const body = await readBody(req);
       return handleGenerate(res, body, ctx);
-    }
-    // 견본 초안 가져오기 (배포 모드에서 회원이 견본을 자기 계정으로 복사)
-    if (p === "/api/samples/import" && req.method === "POST") {
-      if (!ctx.authOn) return json(res, 400, { error: "로컬 모드에서는 견본이 이미 목록에 있습니다" });
-      const added = await importSamples(ctx.userId);
-      return json(res, 200, { added });
     }
 
     return json(res, 404, { error: "not found" });

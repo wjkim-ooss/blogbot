@@ -27,6 +27,13 @@ export const 요청글자수 = (v) => {
   return Number.isFinite(n) && n >= 300 ? Math.min(n, 20000) : null;
 };
 
+export const 권장글자수 = (config) => config.권장글자수 || config.최소글자수;
+// 목표를 사람에게 보여 주는 문구 — 생성 안내·검증 패널·프롬프트가 같은 말을 하도록 한곳에 둔다
+export const 분량표시 = (목표, config) =>
+  목표
+    ? `${목표.toLocaleString()}자 (직접 지정)`
+    : `${config.최소글자수.toLocaleString()}~${권장글자수(config).toLocaleString()}자`;
+
 // 초안 머리말에서 '이 글을 판정할 목표 글자수'를 읽는다.
 // 서버가 "- 목표글자수: 1200"으로 적어 둔다(기계가 읽을 자리).
 // 그 줄이 없는 옛 초안은 사람 문장("목표 1,200자")도 함께 본다.
@@ -66,32 +73,37 @@ export function 본문에서찾기(list, keyword, { 최소 = 3, 최대 = 20 } = 
   const 원말 = (keyword || "").trim().normalize("NFC");
   if (!원말) return null;
   const 붙인말 = despace(원말);
-  const 나온다 = (s) => !!s && (s.includes(원말) || s.includes(붙인말));
+  // 한글 키워드는 대개 띄어쓰기가 없다. 그때 붙인말은 원말과 같으니 한 번만 훑는다
+  // (안 그러면 안 걸리는 글마다 본문 전체를 두 번씩 훑게 된다).
+  const 나온다 =
+    붙인말 === 원말
+      ? (s) => !!s && s.includes(원말)
+      : (s) => !!s && (s.includes(원말) || s.includes(붙인말));
 
-  const 모은것 = [];
+  const 후보 = [];
   const 출처 = new Set();
   for (const r of list || []) {
     for (const p of r.posts || []) {
       const 제목에 = 나온다(p.title);
       const 본문에 = 나온다(p.text);
       if (!제목에 && !본문에) continue;
-      모은것.push({ ...p, 가중치: (제목에 ? 2 : 0) + (본문에 ? 1 : 0) });
+      후보.push({ p, 가중치: (제목에 ? 2 : 0) + (본문에 ? 1 : 0) });
       출처.add(r.keyword);
     }
   }
   // 몇 개 안 되면 '상위글의 경향'이라 부를 수 없다 — 차라리 기본 레퍼런스가 낫다
-  if (모은것.length < 최소) return null;
+  if (후보.length < 최소) return null;
 
-  모은것.sort((a, b) => b.가중치 - a.가중치 || (b.score ?? 0) - (a.score ?? 0));
-  const posts = 모은것.slice(0, 최대);
+  // 추릴 때는 짝만 들고 다니고, 남는 것만 글로 만든다 (한 글자 치는 동안 175개를 통째로 복사하지 않게)
+  후보.sort((a, b) => b.가중치 - a.가중치 || (b.p.score ?? 0) - (a.p.score ?? 0));
+  const posts = 후보.slice(0, 최대).map(({ p }) => p);
   const 평균 = (뽑기) => Math.round(posts.reduce((s, p) => s + (뽑기(p) || 0), 0) / posts.length);
   return {
     keyword: 원말,
     posts,
     avgChars: 평균((p) => p.chars),
     avgImages: 평균((p) => p.images),
-    모은것: true,           // 통째 보관함이 아니라 골라 모은 묶음이라는 표시
-    출처: [...출처],
+    출처: [...출처], // 어느 보관함들에서 모았나 — 화면과 프롬프트가 밝힌다
   };
 }
 
@@ -110,6 +122,21 @@ export function 참고레퍼런스(list, keyword, config) {
   const 기본 = config?.기본레퍼런스;
   const 대신 = 기본 ? pickReference(list, 기본) : null;
   return { ref: 대신, 종류: 대신 ? "기본" : "없음" };
+}
+
+// 무엇을 보고 쓰는지 원장에게 알리는 문구. 조건(참고레퍼런스)과 같은 곳에 둔다 —
+// 서버 안내와 화면 안내가 각자 이 네 갈래를 적고 있었고, 그게 바로 이 파일이 없애려던 모양이다.
+// 말투만 다르다: "지시"는 서버가 문장으로, "요약"은 좁은 안내줄에 짧게.
+export function 레퍼런스안내(keyword, ref, 종류, 말투 = "요약") {
+  const 셈 = ref?.posts.length ?? 0;
+  const 어디서 = () => (ref.출처 || []).map((k) => `"${k}"`).join("·");
+  const 끝 = 말투 === "지시" ? "합니다" : "";
+  switch (종류) {
+    case "정확": return `"${ref.keyword}" 레퍼런스 ${셈}개 참고${끝}`;
+    case "모음": return `"${keyword}"가 나오는 상위글 ${셈}개를 모아 참고${끝} (${어디서()} 보관함)`;
+    case "기본": return `"${keyword}" 레퍼런스는 아직 없어서 "${ref.keyword}" ${셈}개를 대신 참고${끝}`;
+    default:     return `참고할 레퍼런스가 없어 기본 기준으로 씁니다`;
+  }
 }
 
 // 상위글은 사진이 30장을 넘기도 하지만 원장이 실제로 준비할 수 있는 양을 넘으면 의미가 없어 20장에서 끊는다.
@@ -131,6 +158,38 @@ export function claimSentences(text, config) {
     .filter((s) => s && 부위.some((w) => s.includes(w)) && 주장.some((w) => s.includes(w)));
 }
 
+// ---------- 추상 vs 구체 ----------
+// 핵심은 금지어 목록이 아니다. "검증할 수 있게 썼는가"다.
+// "정성껏 케어합니다"는 아무도 반박할 수 없고 아무것도 알려주지 않는다.
+// "1회 70분, 앰플 1병을 통째로 씁니다"는 확인할 수 있다. 상위글 중앙값이
+// 1,000자당 숫자 2.4개뿐이라, 숫자를 더 쓰는 것만으로도 차별화가 된다.
+
+// 설정이 옛 모양(납작한 배열)이어도 돌아가게 한다
+const 추상어분류 = (config) =>
+  Array.isArray(config.추상어) ? { 추상어: config.추상어 } : config.추상어 || {};
+export const 추상어목록 = (config) => Object.values(추상어분류(config)).flat();
+
+// 숫자만 세면 "2023년"처럼 맥락 없는 것도 셈에 든다 — 단위가 붙은 것만 구체로 본다.
+const 수량표현 = /\d+\s*(?:년|개월|주일|주|일|시간|분|초|회|번|명|원|만원|천원|장|곳|살|배|퍼센트|%|kg|g|ml|cc|cm|mm|도)/g;
+export const 구체수 = (text) => ((text || "").match(수량표현) || []).length;
+
+// 추상어가 든 문장을 통째로 돌려준다 — 단어만 알려주면 어디를 고칠지 못 찾는다.
+export function 추상문장(text, config) {
+  const 목록 = 추상어목록(config);
+  if (!목록.length) return [];
+  return (text || "")
+    .split(/(?<=[.!?…]|다\.|요\.)\s+|\n+/)
+    .map((s) => s.trim())
+    .filter((s) => s && 목록.some((w) => s.includes(w)));
+}
+
+// "쓰지 마라"만으로는 안 고쳐진다. 실제로 쓴 단어에 맞는 본보기를 붙여 준다.
+function 바꿔쓰기예시(찾은말, config) {
+  const 표 = config.추상어대체 || {};
+  const 보기 = 찾은말.filter((w) => 표[w]).slice(0, 3).map((w) => `"${w}"→"${표[w]}"`);
+  return 보기.length ? `이렇게: ${보기.join(", ")}` : "";
+}
+
 // ---------- 문구 ----------
 // 조건은 하나지만 하는 말은 상대에 따라 다르다.
 //   지시 — AI에게 "무엇을 어떻게 고쳐라" (그래야 실제로 고쳐진다)
@@ -142,13 +201,20 @@ const 문구 = {
     글자수: (v) => `글자수 부족: ${v.chars}자 (최소 ${v.목표글자수}자)`,
     키워드부족: (v) => `키워드 "${v.keyword}" ${v.kwCount}회 (최소 ${v.최소횟수}회 — 문장 안에 자연스럽게 더 넣을 것)`,
     키워드과다: (v) => `키워드 "${v.keyword}" ${v.kwCount}회 과다 (최대 ${v.최대횟수}회 — 일부를 다른 표현으로 바꿔 줄일 것)`,
-    추상어: (v) => `추상어 사용: ${v.abstractFound.join(", ")}`,
+    추상어: (v) =>
+      `추상어 삭제: ${v.갈래설명} — 각각을 숫자·시간·금액이 든 서술로 바꿔라. ${v.바꿔쓰기}` +
+      (v.추상문장[0] ? ` 예를 들어 이 문장: "${자르기(v.추상문장[0], 50)}"` : ""),
+    정도부사: (v) => `정도 부사가 ${v.정도부사횟수}회(${v.정도부사말}) — ${v.부사허용}회 이하로 줄이고, 정도를 숫자로 바꿔라 ("너무 좋아요" → "3주 만에 각질이 안 일어났습니다")`,
+    구체성: (v) =>
+      `구체성 부족: 단위 붙은 숫자가 ${v.구체}개뿐(1,000자당 ${v.구체밀도}개). ` +
+      `1,000자당 ${v.구체최소}개 이상으로 올려라 — 기간·횟수·인원·금액·분 단위를 실제 값으로 적어라.`,
+    구체성권장: (v) => `숫자를 1,000자당 ${v.구체권장}개까지 늘리면 더 좋다 (지금 ${v.구체밀도}개)`,
     의료법: (v) => `의료법 주의 표현: ${v.medicalFound.join(", ")}`,
     과장: (v) => `과장 표현(논문 근거 없이 단정 금지): ${v.overclaimFound.join(", ")}`,
     근거없음: (v) =>
       `효능을 주장한 문장에 논문 근거(PMID)가 없음 — ${v.출처}에서 🟢 확인 후 PMID를 붙이거나, 주장을 빼세요. ` +
       `해당 문장: "${자르기(v.claims[0], 60)}"`,
-    사진: (v) => `사진 자리 ${v.photos}곳 → ${v.목표사진}곳 이상이면 더 좋음`,
+    사진: (v) => `사진 자리 ${v.photos}곳 → ${v.targetPhotos}곳 이상이면 더 좋음`,
     제목숫자: () => "제목에 숫자를 넣으면 상위노출에 유리함",
   },
   요약: {
@@ -160,11 +226,14 @@ const 문구 = {
         ? `키워드를 통째로 쓴 곳이 없음 — "${v.keyword}"를 붙여서 ${v.최소횟수}번 이상 넣으세요`
         : `키워드 ${v.kwCount}회 — 최소 ${v.최소횟수}회`,
     키워드과다: (v) => `키워드 ${v.kwCount}회 과다 — 최대 ${v.최대횟수}회`,
-    추상어: (v) => `추상어 ${v.abstractFound.length}개: ${v.abstractFound.join(", ")}`,
+    추상어: (v) => `추상어 ${v.abstractFound.length}개 (${v.갈래이름}): ${v.abstractFound.join(", ")}`,
+    정도부사: (v) => `정도 부사 ${v.정도부사횟수}회 — ${v.부사허용}회 이하 권장 (${v.정도부사말})`,
+    구체성: (v) => `숫자가 ${v.구체}개뿐 — 1,000자당 ${v.구체최소}개 이상 (지금 ${v.구체밀도}개)`,
+    구체성권장: (v) => `숫자 ${v.구체}개(1,000자당 ${v.구체밀도}개) → ${v.구체권장}개까지 올리면 상위글과 확실히 갈립니다`,
     의료법: (v) => `의료법 주의 ${v.medicalFound.length}개: ${v.medicalFound.join(", ")}`,
     과장: (v) => `과장 표현 ${v.overclaimFound.length}개: ${v.overclaimFound.join(", ")}`,
     근거없음: (v) => `효능을 주장한 문장에 논문 근거(PMID) 없음 — "${자르기(v.claims[0], 40)}"`,
-    사진: (v) => `사진 자리 ${v.photos}곳 → ${v.목표사진}곳 이상이면 더 좋습니다`,
+    사진: (v) => `사진 자리 ${v.photos}곳 → ${v.targetPhotos}곳 이상이면 더 좋습니다`,
     제목숫자: () => "제목에 숫자를 넣으면 상위노출에 유리합니다",
   },
 };
@@ -183,15 +252,32 @@ const 자르기 = (s, n) => `${(s || "").slice(0, n)}${(s || "").length > n ? "�
 export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = null, title, 말투 = "요약" } = {}) {
   const 논문 = config.논문검증 || {};
   const 목표 = 목표글자수 || config.최소글자수;
+  const 구체최소 = config.구체성?.["1000자당_최소"] ?? 0;
+  const 구체권장 = config.구체성?.["1000자당_권장"] ?? 0;
+  const 부사허용 = config.줄일말?.허용횟수 ?? 3;
   const 목표사진 = targetPhotosFor(ref, config);
 
   const chars = noSpace(stripPhotos(text));
   const photos = ((text || "").match(/\[사진:/g) || []).length;
-  const abstractFound = config.추상어.filter((w) => text.includes(w));
+  // 어느 갈래에 걸렸는지까지 안다 — "왜 걸렸는지"를 말해 주려고
+  const 분류 = 추상어분류(config);
+  const abstractByKind = Object.fromEntries(
+    Object.entries(분류).map(([갈래, 말들]) => [갈래, 말들.filter((w) => text.includes(w))]).filter(([, 찾은]) => 찾은.length)
+  );
+  const abstractFound = Object.values(abstractByKind).flat();
+  // 정도 부사는 한두 번은 자연스럽다. 없애라가 아니라 줄이라고 해야 맞다.
+  const 정도부사 = (config.줄일말?.정도부사 || [])
+    .map((w) => ({ word: w, count: countWord(text, w) }))
+    .filter((x) => x.count > 0);
+  const 정도부사횟수 = 정도부사.reduce((n, x) => n + x.count, 0);
+  // 구체성 = 단위 붙은 숫자가 1,000자당 몇 개인가
+  const 구체 = 구체수(text);
   const medicalFound = config.의료법금지어.filter((w) => text.includes(w));
   const overclaimFound = (논문.과장표현 || []).filter((w) => text.includes(w));
   const pmidRe = new RegExp(논문.PMID정규식 || "PMID\\s*\\d{5,8}", "g");
   const pmids = [...new Set((text.match(pmidRe) || []).map((s) => s.replace(/\s+/g, " ").trim()))];
+  // 1,000자당 몇 개인가 — 글이 길수록 더 많이 요구하는 게 맞다
+  const 구체밀도 = chars ? Number(((구체 / chars) * 1000).toFixed(1)) : 0;
   const claims = claimSentences(text, config);
   const needsEvidence = claims.length > 0;
 
@@ -210,11 +296,18 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const titleHasNum = /\d/.test(제목);
 
   const v = {
-    keyword, chars, photos, kwCount, 목표글자수: 목표, 목표사진, claims,
+    keyword, chars, photos, kwCount, 목표글자수: 목표, targetPhotos: 목표사진, claims,
     abstractFound, medicalFound, overclaimFound,
     최소횟수: config.키워드횟수.min, 최대횟수: config.키워드횟수.max,
     출처: 논문.출처,
-    단어는충분: tokens.length > 1 && tokens.every((t) => countLoose(text, t) >= config.키워드횟수.min),
+    단어는충분: tokens.length > 1 && kwParts.every((k) => k.count >= config.키워드횟수.min),
+    갈래이름: Object.keys(abstractByKind).join("·"),
+    갈래설명: Object.entries(abstractByKind).map(([갈래, 말]) => `${갈래}(${말.join(", ")})`).join(" / "),
+    바꿔쓰기: 바꿔쓰기예시(abstractFound, config),
+    추상문장: 추상문장(text, config),
+    정도부사횟수, 정도부사말: 정도부사.map((x) => `${x.word} ${x.count}회`).join(", "),
+    부사허용: config.줄일말?.허용횟수 ?? 3,
+    구체, 구체밀도, 구체최소: config.구체성?.["1000자당_최소"] ?? 0, 구체권장: config.구체성?.["1000자당_권장"] ?? 0,
   };
   const 말 = 문구[말투];
 
@@ -226,6 +319,8 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   if (kwLack) issues.push(말.키워드부족(v));
   else if (kwOver) issues.push(말.키워드과다(v));
   if (abstractFound.length) issues.push(말.추상어(v));
+  // 금지어를 안 썼어도 숫자가 없으면 결국 추상적인 글이다 — 그쪽이 진짜 기준이다
+  if (구체최소 && 구체밀도 < 구체최소) issues.push(말.구체성(v));
   if (medicalFound.length) issues.push(말.의료법(v));
   if (overclaimFound.length) issues.push(말.과장(v));
   if (needsEvidence && !pmids.length) issues.push(말.근거없음(v));
@@ -233,12 +328,15 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const advice = [];
   if (photos < 목표사진) advice.push(말.사진(v));
   if (제목 && !titleHasNum) advice.push(말.제목숫자(v));
+  if (정도부사횟수 > 부사허용) advice.push(말.정도부사(v));
+  if (구체권장 && 구체밀도 >= 구체최소 && 구체밀도 < 구체권장) advice.push(말.구체성권장(v));
 
   return {
     chars, photos, kwCount, kwParts, tokens, kwLack, kwOver,
     title: 제목, titleHasKw, titleHasNum, titleLen: noSpace(제목),
-    abstractFound, medicalFound, overclaimFound, pmids, claims, needsEvidence,
-    targetChars: 목표, minChars: 목표, 목표사진, targetPhotos: 목표사진, 지정목표: 목표글자수,
+    abstractFound, abstractByKind, medicalFound, overclaimFound, pmids, claims, needsEvidence,
+    구체, 구체밀도, 구체최소, 구체권장, 정도부사, 정도부사횟수,
+    targetChars: 목표, targetPhotos: 목표사진, 지정목표: 목표글자수,
     issues, advice, pass: issues.length === 0,
   };
 }
