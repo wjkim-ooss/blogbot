@@ -219,6 +219,7 @@ function setReadOnly(on, who) {
   $("#save-btn").classList.toggle("hidden", on);
   $("#gen-btn").classList.toggle("hidden", on);
   $("#new-btn").classList.toggle("hidden", on);
+  $("#shop-btn").classList.toggle("hidden", on);
   const banner = $("#readonly-banner");
   banner.classList.toggle("hidden", !on);
   if (on) banner.textContent = `👀 ${who} 님의 초안을 열람 중입니다 — 읽기만 되고 고치거나 지울 수 없습니다.`;
@@ -480,6 +481,7 @@ $("#gen-btn").addEventListener("click", async () => {
         region: $("#gen-region").value.trim(),
         point: $("#gen-point").value.trim(),
         chars: $("#gen-chars").value.trim(), // 비우면 상위글 평균에 맞춘다
+        사례: $("#gen-case").value.trim(), // 비우면 AI가 사례를 지어내지 않는다
       }),
     });
     const reader = res.body.getReader();
@@ -712,3 +714,65 @@ $("#auth-pw").addEventListener("keydown", (e) => { if (e.key === "Enter") authAc
   showLogin();
 })();
 
+// ---------- 내 샵 정보 ----------
+// 원장만 아는 값(관리 구성·가격·이력·운영 형태)을 한 번 받아 둔다.
+// 이 값이 없으면 AI가 "8년째"·"30만 원 회원권" 같은 숫자를 지어낸다 — 실제로 그랬다.
+let 샵항목 = [];
+
+async function 샵열기() {
+  const { shop, 항목 } = await api("/api/shop");
+  샵항목 = 항목;
+  const 칸 = $("#shop-fields");
+  칸.innerHTML = 항목.map((x) => `
+    <label class="shop-row">
+      <span class="shop-name">${esc(x.이름)}</span>
+      <span class="shop-help">${esc(x.안내)}</span>
+      ${x.형태 === "여러줄"
+        ? `<textarea data-k="${esc(x.key)}" rows="3" placeholder="${esc(x.예시)}"></textarea>`
+        : `<input data-k="${esc(x.key)}" placeholder="${esc(x.예시)}" />`}
+    </label>`).join("");
+  for (const el of 칸.querySelectorAll("[data-k]")) el.value = shop[el.dataset.k] || "";
+  $("#shop-msg").textContent = shop.확인일 ? `마지막 확인: ${shop.확인일}` : "아직 채우지 않았습니다";
+  $("#shop-msg").style.color = shop.확인일 ? "var(--muted, #8a91a0)" : "";
+  $("#shop-overlay").classList.remove("hidden");
+}
+
+$("#shop-btn").addEventListener("click", () => 샵열기().catch((e) => alert(e.message)));
+$("#shop-close").addEventListener("click", () => $("#shop-overlay").classList.add("hidden"));
+$("#shop-overlay").addEventListener("click", (e) => { if (e.target.id === "shop-overlay") $("#shop-overlay").classList.add("hidden"); });
+
+$("#shop-save").addEventListener("click", async (e) => {
+  e.target.disabled = true;
+  try {
+    const 값 = {};
+    for (const el of $("#shop-fields").querySelectorAll("[data-k]")) 값[el.dataset.k] = el.value.trim();
+    const { shop } = await api("/api/shop", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(값),
+    });
+    $("#shop-msg").textContent = `저장했습니다 (${shop.확인일})`;
+    $("#shop-msg").style.color = "var(--go, #1c8c3c)";
+  } catch (err) {
+    $("#shop-msg").textContent = err.message;
+    $("#shop-msg").style.color = "";
+  } finally { e.target.disabled = false; }
+});
+
+// 빈 칸 4개를 내미는 대신, 이미 쓴 초안에서 값을 뽑아 "맞나요?"로 묻는다.
+// 원장이 손으로 고쳐 넣은 자리가 곧 진짜 값이다.
+$("#shop-suggest").addEventListener("click", async (e) => {
+  e.target.disabled = true;
+  try {
+    const { 추천, 본글수 } = await api("/api/shop/추천");
+    let 채움 = 0;
+    for (const el of $("#shop-fields").querySelectorAll("[data-k]")) {
+      const v = 추천[el.dataset.k];
+      if (v && !el.value.trim()) { el.value = v; el.classList.add("뽑은값"); 채움++; }
+    }
+    $("#shop-msg").textContent = 채움
+      ? `초안 ${본글수}편에서 ${채움}칸을 뽑았습니다 — 맞는지 확인하고 고쳐서 저장하세요`
+      : `초안 ${본글수}편을 봤지만 뽑을 값을 못 찾았습니다. 직접 채워 주세요`;
+    $("#shop-msg").style.color = "";
+  } catch (err) {
+    $("#shop-msg").textContent = err.message;
+  } finally { e.target.disabled = false; }
+});

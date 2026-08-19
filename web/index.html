@@ -81,7 +81,12 @@
       <button id="gen-btn" class="primary">🤖 AI 초안 생성</button>
       <!-- AI가 막혀 있어도(크레딧·키 문제) 손으로는 쓸 수 있어야 한다 -->
       <button id="new-btn">✍️ 직접 쓰기</button>
+      <!-- 원장만 아는 값을 한 번 저장해 둔다. 이게 없으면 AI가 숫자를 지어낸다 -->
+      <button id="shop-btn">🏠 내 샵 정보</button>
       <span id="gen-quota" class="muted"></span>
+      <!-- 이번 글에만 쓰는 사례. 비워도 되고, 비우면 AI가 사례를 지어내지 않는다 -->
+      <input id="gen-case" placeholder="이번 글의 실제 사례 (선택)"
+             title="고객이 이 글을 봐도 괜찮을 만큼만 적으세요. 비우면 사례 단락 없이 씁니다" />
       <!-- 생성을 누르기 전에 이 키워드에 참고할 상위노출 레퍼런스가 있는지 알려준다 -->
       <div id="gen-hint" class="gen-hint"></div>
     </div>
@@ -110,6 +115,21 @@
       </div>
     </div>
   </section>
+
+  <!-- 내 샵 정보 (원장이 한 번 채워 두는 값) -->
+  <div id="shop-overlay" class="overlay hidden">
+    <div class="auth-card card" id="shop-card">
+      <h2>🏠 내 샵 정보</h2>
+      <p class="muted">한 번만 채워두면 글마다 이 값이 쓰입니다. <b>안 채우면 AI가 숫자를 지어냅니다.</b></p>
+      <div id="shop-fields"></div>
+      <div id="shop-msg" class="auth-msg"></div>
+      <div class="auth-actions">
+        <button id="shop-save" class="primary">저장</button>
+        <button id="shop-close">닫기</button>
+      </div>
+      <button id="shop-suggest">📥 저장된 초안에서 뽑아보기</button>
+    </div>
+  </div>
 
   <script type="module" src="/app.js"></script>
 </body>

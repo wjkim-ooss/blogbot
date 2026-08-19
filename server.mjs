@@ -92,8 +92,8 @@ const 논문 = CONFIG.논문검증 || {}; // 프롬프트에 인용한다 (판�
 
 // 초안 채점 — 규칙은 web/rules.js에 있고 여기서는 서버 사정만 채워 넣는다.
 // 말투 "지시": AI에게 "무엇을 어떻게 고쳐라"까지 적어 준다. 그래야 실제로 고쳐진다.
-const validateDraft = (text, keyword, minChars = CONFIG.최소글자수, title = "", ref = null) =>
-  평가(text, { keyword, config: CONFIG, 목표글자수: minChars, ref, title, 말투: "지시" });
+const validateDraft = (text, keyword, minChars = CONFIG.최소글자수, title = "", ref = null, 원장값 = null) =>
+  평가(text, { keyword, config: CONFIG, 목표글자수: minChars, ref, title, 말투: "지시", 원장값 });
 
 // ---------- 레퍼런스 ----------
 // 파일명 앞 10자리 날짜로 오래된 순 정렬한 뒤, 키워드는 파일 '내용'으로 판별한다.
@@ -134,6 +134,48 @@ const findReference = (keyword) => 레퍼런스고르기(keyword).ref;
 // 두 군데(AI 생성·직접 쓰기)가 따로 적어 두면 한쪽만 고쳐져 이름이 갈린다.
 const draftBaseName = (keyword) =>
   `${new Date().toISOString().slice(0, 10)}_${keyword.replace(/[\/\s]+/g, "-")}`;
+
+// ---------- 원장 샵 정보 ----------
+// 원장만 아는 값(관리 구성·가격·이력·운영 형태)을 한 번 받아 두고 글마다 프롬프트에 실어 보낸다.
+// 이게 없으면 AI가 숫자를 지어낸다 — 견본 초안의 "8년째"·"30만 원"이 그렇게 나왔다.
+// 배포 모드는 profiles.shop(jsonb), 로컬은 파일 하나. 컬럼이 아직 없어도 그냥 빈 값으로 돈다
+// (SQL을 안 돌린 상태에서 사이트가 죽으면 안 된다).
+const SHOP_FILE = path.join(ROOT, ".shop.json");
+const 샵항목 = () => (CONFIG.원장정보항목 || []).map((x) => x.key);
+
+async function 샵읽기(ctx) {
+  if (!ctx.authOn) {
+    try { return JSON.parse(fs.readFileSync(SHOP_FILE, "utf8")); } catch { return {}; }
+  }
+  if (!ctx.userId) return {};
+  const { data, error } = await supaAdmin.from("profiles").select("shop").eq("id", ctx.userId).single();
+  if (error) return {}; // shop 컬럼이 아직 없는 상태 — 조용히 빈 값
+  return data?.shop || {};
+}
+
+async function 샵쓰기(ctx, 값) {
+  // 정해진 항목만 받는다 (아무 키나 들어오면 프롬프트가 오염된다)
+  const 정리 = {};
+  for (const k of 샵항목()) if (typeof 값?.[k] === "string" && 값[k].trim()) 정리[k] = 값[k].trim().slice(0, 2000);
+  정리.확인일 = new Date().toISOString().slice(0, 10); // 값이 낡았는지 원장이 알 수 있게
+  if (!ctx.authOn) { fs.writeFileSync(SHOP_FILE, JSON.stringify(정리, null, 2)); return 정리; }
+  const { error } = await supaAdmin.from("profiles").update({ shop: 정리 }).eq("id", ctx.userId);
+  if (error) throw Object.assign(new Error("샵 정보를 저장할 자리가 아직 없습니다"), { 안내: "Supabase SQL 편집기에서 supabase_setup.sql의 shop 컬럼 한 줄을 실행하세요" });
+  return 정리;
+}
+
+// 저장된 초안에서 값을 초벌로 뽑아 본다 — 빈 칸 5개를 내미는 대신 "맞나요?"로 묻기 위해.
+// 원장이 손으로 고쳐 넣은 자리가 곧 진짜 값이다.
+function 초벌뽑기(글들) {
+  const 전부 = 글들.join("\n");
+  const 첫줄 = (re) => (전부.match(re) || [])[0]?.trim() || "";
+  return {
+    관리구성: 첫줄(/[^\n.]*\d+\s*분[^\n.]*\d+\s*분[^\n.]*/),          // 분이 두 번 이상 나오는 줄 = 단계별 시간
+    가격: 첫줄(/[^\n.]*\d[\d,]*\s*(?:만\s?원|원)[^\n.]*/),
+    이력: 첫줄(/[^\n.]*\d+\s*년(?:째|차)?[^\n.]*(?:경력|운영|원장)[^\n.]*/),
+    운영: 첫줄(/[^\n.]*(?:1인샵|베드|예약제|하루\s*\d+\s*명)[^\n.]*/),
+  };
+}
 
 // ---------- 초안 저장소 ----------
 // 인증 ON(배포): Supabase drafts 테이블(user_id별). OFF(로컬): 파일(DRAFT_DIR 루트).
@@ -344,7 +386,7 @@ const SYSTEM_PROMPT = `당신은 에스테틱(피부관리실) 원장이 자기 
 const 사진목표 = (ref) => targetPhotosFor(ref, CONFIG);
 
 
-function buildUserPrompt(keyword, region, point, ref, 목표글자수) {
+function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = null, 사례 = "") {
   const lines = [`키워드: ${keyword}`];
   if (region) lines.push(`지역: ${region} (본문에 자연스럽게 반영)`);
   if (point) lines.push(`강조 포인트: ${point} (이 말이 수식어를 겹친 명사구라면 그대로 쓰지 말고, 뜻은 살리되 '누가·어디부터 어디까지·몇 분'을 넣은 문장으로 펴서 쓸 것)`);
@@ -374,6 +416,18 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수) {
       : `[목표 분량] 공백 제외 ${분량표시(0, CONFIG)} (이 범위를 노릴 것. 너무 길게 쓰지 말 것)`,
     `[사진 자리] ${사진목표(ref)}곳 이상${ref?.avgImages ? ` (상위글 평균 ${ref.avgImages}장)` : ""} — [사진: 설명] 형식으로 본문 곳곳에 배치`
   );
+  // 원장이 준 값 — 이게 있어야 AI가 숫자를 지어내지 않는다
+  const 준값 = (CONFIG.원장정보항목 || []).filter((x) => shop?.[x.key]);
+  if (준값.length) {
+    lines.push("", "[원장이 준 실제 값 — 이 값만 쓰고 여기 없는 숫자를 만들어 내지 말 것]");
+    for (const x of 준값) lines.push(`- ${x.이름}: ${shop[x.key]}`);
+    if (shop.가격 && /비공개/.test(shop.가격))
+      lines.push("- 가격은 원장이 공개하지 않는다. 금액·회원권 가격·할인율을 글에 쓰지 말 것 (\"10만 원대\" 같은 어림값도 금지)");
+    lines.push("- 이 목록에 없는 연차·금액·소요 시간·인원·비율이 필요하면 지어내지 말고 [원장확인: 무엇] 으로 비워 둘 것");
+  }
+  if (사례) lines.push("", "[이번 글에 쓸 실제 사례 — 원장이 준 것]", 사례, "이 사례의 숫자만 쓰고 살을 붙여 지어내지 말 것.");
+  else lines.push("", "[사례 없음] 원장이 이번 글의 사례를 주지 않았다. 특정 고객 사례를 지어내지 말 것 — 사례 단락 자체를 넣지 마라.");
+
   lines.push(
     "",
     "[논문 근거]",
@@ -842,10 +896,12 @@ async function handleGenerate(res, body, ctx) {
     const 지정 = 요청글자수(body.chars);
     const targetChars = 지정 || CONFIG.최소글자수;
     if (지정) send({ type: "status", message: `목표 글자수 ${targetChars.toLocaleString()}자로 맞춰 작성합니다` });
-    const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정) }];
+    const shop = await 샵읽기(ctx);
+    const 사례 = (body.사례 || "").trim().slice(0, 1000);
+    const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례) }];
     const check = (d) => {
       const p = parseDraftOutput(d, keyword);
-      return { parsed: p, validation: validateDraft(`${p.title}\n${p.body}`, keyword, targetChars, p.title, ref) };
+      return { parsed: p, validation: validateDraft(`${p.title}\n${p.body}`, keyword, targetChars, p.title, ref, { ...shop, 사례 }) };
     };
 
     // 엔진이 이미 쓸 수 있는 모델을 모두 훑고 일반 호출까지 해 본 뒤에 던진다.
@@ -1100,6 +1156,28 @@ const server = http.createServer(async (req, res) => {
         await store.del(ctx.userId, name);
         return json(res, 200, { ok: true });
       }
+    }
+    // 원장 샵 정보 — 한 번 저장해 두면 글마다 프롬프트에 실린다
+    if (p === "/api/shop" && req.method === "GET") {
+      return json(res, 200, { shop: await 샵읽기(ctx), 항목: CONFIG.원장정보항목 || [] });
+    }
+    if (p === "/api/shop" && req.method === "PUT") {
+      if (ctx.authOn && !ctx.userId) return json(res, 401, { error: "로그인이 필요합니다" });
+      try { return json(res, 200, { shop: await 샵쓰기(ctx, await readBody(req)) }); }
+      catch (e) { return json(res, 400, { error: e.message, 안내: e.안내 || "" }); }
+    }
+    // 빈 칸을 내미는 대신, 원장이 이미 고쳐 저장한 초안에서 값을 뽑아 "맞나요?"로 묻는다
+    if (p === "/api/shop/추천" && req.method === "GET") {
+      // 로컬 store.get은 동기, 배포는 비동기라 await로 둘 다 받는다
+      const 목록 = await store.list(ctx.userId);
+      const 글들 = [];
+      for (const d of 목록.slice(0, 5)) {
+        try {
+          const c = await store.get(ctx.userId, d.name);
+          if (c) 글들.push(typeof c === "string" ? c : c.content || "");
+        } catch { /* 한 편을 못 읽어도 나머지로 뽑는다 */ }
+      }
+      return json(res, 200, { 추천: 초벌뽑기(글들), 본글수: 글들.length });
     }
     if (p === "/api/generate" && req.method === "POST") {
       const body = await readBody(req);

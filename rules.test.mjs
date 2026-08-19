@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기 } from "./web/rules.js";
+import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 출처불명, 허용숫자 } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
@@ -378,4 +378,53 @@ test("걸린 곳은 문장째로 알려 준다 — 단어만 주면 어디를 �
 test("설정에 압축표현이 없으면 조용히 넘어간다", () => {
   const 옛설정 = { ...CONFIG }; delete 옛설정.압축표현;
   assert.deepEqual(압축찾기("1:1 맞춤형 프라이빗 관리", 옛설정), { 걸림: [], 채움: [] });
+});
+
+// ---------- 출처 검사 ----------
+// 구체성 검사는 숫자를 세기만 한다. 그래서 견본 초안이 1,000자당 23.65개로 합격했는데
+// 그 "8년째"·"30만 원"·"70분"이 전부 AI가 지어낸 값이었다. 원장은 키워드만 넣었다.
+const 준값 = {
+  관리구성: "클렌징 10분 / 압출 15분 / LDM 20분 = 총 70분",
+  가격: "10회권 68만원",
+  이력: "리셉션 3년 → 상담실장 5년 → 피부관리사 7년, 합쳐 15년",
+};
+
+test("원장이 준 숫자는 통과, 지어낸 숫자는 짚는다", () => {
+  const 글 = "저희는 클렌징 10분, 압출 15분으로 총 70분입니다. 10회권은 68만원입니다. 8년째 운영하며 재방문율 74%입니다.";
+  const 나온것 = 출처불명(글, CONFIG, 허용숫자(준값));
+  const 값들 = 나온것.map((x) => x.값.replace(/\s/g, ""));
+  assert.ok(값들.includes("8년째"), "준 적 없는 연차는 짚어야 한다");
+  assert.ok(값들.some((v) => v.includes("74")), "준 적 없는 비율도 짚어야 한다");
+  assert.ok(!값들.some((v) => v.includes("70분")), "원장이 준 값은 짚으면 안 된다");
+  assert.ok(!값들.some((v) => v.includes("68만원")), "원장이 준 값은 짚으면 안 된다");
+});
+
+test("일반 상식 숫자는 따지지 않는다 — 안 그러면 경고가 무의미해진다", () => {
+  const 글 = "세안 후 3분 이내에 수분을 공급하면 좋습니다. 하루 2번 세안을 권합니다.";
+  assert.deepEqual(출처불명(글, CONFIG, 허용숫자(준값)), [], "샵 주장도 아니고 위험 단위도 아니다");
+});
+
+test("샵 주어가 붙으면 일반 단위도 출처를 따진다", () => {
+  const 글 = "저희는 관리 시간을 45분으로 잡습니다.";
+  assert.ok(출처불명(글, CONFIG, 허용숫자(준값)).length >= 1, "'저희는'이 붙으면 샵 주장이다");
+});
+
+test("원장이 값을 준 적이 없으면 검사하지 않는다", () => {
+  const 글 = "저희는 8년째 운영하며 70분 관리를 합니다.";
+  const v = 평가(글, { keyword: "여드름", config: CONFIG, 말투: "요약" });
+  assert.deepEqual(v.출처없음, [], "따질 근거가 없으면 조용해야 한다");
+});
+
+test("출처 불명은 불합격이 아니라 권장 — 불합격으로 걸면 AI가 숫자를 빼 버린다", () => {
+  const 글 = "제목: 여드름 관리\n\n저희는 8년째 운영합니다." + " 클렌징 10분 압출 15분 총 70분입니다.".repeat(30);
+  const v = 평가(글, { keyword: "여드름", config: CONFIG, 말투: "요약", 원장값: 준값 });
+  assert.ok(v.출처없음.length >= 1);
+  assert.ok(v.advice.some((a) => a.includes("출처 없는 숫자")), "권장으로 알린다");
+  assert.ok(!v.issues.some((i) => i.includes("출처")), "불합격 사유는 아니다");
+});
+
+test("허용숫자는 표기가 달라도 같은 값으로 본다", () => {
+  const 모음 = 허용숫자({ 가격: "30만 원, 1,000원" });
+  assert.ok(모음.has("30만원"), "'30만 원'과 '30만원'은 같다");
+  assert.ok(모음.has("1000원"), "쉼표는 무시한다");
 });

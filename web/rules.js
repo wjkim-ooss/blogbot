@@ -189,6 +189,54 @@ function 바꿔쓰기예시(찾은말, config) {
   return 보기.length ? `이렇게: ${보기.join(", ")}` : "";
 }
 
+// ---------- 출처 검사 ----------
+// 구체성 검사는 숫자를 '세기만' 한다. 어디서 왔는지는 묻지 않는다.
+// 그래서 견본 초안이 1,000자당 23.65개로 넉넉히 합격했는데,
+// 그 "8년째"·"30만 원 회원권"·"70분 프로그램"이 전부 AI가 지어낸 값이었다.
+// 원장은 키워드 하나만 넣었을 뿐이다.
+//
+// 원장이 준 값에서 '허용 숫자'를 뽑아 두고, 글의 숫자 중 거기 없는 것을 짚는다.
+// 다만 모든 숫자를 따지면 "세안 후 3분 이내" 같은 일반 상식까지 걸린다. 두 가지만 본다:
+//   ① 위험 단위 — 연차·금액·회원권·비율·인원은 원장만 아는 값이다
+//   ② 샵 주어가 있는 문장의 숫자 — "저희는 …", "제가 …"는 샵 주장이다
+// 불합격이 아니라 권장이다. 원장이 발행 전에 그것만 보면 된다.
+
+const 숫자꼴 = /(\d[\d,.]*)\s*(년째|년차|년|개월|주일|주|일|시간|분|초|회권|회|번|명|곳|살|배|만\s?원|원|퍼센트|%)/g;
+
+// 값에서 "숫자+단위"를 뽑아 견줄 수 있는 꼴로 만든다 ("30만 원" 과 "30만원"이 같아야 한다)
+const 숫자뽑기 = (text) => {
+  const 모음 = new Set();
+  for (const m of (text || "").matchAll(숫자꼴)) 모음.add(`${m[1].replace(/,/g, "")}${m[2].replace(/\s/g, "")}`);
+  return 모음;
+};
+
+// 원장이 준 값 전부에서 허용 숫자를 모은다
+export const 허용숫자 = (원장값들) => {
+  const 모음 = new Set();
+  for (const v of Object.values(원장값들 || {})) if (typeof v === "string") for (const n of 숫자뽑기(v)) 모음.add(n);
+  return 모음;
+};
+
+// 어디서 왔는지 알 수 없는 숫자를 문장째로 돌려준다
+export function 출처불명(text, config, 허용 = new Set()) {
+  const 설정 = config.출처검사;
+  if (!설정) return [];
+  const 주어 = 설정.샵주어 || [];
+  const 위험 = new Set((설정.위험단위 || []).map((u) => u.replace(/\s/g, "")));
+  const 나온것 = [];
+  for (const 문장 of 문장나누기(text)) {
+    const 샵얘기 = 주어.some((w) => 문장.includes(w));
+    for (const m of 문장.matchAll(숫자꼴)) {
+      const 단위 = m[2].replace(/\s/g, "");
+      const 값 = `${m[1].replace(/,/g, "")}${단위}`;
+      if (허용.has(값)) continue;
+      if (!위험.has(단위) && !샵얘기) continue; // 일반 상식 숫자는 따지지 않는다
+      if (!나온것.some((x) => x.값 === 값)) 나온것.push({ 값: m[0].trim(), 문장, 이유: 위험.has(단위) ? "원장이 준 값에 없음" : "샵 얘기인데 준 값에 없음" });
+    }
+  }
+  return 나온것;
+}
+
 // ---------- 압축 표현 ----------
 // 추상어 목록에도 없고 숫자도 들어 있는데 여전히 아무것도 알려주지 않는 말이 있다.
 //   "피부과 경력 15년"       — 숫자가 있으니 구체성 검사는 통과한다. 그런데 무슨 일을 했는지가 없다.
@@ -284,6 +332,7 @@ const 문구 = {
       `압축된 명사구를 펴라: ${v.압축설명} — 수식어를 겹치지 말고 '누가·어디부터 어디까지·몇 분'을 문장으로 풀어 써라. ` +
       `${v.압축본보기} 값을 모르면 지어내지 말고 "[원장확인: ${v.압축채울것}]"로 비워 둬라.`,
     채움: (v) => `원장이 채워야 할 자리 ${v.채움.length}곳이 남아 있다: ${v.채움.map((x) => `"${자르기(x.문장, 30)}"`).join(", ")}`,
+    출처: (v) => `원장이 준 적 없는 숫자를 썼다: ${v.출처없음.map((x) => `"${x.값}"`).join(", ")} — 지어내지 말고 원장이 준 값만 쓰거나 "[원장확인: ...]"로 비워 둬라.`,
     사진: (v) => `사진 자리 ${v.photos}곳 → ${v.targetPhotos}곳 이상이면 더 좋음`,
     제목숫자: () => "제목에 숫자를 넣으면 상위노출에 유리함",
   },
@@ -307,6 +356,7 @@ const 문구 = {
       `뭉뚱그린 말 ${v.압축.length}개: ${v.압축.map((x) => `"${x.말}"`).join(", ")} — 채울 것: ${v.압축채울것}` +
       (v.압축본보기 ? ` (${v.압축본보기})` : ""),
     채움: (v) => `원장님이 채울 자리 ${v.채움.length}곳 — 발행 전에 실제 값으로 바꾸세요`,
+    출처: (v) => `출처 없는 숫자 ${v.출처없음.length}개: ${v.출처없음.map((x) => `"${x.값}"`).join(", ")} — 내가 준 값이 아닙니다. 발행 전에 확인하세요`,
     사진: (v) => `사진 자리 ${v.photos}곳 → ${v.targetPhotos}곳 이상이면 더 좋습니다`,
     제목숫자: () => "제목에 숫자를 넣으면 상위노출에 유리합니다",
   },
@@ -323,7 +373,7 @@ const 자르기 = (s, n) => `${(s || "").slice(0, n)}${(s || "").length > n ? "�
 //   ref         참고 레퍼런스 (사진 목표를 정한다)
 //   title       따로 파싱해 둔 제목. 없으면 본문에서 뽑는다.
 //   말투        "지시" | "요약"
-export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = null, title, 말투 = "요약" } = {}) {
+export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = null, title, 말투 = "요약", 원장값 = null } = {}) {
   const 논문 = config.논문검증 || {};
   const 목표 = 목표글자수 || config.최소글자수;
   const 구체최소 = config.구체성?.["1000자당_최소"] ?? 0;
@@ -353,6 +403,8 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   // 1,000자당 몇 개인가 — 글이 길수록 더 많이 요구하는 게 맞다
   const 구체밀도 = chars ? Number(((구체 / chars) * 1000).toFixed(1)) : 0;
   const { 걸림: 압축, 채움 } = 압축찾기(text, config);
+  // 원장이 값을 준 적이 없으면 따질 근거가 없다 — 값을 받기 시작한 뒤부터 검사한다
+  const 출처없음 = 원장값 ? 출처불명(text, config, 허용숫자(원장값)) : [];
   const claims = claimSentences(text, config);
   const needsEvidence = claims.length > 0;
 
@@ -376,7 +428,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
     최소횟수: config.키워드횟수.min, 최대횟수: config.키워드횟수.max,
     출처: 논문.출처,
     단어는충분: tokens.length > 1 && kwParts.every((k) => k.count >= config.키워드횟수.min),
-    압축, 채움,
+    압축, 채움, 출처없음,
     압축설명: [...new Set(압축.map((x) => x.유형))]
       .map((t) => `${t}(${압축.filter((x) => x.유형 === t).map((x) => `"${x.말}"`).join(", ")})`).join(" / "),
     압축채울것: [...new Set(압축.map((x) => x.채울것).filter(Boolean))].join(" / "),
@@ -413,13 +465,15 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   if (정도부사횟수 > 부사허용) advice.push(말.정도부사(v));
   // AI가 모르는 값을 지어내지 않고 비워 둔 것은 잘한 것이다 — 불합격이 아니라 발행 전 확인 사항
   if (채움.length) advice.push(말.채움(v));
+  // 지어낸 숫자를 불합격으로 걸면 AI가 숫자를 빼 버린다 — 원장이 눈으로 고르게 한다
+  if (출처없음.length) advice.push(말.출처(v));
   if (구체권장 && 구체밀도 >= 구체최소 && 구체밀도 < 구체권장) advice.push(말.구체성권장(v));
 
   return {
     chars, photos, kwCount, kwParts, tokens, kwLack, kwOver,
     title: 제목, titleHasKw, titleHasNum, titleLen: noSpace(제목),
     abstractFound, abstractByKind, medicalFound, overclaimFound, pmids, claims, needsEvidence,
-    구체, 구체밀도, 구체최소, 구체권장, 정도부사, 정도부사횟수, 압축, 채움,
+    구체, 구체밀도, 구체최소, 구체권장, 정도부사, 정도부사횟수, 압축, 채움, 출처없음,
     targetChars: 목표, targetPhotos: 목표사진, 지정목표: 목표글자수,
     issues, advice, pass: issues.length === 0,
   };
