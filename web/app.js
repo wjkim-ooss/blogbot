@@ -412,8 +412,22 @@ async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text);
     return true;
+  } catch { /* 아래 옛 방식으로 한 번 더 */ }
+  // 사파리·구형 브라우저는 Clipboard API를 막는다. 화면 밖 임시 칸에 넣고 옛 명령으로 복사한다.
+  // 편집기를 빌려 쓰면 원장이 쓰던 글이 지워지므로 별도 칸을 만들어 쓰고 바로 버린다.
+  const 임시 = document.createElement("textarea");
+  임시.value = text;
+  임시.setAttribute("readonly", "");
+  임시.style.cssText = "position:fixed;top:-9999px;left:-9999px;opacity:0";
+  document.body.appendChild(임시);
+  try {
+    임시.select();
+    임시.setSelectionRange(0, text.length);
+    return document.execCommand("copy");
   } catch {
     return false;
+  } finally {
+    임시.remove();
   }
 }
 
@@ -697,3 +711,4 @@ $("#auth-pw").addEventListener("keydown", (e) => { if (e.key === "Enter") authAc
   }
   showLogin();
 })();
+
