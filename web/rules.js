@@ -143,6 +143,11 @@ export function 레퍼런스안내(keyword, ref, 종류, 말투 = "요약") {
 export const targetPhotosFor = (ref, config) =>
   Math.max(config.권장이미지최소, Math.min(ref?.avgImages || 0, 20));
 
+// ---------- 문장 쪼개기 ----------
+// claimSentences·추상문장·압축찾기가 같은 자리에서 끊어야 같은 문장을 가리킨다.
+export const 문장나누기 = (text) =>
+  (text || "").split(/(?<=[.!?…]|다\.|요\.)\s+|\n+/).map((s) => s.trim()).filter(Boolean);
+
 // ---------- 논문 근거 ----------
 // 근거는 '효능을 주장할 때' 필요하다. 단어가 나왔다는 것만으로 요구하면
 // "여드름 관리를 받으러 오셨습니다" 같은 평범한 문장까지 걸려 경고가 무의미해진다.
@@ -152,10 +157,7 @@ export function claimSentences(text, config) {
   const 부위 = 논문.효능키워드 || [];
   const 주장 = 논문.효능주장패턴 || [];
   if (!부위.length || !주장.length) return [];
-  return (text || "")
-    .split(/(?<=[.!?…]|다\.|요\.)\s+|\n+/)
-    .map((s) => s.trim())
-    .filter((s) => s && 부위.some((w) => s.includes(w)) && 주장.some((w) => s.includes(w)));
+  return 문장나누기(text).filter((s) => 부위.some((w) => s.includes(w)) && 주장.some((w) => s.includes(w)));
 }
 
 // ---------- 추상 vs 구체 ----------
@@ -177,10 +179,7 @@ export const 구체수 = (text) => ((text || "").match(수량표현) || []).leng
 export function 추상문장(text, config) {
   const 목록 = 추상어목록(config);
   if (!목록.length) return [];
-  return (text || "")
-    .split(/(?<=[.!?…]|다\.|요\.)\s+|\n+/)
-    .map((s) => s.trim())
-    .filter((s) => s && 목록.some((w) => s.includes(w)));
+  return 문장나누기(text).filter((s) => 목록.some((w) => s.includes(w)));
 }
 
 // "쓰지 마라"만으로는 안 고쳐진다. 실제로 쓴 단어에 맞는 본보기를 붙여 준다.
@@ -188,6 +187,73 @@ function 바꿔쓰기예시(찾은말, config) {
   const 표 = config.추상어대체 || {};
   const 보기 = 찾은말.filter((w) => 표[w]).slice(0, 3).map((w) => `"${w}"→"${표[w]}"`);
   return 보기.length ? `이렇게: ${보기.join(", ")}` : "";
+}
+
+// ---------- 압축 표현 ----------
+// 추상어 목록에도 없고 숫자도 들어 있는데 여전히 아무것도 알려주지 않는 말이 있다.
+//   "피부과 경력 15년"       — 숫자가 있으니 구체성 검사는 통과한다. 그런데 무슨 일을 했는지가 없다.
+//   "1:1 맞춤형 프라이빗 관리" — 금지어가 하나도 없다. 그런데 누가 무엇을 하는지가 없다.
+// 둘 다 구성 요소(누가/무엇을/어디부터 어디까지)를 명사구 안에 접은 것이다. 그래서 '압축'이다.
+//
+// 접혔는지는 뜻이 아니라 '꼴'로 잰다 — 뜻으로 재려 들면 오탐이 난다.
+//   ① 수식어가 조사 없이 겹겹이 쌓였는가       → 쌓일수록 서술이 사라진다
+//   ② 연차만 있고 그 안에 무슨 자리가 있었는가  → 없으면 숫자만 남은 것이다
+// 반대로 '펴진 신호'(누가·어디부터 어디까지·몇 분)가 같은 문장에 있으면 걸지 않는다.
+// "프라이빗하게 1:1로 관리 받을 수 있어요"는 이미 서술이다 — 조사가 붙는 순간 중첩이 아니다.
+// (상위글 175개 실측: 최소중첩 2에서 33건/14%, 1로 낮추면 149건/31%로 정상 문장이 쏟아진다)
+
+const 정규식이스케이프 = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// 긴 말부터 늘어놓아야 "피부관리사"가 "관리사"로 먼저 잘리지 않는다
+const 갈래 = (말들) => (말들 || []).map(정규식이스케이프).sort((a, b) => b.length - a.length).join("|");
+
+// 로직은 두 가지 꼴만 안다: "중첩"과 "촉발". 유형을 늘리려면 config만 고치면 된다.
+function 압축유형들(config) {
+  const 묶음 = config.압축표현?.유형 || {};
+  return Object.entries(묶음).map(([이름, d]) => {
+    if (d.수식어) {
+      const n = d.최소중첩 ?? 2;
+      return { 이름, ...d, 찾기: new RegExp(`(?:(?:${갈래(d.수식어)})\\s*){${n},}(?:[가-힣]{0,4})?(?:${갈래(d.핵명사)})`, "g") };
+    }
+    // 촉발형은 config 안에서 @분야·@직무로 목록을 끌어다 쓴다 (목록을 두 번 적지 않게)
+    const 촉발 = (d.촉발 || "").replace(/@분야/g, 갈래(d.분야)).replace(/@직무/g, 갈래(d.직무));
+    return { 이름, ...d, 찾기: new RegExp(촉발, "g") };
+  });
+}
+
+// 겹치는 말을 두 번 세지 않는다 — "피부관리사"는 하나지 '관리사'까지 둘이 아니다
+const 겹침없이 = (문장, 말들) => new Set(문장.match(new RegExp(갈래(말들), "g")) || []).size;
+
+function 펴졌나(문장, 유형) {
+  if (유형.수식어) {
+    const 신호 = Object.values(유형.풀림?.신호 || {});
+    return 신호.filter((re) => new RegExp(re).test(문장)).length >= (유형.풀림?.최소 ?? 2);
+  }
+  // 경력형: 그 년수 안에 어떤 자리들이 있었는지가 보이면 펴진 것이다.
+  const 직무수 = 겹침없이(문장, 유형.직무);
+  return 직무수 >= (유형.최소직무 ?? 2) || (직무수 >= 1 && (유형.진행표시 || []).some((w) => 문장.includes(w)));
+}
+
+// 압축된 곳을 문장째로 돌려준다. 도구가 대신 채워 줄 수 없는 값이라 어디를 고칠지 보여 줘야 한다.
+//   걸림 — 원장이 지금 고쳐야 하는 것
+//   채움 — AI가 "[원장확인: ...]"로 비워 둔 것. 지어내지 않은 것은 잘한 것이라 불합격이 아니다.
+export function 압축찾기(text, config) {
+  const 유형들 = 압축유형들(config);
+  if (!유형들.length) return { 걸림: [], 채움: [] };
+  const 채움표시 = config.압축표현?.채움표시 ? new RegExp(config.압축표현.채움표시, "g") : null;
+  const 걸림 = [], 채움 = [];
+  for (const 원문장 of 문장나누기(text)) {
+    // 빈칸 표시는 재기 전에 걷어낸다 — "[원장확인: 누가 어디부터 어디까지]" 안의 '원장'·'부터…까지'가
+    // 펴진 신호로 잘못 읽혀서, 정작 비워 둔 문장이 아무 표시 없이 통과해 버린다.
+    const 비었나 = !!채움표시 && (채움표시.lastIndex = 0, 채움표시.test(원문장));
+    const s = 비었나 ? 원문장.replace(채움표시, " ") : 원문장;
+    for (const 유형 of 유형들) {
+      유형.찾기.lastIndex = 0;
+      const m = 유형.찾기.exec(s);
+      if (!m || 펴졌나(s, 유형)) continue;
+      (비었나 ? 채움 : 걸림).push({ 유형: 유형.이름, 말: m[0].trim(), 문장: 원문장, 채울것: 유형.채울것, 본보기: 유형.본보기 });
+    }
+  }
+  return { 걸림, 채움 };
 }
 
 // ---------- 문구 ----------
@@ -214,6 +280,10 @@ const 문구 = {
     근거없음: (v) =>
       `효능을 주장한 문장에 논문 근거(PMID)가 없음 — ${v.출처}에서 🟢 확인 후 PMID를 붙이거나, 주장을 빼세요. ` +
       `해당 문장: "${자르기(v.claims[0], 60)}"`,
+    압축: (v) =>
+      `압축된 명사구를 펴라: ${v.압축설명} — 수식어를 겹치지 말고 '누가·어디부터 어디까지·몇 분'을 문장으로 풀어 써라. ` +
+      `${v.압축본보기} 값을 모르면 지어내지 말고 "[원장확인: ${v.압축채울것}]"로 비워 둬라.`,
+    채움: (v) => `원장이 채워야 할 자리 ${v.채움.length}곳이 남아 있다: ${v.채움.map((x) => `"${자르기(x.문장, 30)}"`).join(", ")}`,
     사진: (v) => `사진 자리 ${v.photos}곳 → ${v.targetPhotos}곳 이상이면 더 좋음`,
     제목숫자: () => "제목에 숫자를 넣으면 상위노출에 유리함",
   },
@@ -233,6 +303,10 @@ const 문구 = {
     의료법: (v) => `의료법 주의 ${v.medicalFound.length}개: ${v.medicalFound.join(", ")}`,
     과장: (v) => `과장 표현 ${v.overclaimFound.length}개: ${v.overclaimFound.join(", ")}`,
     근거없음: (v) => `효능을 주장한 문장에 논문 근거(PMID) 없음 — "${자르기(v.claims[0], 40)}"`,
+    압축: (v) =>
+      `뭉뚱그린 말 ${v.압축.length}개: ${v.압축.map((x) => `"${x.말}"`).join(", ")} — 채울 것: ${v.압축채울것}` +
+      (v.압축본보기 ? ` (${v.압축본보기})` : ""),
+    채움: (v) => `원장님이 채울 자리 ${v.채움.length}곳 — 발행 전에 실제 값으로 바꾸세요`,
     사진: (v) => `사진 자리 ${v.photos}곳 → ${v.targetPhotos}곳 이상이면 더 좋습니다`,
     제목숫자: () => "제목에 숫자를 넣으면 상위노출에 유리합니다",
   },
@@ -278,6 +352,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const pmids = [...new Set((text.match(pmidRe) || []).map((s) => s.replace(/\s+/g, " ").trim()))];
   // 1,000자당 몇 개인가 — 글이 길수록 더 많이 요구하는 게 맞다
   const 구체밀도 = chars ? Number(((구체 / chars) * 1000).toFixed(1)) : 0;
+  const { 걸림: 압축, 채움 } = 압축찾기(text, config);
   const claims = claimSentences(text, config);
   const needsEvidence = claims.length > 0;
 
@@ -301,6 +376,11 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
     최소횟수: config.키워드횟수.min, 최대횟수: config.키워드횟수.max,
     출처: 논문.출처,
     단어는충분: tokens.length > 1 && kwParts.every((k) => k.count >= config.키워드횟수.min),
+    압축, 채움,
+    압축설명: [...new Set(압축.map((x) => x.유형))]
+      .map((t) => `${t}(${압축.filter((x) => x.유형 === t).map((x) => `"${x.말}"`).join(", ")})`).join(" / "),
+    압축채울것: [...new Set(압축.map((x) => x.채울것).filter(Boolean))].join(" / "),
+    압축본보기: 압축[0]?.본보기 ? `"${압축[0].본보기.나쁨}" → "${압축[0].본보기.좋음}"` : "",
     갈래이름: Object.keys(abstractByKind).join("·"),
     갈래설명: Object.entries(abstractByKind).map(([갈래, 말]) => `${갈래}(${말.join(", ")})`).join(" / "),
     바꿔쓰기: 바꿔쓰기예시(abstractFound, config),
@@ -319,6 +399,8 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   if (kwLack) issues.push(말.키워드부족(v));
   else if (kwOver) issues.push(말.키워드과다(v));
   if (abstractFound.length) issues.push(말.추상어(v));
+  // 금지어를 안 썼어도 명사구 안에 접혀 있으면 결국 확인할 수 없는 글이다
+  if (압축.length) issues.push(말.압축(v));
   // 금지어를 안 썼어도 숫자가 없으면 결국 추상적인 글이다 — 그쪽이 진짜 기준이다
   if (구체최소 && 구체밀도 < 구체최소) issues.push(말.구체성(v));
   if (medicalFound.length) issues.push(말.의료법(v));
@@ -329,13 +411,15 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   if (photos < 목표사진) advice.push(말.사진(v));
   if (제목 && !titleHasNum) advice.push(말.제목숫자(v));
   if (정도부사횟수 > 부사허용) advice.push(말.정도부사(v));
+  // AI가 모르는 값을 지어내지 않고 비워 둔 것은 잘한 것이다 — 불합격이 아니라 발행 전 확인 사항
+  if (채움.length) advice.push(말.채움(v));
   if (구체권장 && 구체밀도 >= 구체최소 && 구체밀도 < 구체권장) advice.push(말.구체성권장(v));
 
   return {
     chars, photos, kwCount, kwParts, tokens, kwLack, kwOver,
     title: 제목, titleHasKw, titleHasNum, titleLen: noSpace(제목),
     abstractFound, abstractByKind, medicalFound, overclaimFound, pmids, claims, needsEvidence,
-    구체, 구체밀도, 구체최소, 구체권장, 정도부사, 정도부사횟수,
+    구체, 구체밀도, 구체최소, 구체권장, 정도부사, 정도부사횟수, 압축, 채움,
     targetChars: 목표, targetPhotos: 목표사진, 지정목표: 목표글자수,
     issues, advice, pass: issues.length === 0,
   };

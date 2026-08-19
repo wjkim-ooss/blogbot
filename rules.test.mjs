@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록 } from "./web/rules.js";
+import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기 } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
@@ -15,7 +15,7 @@ const CONFIG = JSON.parse(
 // 실제 초안처럼 숫자가 섞인 글 — 구체성 기준(1,000자당 3개)을 넘도록 만든다.
 // 밋밋한 "가가가…"로 재면 새 기준에 걸려서, 검사하려던 것과 다른 게 걸린다.
 const 본문 = (n = 1400, 키워드 = "여드름") =>
-  `제목: ${키워드} 피부관리, 8년차 원장이 본 3가지\n\n` +
+  `제목: ${키워드} 피부관리, 리셉션부터 관리사까지 8년차 원장이 본 3가지\n\n` +
   `${키워드} 관리로 오시는 분이 한 달에 20명입니다. 1회 70분, 10회권 기준 3개월을 봅니다. `.repeat(3) +
   `8년간 2000명을 봤고 재방문율은 74%입니다. `.repeat(Math.max(1, Math.round(n / 700))) +
   "가".repeat(n);
@@ -253,7 +253,7 @@ test("말투는 문구만 바꾸고 사실은 그대로 둔다", () => {
 // ---------- 추상 vs 구체 ----------
 // 핵심은 금지어 목록이 아니라 "검증할 수 있게 썼는가"다.
 const 구체글 = (n = 1400) =>
-  "제목: 여드름 피부관리 8년차가 본 3가지\n\n" +
+  "제목: 여드름 피부관리, 리셉션부터 관리사까지 8년차가 본 3가지\n\n" +
   "여드름으로 오시는 분이 한 달에 20명입니다. 1회 70분이고 10회권은 3개월을 봅니다. ".repeat(4) +
   "가".repeat(n);
 
@@ -305,4 +305,77 @@ test("설정이 옛 모양(납작한 배열)이어도 돌아간다", () => {
   assert.deepEqual(추상어목록(옛설정), ["최고의", "정성껏"]);
   const v = 평가(구체글() + "\n최고의 관리입니다.", { keyword: "여드름", config: 옛설정, 말투: "요약" });
   assert.deepEqual(v.abstractFound, ["최고의"]);
+});
+
+// ---------- 압축 표현 ----------
+// 금지어도 없고 숫자도 있는데 여전히 아무것도 알려주지 않는 말.
+// 원장이 직접 짚은 두 사례가 규칙의 기준점이다.
+const 긴글 = " 1회 70분이고 10회권은 3개월을 봅니다. 한 달에 20명쯤 오십니다.".repeat(12);
+const 압축재기 = (문장) =>
+  평가(`제목: 여드름 피부관리 이야기\n\n${문장}${긴글}`, { keyword: "여드름", config: CONFIG, 말투: "요약" });
+
+test("숫자가 있어도 무슨 일을 했는지 없으면 걸린다 (원장 사례 ①)", () => {
+  const v = 압축재기("피부과 경력 15년입니다.");
+  assert.equal(v.구체밀도 >= v.구체최소, true, "숫자는 넉넉하다 — 구체성 검사로는 못 잡는다");
+  assert.equal(v.abstractFound.length, 0, "금지어도 하나 없다");
+  assert.equal(v.pass, false, "그런데도 통과시키면 안 된다");
+  assert.equal(v.압축[0].유형, "경력압축");
+});
+
+test("자리를 순서대로 펴면 통과한다 (원장 사례 ① 고친 것)", () => {
+  const v = 압축재기("피부과에서 리셉션 코디네이터-상담실장-피부관리사까지 15년의 경력입니다.");
+  assert.equal(v.압축.length, 0);
+});
+
+test("수식어를 겹쳐 쌓으면 걸린다 (원장 사례 ②)", () => {
+  const v = 압축재기("1:1 맞춤형 프라이빗 관리를 해드립니다.");
+  assert.equal(v.abstractFound.length, 0, "금지어는 하나도 없다");
+  assert.equal(v.pass, false);
+  assert.equal(v.압축[0].유형, "수식어중첩");
+});
+
+test("누가·어디부터 어디까지를 넣어 펴면 통과한다 (원장 사례 ② 고친 것)", () => {
+  const v = 압축재기("상담부터 관리까지 대표원장이 1:1 밀착 관리합니다.");
+  assert.equal(v.압축.length, 0, "이것도 1:1+밀착 2중첩이지만 이미 서술이라 걸면 안 된다");
+});
+
+test("조사가 붙어 서술이 되면 중첩이 아니다", () => {
+  assert.equal(압축재기("프라이빗하게 1:1로 관리 받을 수 있는 방이 따로 있습니다.").압축.length, 0);
+});
+
+test("수식어 하나짜리는 걸지 않는다 — 1로 낮추면 정상 문장이 쏟아진다", () => {
+  for (const 문장 of ["1:1 상담을 진행합니다.", "고민별 관리를 합니다.", "정밀진단을 먼저 합니다."])
+    assert.equal(압축재기(문장).압축.length, 0, 문장);
+});
+
+test("분야·직무가 안 붙은 연차는 걸지 않는다", () => {
+  for (const 문장 of ["2년차 직장인인데 여드름이 심해졌습니다.", "개원 8년차입니다."])
+    assert.equal(압축재기(문장).압축.length, 0, 문장);
+});
+
+test("AI가 비워 둔 자리는 불합격이 아니라 발행 전 확인 사항", () => {
+  const v = 압축재기("피부과에서 [원장확인: 맡았던 자리를 순서대로]까지 15년의 경력입니다.");
+  assert.equal(v.압축.length, 0, "지어내지 않고 비워 둔 것은 잘한 것이다");
+  assert.equal(v.채움.length, 1);
+  assert.ok(v.advice.some((a) => a.includes("채울 자리")), "권장으로 알린다");
+  assert.ok(!v.issues.some((i) => i.includes("채울")), "불합격 사유로 세면 AI가 결국 숫자를 지어낸다");
+});
+
+test("빈칸 안의 '원장'·'부터…까지'를 펴진 신호로 잘못 읽지 않는다", () => {
+  // 이걸 안 걷어내면 비워 둔 문장이 아무 표시 없이 조용히 통과한다
+  const v = 압축재기("1:1 [원장확인: 누가 · 몇 분] 맞춤형 프라이빗 관리입니다.");
+  assert.equal(v.채움.length, 1, "채움으로 잡혀야 한다");
+  assert.equal(v.압축.length, 0);
+});
+
+test("걸린 곳은 문장째로 알려 준다 — 단어만 주면 어디를 고칠지 모른다", () => {
+  const v = 압축재기("저희는 1:1 맞춤 케어를 합니다.");
+  assert.ok(v.압축[0].문장.includes("저희는"), "문장 전체를 돌려줘야 한다");
+  assert.ok(v.압축[0].채울것);
+  assert.ok(v.issues.some((i) => i.includes("채울 것")));
+});
+
+test("설정에 압축표현이 없으면 조용히 넘어간다", () => {
+  const 옛설정 = { ...CONFIG }; delete 옛설정.압축표현;
+  assert.deepEqual(압축찾기("1:1 맞춤형 프라이빗 관리", 옛설정), { 걸림: [], 채움: [] });
 });
