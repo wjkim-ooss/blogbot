@@ -181,7 +181,7 @@ async function loadDrafts(selectName) {
   const list = $("#draft-list");
   const empty = other
     ? "이 회원은 아직 작성한 초안이 없습니다."
-    : "초안이 없습니다. 키워드를 넣고 <b>✍️ 직접 쓰기</b>를 누르거나, <b>📥 견본 초안 가져오기</b>로 시작해보세요.";
+    : "초안이 없습니다. 키워드를 넣고 <b>🤖 AI 초안 생성</b> 또는 <b>✍️ 직접 쓰기</b>를 눌러 시작하세요.";
   list.innerHTML = drafts.length ? "" : `<div class="muted card">${empty}</div>`;
   drafts.forEach((d) => {
     const div = document.createElement("div");
@@ -219,8 +219,6 @@ function setReadOnly(on, who) {
   $("#save-btn").classList.toggle("hidden", on);
   $("#gen-btn").classList.toggle("hidden", on);
   $("#new-btn").classList.toggle("hidden", on);
-  $("#prompt-btn").classList.toggle("hidden", on);
-  $("#import-samples").classList.toggle("hidden", on || !ME?.authOn);
   const banner = $("#readonly-banner");
   banner.classList.toggle("hidden", !on);
   if (on) banner.textContent = `👀 ${who} 님의 초안을 열람 중입니다 — 읽기만 되고 고치거나 지울 수 없습니다.`;
@@ -536,7 +534,6 @@ function updateQuota() {
 async function enterApp() {
   hideOverlays();
   if (ME.authOn) {
-    $("#import-samples").classList.remove("hidden"); // 배포 모드에서만 필요
     $("#user-chip").classList.remove("hidden");
     $("#user-email").textContent = ME.email || "";
     const badge = $("#user-badge");
@@ -651,19 +648,6 @@ async function loadAdminUsers() {
   });
 }
 
-$("#import-samples").addEventListener("click", async (e) => {
-  e.target.disabled = true;
-  try {
-    const { added } = await api("/api/samples/import", { method: "POST" });
-    alert(added.length ? `견본 초안 ${added.length}개를 가져왔습니다.` : "이미 모든 견본을 가지고 있습니다.");
-    if (added.length) await loadDrafts(added[0]);
-  } catch (err) {
-    alert(err.message);
-  } finally {
-    e.target.disabled = false;
-  }
-});
-
 // 직접 쓰기 — AI 없이 빈 초안을 만들어 편집기를 연다
 $("#new-btn").addEventListener("click", async (e) => {
   if (viewingOther()) return alert("내 초안으로 돌아온 뒤 만들 수 있습니다");
@@ -688,44 +672,6 @@ $("#new-btn").addEventListener("click", async (e) => {
   }
 });
 
-// AI 프롬프트 복사 — 크레딧 없이, 각자 자기 Claude에 붙여넣어 쓴다
-$("#prompt-btn").addEventListener("click", async (e) => {
-  const keyword = $("#gen-keyword").value.trim();
-  if (!keyword) {
-    $("#gen-keyword").focus();
-    return alert("먼저 키워드를 입력하세요");
-  }
-  e.target.disabled = true;
-  try {
-    const { prompt, refKeyword, refCount } = await api("/api/prompt", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        keyword,
-        region: $("#gen-region").value.trim(),
-        point: $("#gen-point").value.trim(),
-        chars: $("#gen-chars").value.trim(),
-      }),
-    });
-    const via = refCount ? `"${refKeyword}" 레퍼런스 ${refCount}개를 반영한 ` : "";
-    if (await copyText(prompt)) {
-      alert(
-        `${via}프롬프트를 복사했습니다.\n\n` +
-          "claude.ai 에 붙여넣으면 초안이 나옵니다.\n" +
-          "받은 글은 ✍️ 직접 쓰기로 만든 초안에 붙여넣고 저장하세요."
-      );
-    } else {
-      // 복사가 막힌 브라우저: 편집기에 띄워 직접 긁어가게 한다
-      $("#editor").value = prompt;
-      $("#editor").select();
-      alert("자동 복사가 막혀 있어 편집기에 띄웠습니다.\nCmd+C(또는 Ctrl+C)로 복사해 claude.ai에 붙여넣으세요.");
-    }
-  } catch (err) {
-    alert("만들지 못했습니다: " + err.message);
-  } finally {
-    e.target.disabled = false;
-  }
-});
 
 $("#login-btn").addEventListener("click", () => authAction("login"));
 $("#signup-btn").addEventListener("click", () => authAction("signup"));

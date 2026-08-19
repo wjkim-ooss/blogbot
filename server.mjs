@@ -99,7 +99,7 @@ const validateDraft = (text, keyword, minChars = CONFIG.최소글자수, title =
 // 파일명 앞 10자리 날짜로 오래된 순 정렬한 뒤, 키워드는 파일 '내용'으로 판별한다.
 // (파일명의 한글은 업로드 경로에 따라 자모 분리형이 될 수 있어 키로 쓰지 않는다)
 // 한 번 읽어 두고 폴더가 바뀔 때만 다시 읽는다.
-// 레퍼런스는 지금도 4MB이고 크롤링할수록 커지는데, 초안 생성·프롬프트 복사 때마다
+// 레퍼런스는 지금도 4MB이고 크롤링할수록 커지는데, 초안을 만들 때마다
 // 통째로 JSON.parse 하면 그동안 서버가 통으로 멈춘다(Node는 한 줄로 돈다).
 let 레퍼런스캐시 = null;
 function loadReferences() {
@@ -232,38 +232,6 @@ const supaStore = {
 
 // 저장 백엔드는 시작 시 한 번 결정 (인증 ON=Supabase, OFF=로컬 파일)
 const store = AUTH_ON ? supaStore : fileStore;
-
-// 견본 초안 = 배포 모드에서 원장 계정으로 복사해 주는 본보기 글.
-// 무엇이 견본인지는 config.json의 견본초안 목록이 정한다. 폴더에 있는 .md를 전부 견본으로 삼으면
-// 시험 삼아 만든 글이 섞여도 그대로 원장에게 간다 — 실제로 그럴 뻔했다(2026-08-11).
-// 목록이 없으면(로컬에서 굴릴 때) 예전처럼 폴더 전체를 쓴다.
-// 파일명의 한글은 경로에 따라 자모 분리형으로 올 수 있어 NFC로 맞춰 비교한다.
-const listSamples = () => {
-  if (!fs.existsSync(DRAFT_DIR)) return [];
-  const 있는것 = fs.readdirSync(DRAFT_DIR).filter((f) => f.endsWith(".md"));
-  const 목록 = CONFIG.견본초안;
-  if (!Array.isArray(목록) || !목록.length) return 있는것;
-  const 골라야할것 = new Set(목록.map((n) => n.normalize("NFC")));
-  const 고른것 = 있는것.filter((f) => 골라야할것.has(f.normalize("NFC")));
-  // 목록에 적었는데 파일이 없으면 그 견본은 조용히 사라진다 — 이름만 바꿔도 그렇게 된다.
-  if (고른것.length !== 골라야할것.size) {
-    const 있는이름 = new Set(있는것.map((f) => f.normalize("NFC")));
-    const 없는것 = [...골라야할것].filter((n) => !있는이름.has(n));
-    console.warn(`[견본초안] config.json에 적혔지만 drafts/에 없는 파일: ${없는것.join(", ")}`);
-  }
-  return 고른것;
-};
-
-async function importSamples(uid) {
-  const mine = new Set((await store.list(uid)).map((d) => d.name));
-  const added = [];
-  for (const name of listSamples()) {
-    if (mine.has(name)) continue;
-    await store.put(uid, name, fs.readFileSync(path.join(DRAFT_DIR, name), "utf8"));
-    added.push(name);
-  }
-  return added;
-}
 
 async function draftCreate(ctx, keyword, title, body, v) {
   const base = draftBaseName(keyword);
@@ -421,18 +389,6 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수) {
 // AI 크레딧 없이 쓰는 길: 프롬프트를 통째로 만들어 준다.
 // 원장이 이걸 복사해 자기 Claude(무료 계정도 가능)에 붙여넣으면 같은 결과를 얻는다.
 // 각자 자기 계정으로 쓰는 것이라 우진님 크레딧도, 구독도 쓰지 않는다.
-function buildFullPrompt(keyword, region, point, ref, 목표글자수) {
-  return [
-    "# 역할",
-    SYSTEM_PROMPT,
-    "",
-    "---",
-    "",
-    "# 이번 글 조건",
-    buildUserPrompt(keyword, region, point, ref, 목표글자수),
-  ].join("\n");
-}
-
 // ---------- 생성 엔진 ----------
 // 두 가지를 지원한다. 키가 있는 쪽을 쓰고, 둘 다 있으면 Claude를 먼저 쓴다.
 //   Claude  (ANTHROPIC_API_KEY) — 품질 최상, 크레딧 충전 필요
@@ -947,7 +903,7 @@ const adminHint = (ctx, msg, hint) => (ctx.isAdmin || !ctx.authOn ? `${msg} ${hi
 const 크레딧부족 = (e) => /credit balance is too low/i.test(String(e?.message || e));
 
 // AI가 막혀도 글은 쓸 수 있다 — 막다른 길로 끝내지 않고 다음 수를 알려준다
-const 대안안내 = " AI 없이 쓰시려면 ✍️ 직접 쓰기, 또는 📋 AI 프롬프트 복사로 claude.ai에 붙여넣으세요.";
+const 대안안내 = " AI 없이 쓰시려면 ✍️ 직접 쓰기로 뼈대를 만들어 손으로 채우시면 됩니다.";
 
 function describeError(e, ctx) {
   const type = e?.type;
@@ -1131,27 +1087,9 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true });
       }
     }
-    // 프롬프트만 만들어 준다 — AI 크레딧을 쓰지 않으므로 월 한도도 차감하지 않는다
-    if (p === "/api/prompt" && req.method === "POST") {
-      const body = await readBody(req);
-      const keyword = (body.keyword || "").trim();
-      if (!keyword) return json(res, 400, { error: "키워드를 입력하세요" });
-      const ref = findReference(keyword);
-      return json(res, 200, {
-        prompt: buildFullPrompt(keyword, body.region || "", body.point || "", ref, 요청글자수(body.chars)),
-        refKeyword: ref?.keyword || null,
-        refCount: ref?.posts?.length || 0,
-      });
-    }
     if (p === "/api/generate" && req.method === "POST") {
       const body = await readBody(req);
       return handleGenerate(res, body, ctx);
-    }
-    // 견본 초안 가져오기 (배포 모드에서 회원이 견본을 자기 계정으로 복사)
-    if (p === "/api/samples/import" && req.method === "POST") {
-      if (!ctx.authOn) return json(res, 400, { error: "로컬 모드에서는 견본이 이미 목록에 있습니다" });
-      const added = await importSamples(ctx.userId);
-      return json(res, 200, { added });
     }
 
     return json(res, 404, { error: "not found" });
