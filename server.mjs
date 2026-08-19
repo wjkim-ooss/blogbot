@@ -386,18 +386,6 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수) {
   return lines.join("\n");
 }
 
-function buildFullPrompt(keyword, region, point, ref, 목표글자수) {
-  return [
-    "# 역할",
-    SYSTEM_PROMPT,
-    "",
-    "---",
-    "",
-    "# 이번 글 조건",
-    buildUserPrompt(keyword, region, point, ref, 목표글자수),
-  ].join("\n");
-}
-
 // AI 크레딧 없이 쓰는 길: 프롬프트를 통째로 만들어 준다.
 // 원장이 이걸 복사해 자기 Claude(무료 계정도 가능)에 붙여넣으면 같은 결과를 얻는다.
 // 각자 자기 계정으로 쓰는 것이라 우진님 크레딧도, 구독도 쓰지 않는다.
@@ -915,7 +903,7 @@ const adminHint = (ctx, msg, hint) => (ctx.isAdmin || !ctx.authOn ? `${msg} ${hi
 const 크레딧부족 = (e) => /credit balance is too low/i.test(String(e?.message || e));
 
 // AI가 막혀도 글은 쓸 수 있다 — 막다른 길로 끝내지 않고 다음 수를 알려준다
-const 대안안내 = " AI 없이 쓰시려면 ✍️ 직접 쓰기, 또는 📋 AI 프롬프트 복사로 claude.ai에 붙여넣으세요.";
+const 대안안내 = " AI 없이 쓰시려면 ✍️ 직접 쓰기로 뼈대를 만들어 손으로 채우시면 됩니다.";
 
 function describeError(e, ctx) {
   const type = e?.type;
@@ -1098,18 +1086,6 @@ const server = http.createServer(async (req, res) => {
         await store.del(ctx.userId, name);
         return json(res, 200, { ok: true });
       }
-    }
-    // 프롬프트만 만들어 준다 — AI 크레딧을 쓰지 않으므로 월 한도도 차감하지 않는다
-    if (p === "/api/prompt" && req.method === "POST") {
-      const body = await readBody(req);
-      const keyword = (body.keyword || "").trim();
-      if (!keyword) return json(res, 400, { error: "키워드를 입력하세요" });
-      const ref = findReference(keyword);
-      return json(res, 200, {
-        prompt: buildFullPrompt(keyword, body.region || "", body.point || "", ref, 요청글자수(body.chars)),
-        refKeyword: ref?.keyword || null,
-        refCount: ref?.posts?.length || 0,
-      });
     }
     if (p === "/api/generate" && req.method === "POST") {
       const body = await readBody(req);

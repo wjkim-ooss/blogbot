@@ -219,7 +219,6 @@ function setReadOnly(on, who) {
   $("#save-btn").classList.toggle("hidden", on);
   $("#gen-btn").classList.toggle("hidden", on);
   $("#new-btn").classList.toggle("hidden", on);
-  $("#prompt-btn").classList.toggle("hidden", on);
   const banner = $("#readonly-banner");
   banner.classList.toggle("hidden", !on);
   if (on) banner.textContent = `👀 ${who} 님의 초안을 열람 중입니다 — 읽기만 되고 고치거나 지울 수 없습니다.`;
@@ -415,7 +414,7 @@ async function copyText(text) {
     return true;
   } catch { /* 아래 옛 방식으로 한 번 더 */ }
   // 사파리·구형 브라우저는 Clipboard API를 막는다. 화면 밖 임시 칸에 넣고 옛 명령으로 복사한다.
-  // (편집기를 쓰면 원장이 쓰던 글이 지워진다 — 절대 건드리지 않는다)
+  // 편집기를 빌려 쓰면 원장이 쓰던 글이 지워지므로 별도 칸을 만들어 쓰고 바로 버린다.
   const 임시 = document.createElement("textarea");
   임시.value = text;
   임시.setAttribute("readonly", "");
@@ -713,70 +712,3 @@ $("#auth-pw").addEventListener("keydown", (e) => { if (e.key === "Enter") authAc
   showLogin();
 })();
 
-// 복사가 막혔을 때 프롬프트를 보여 주는 창. 편집기와 완전히 별개라 쓰던 글이 안전하다.
-function 프롬프트창(text) {
-  const 덮개 = document.createElement("div");
-  덮개.className = "overlay";
-  덮개.innerHTML = `
-    <div class="auth-card card" style="width:min(680px,92vw);text-align:left">
-      <h2 style="font-size:17px;margin-bottom:6px">📋 프롬프트를 직접 복사해 주세요</h2>
-      <p class="muted" style="font-size:13px;margin-bottom:10px">
-        이 브라우저가 자동 복사를 막고 있습니다. 아래 글을 <b>Cmd+C</b>(윈도우는 <b>Ctrl+C</b>)로 복사해
-        claude.ai 에 붙여넣으세요. <b>쓰시던 초안은 그대로 있습니다.</b>
-      </p>
-      <textarea readonly style="width:100%;height:260px;font-size:12px;line-height:1.6"></textarea>
-      <div class="auth-actions">
-        <button class="primary" data-again>다시 복사 시도</button>
-        <button data-close>닫기</button>
-      </div>
-    </div>`;
-  const 칸 = 덮개.querySelector("textarea");
-  칸.value = text;
-  const 닫기 = () => 덮개.remove();
-  덮개.querySelector("[data-close]").addEventListener("click", 닫기);
-  덮개.querySelector("[data-again]").addEventListener("click", async (e) => {
-    e.target.textContent = (await copyText(text)) ? "복사됐습니다 ✅" : "여전히 막혀 있습니다";
-  });
-  덮개.addEventListener("click", (e) => { if (e.target === 덮개) 닫기(); });
-  document.body.appendChild(덮개);
-  칸.focus();
-  칸.select();
-}
-
-// AI 프롬프트 복사 — 월 한도를 쓰지 않고, 각자 자기 AI에 붙여넣어 쓴다
-$("#prompt-btn").addEventListener("click", async (e) => {
-  const keyword = $("#gen-keyword").value.trim();
-  if (!keyword) {
-    $("#gen-keyword").focus();
-    return alert("먼저 키워드를 입력하세요");
-  }
-  e.target.disabled = true;
-  try {
-    const { prompt, refKeyword, refCount } = await api("/api/prompt", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        keyword,
-        region: $("#gen-region").value.trim(),
-        point: $("#gen-point").value.trim(),
-        chars: $("#gen-chars").value.trim(),
-      }),
-    });
-    const via = refCount ? `"${refKeyword}" 레퍼런스 ${refCount}개를 반영한 ` : "";
-    if (await copyText(prompt)) {
-      alert(
-        `${via}프롬프트를 복사했습니다.\n\n` +
-          "claude.ai 에 붙여넣으면 초안이 나옵니다.\n" +
-          "받은 글은 ✍️ 직접 쓰기로 만든 초안에 붙여넣고 저장하세요."
-      );
-    } else {
-      // 두 방식 다 막힌 브라우저: 별도 창에 띄워 직접 긁어가게 한다.
-      // 예전엔 편집기에 부었는데, 쓰던 초안이 통째로 날아갔다.
-      프롬프트창(prompt);
-    }
-  } catch (err) {
-    alert("만들지 못했습니다: " + err.message);
-  } finally {
-    e.target.disabled = false;
-  }
-});
