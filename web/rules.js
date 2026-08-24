@@ -418,13 +418,15 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   // 1,000자당 몇 개인가 — 글이 길수록 더 많이 요구하는 게 맞다
   const 구체밀도 = chars ? Number(((구체 / chars) * 1000).toFixed(1)) : 0;
   const 문장들 = 문장나누기(text); // 아래 검사들이 같은 쪼갬을 돌려쓴다
-  const { 걸림: 압축 } = 압축찾기(text, config, 문장들);
+  const 검사설정 = config.글쓴이유형?.[원장값?.유형]?.검사 || {};
+  let { 걸림: 압축 } = 압축찾기(text, config, 문장들);
+  if (검사설정.경력압축 === false) 압축 = 압축.filter((x) => x.유형 !== "경력압축");
   const 채움 = 채움자리(text, config, 문장들);
   // 원장이 값을 준 적이 없으면 따질 근거가 없다 — 값을 받기 시작한 뒤부터 검사한다
   // 빈 객체도 '준 적 없음'이다 — 예전엔 {…shop} 이 늘 truthy라, 아무것도 안 채운 원장에게
   // 글의 숫자를 전부 "내가 준 값이 아닙니다"로 들이밀었다.
-  const 준값있나 = !!원장값 && Object.entries(원장값).some(([k, v]) => k !== "확인일" && typeof v === "string" && v.trim());
-  const 출처없음 = 준값있나 ? 출처불명(text, config, 허용숫자(원장값), 문장들) : [];
+  const 준값있나 = !!원장값 && Object.entries(원장값).some(([k, v]) => !["확인일", "유형"].includes(k) && typeof v === "string" && v.trim());
+  const 출처없음 = 준값있나 && 검사설정.출처 !== false ? 출처불명(text, config, 허용숫자(원장값), 문장들) : [];
   const claims = claimSentences(text, config, 문장들);
   const needsEvidence = claims.length > 0;
 

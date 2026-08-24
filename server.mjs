@@ -144,13 +144,13 @@ const SHOP_FILE = path.join(ROOT, ".shop.json");
 const 유형항목 = (유형) => (CONFIG.원장정보항목 || []).filter((x) => (x.유형 || "원장") === 유형);
 const 샵항목 = (유형) => 유형항목(유형).map((x) => x.key);
 
-// 기본은 '내 것'. 관리자가 특정 회원을 지목했을 때만 그 회원 것을 읽는다 (읽기 전용).
-// 원장끼리는 서로 볼 수 없다 — resolveDraftView가 초안에 대해 하는 것과 같은 규칙이다.
+// '누구 것을 볼 수 있나'는 여기서 판단하지 않는다 — 호출부가 resolveDraftView로 허가한 id를 준다.
+// 권한 규칙이 두 곳에 살면 반드시 갈라진다 (거절이 빈 샵 {}로 둔갑해 배지에 0/4로 뜨는 식으로).
 async function 샵읽기(ctx, 대상 = null) {
   if (!ctx.authOn) {
     try { return JSON.parse(fs.readFileSync(SHOP_FILE, "utf8")); } catch { return {}; }
   }
-  const 볼사람 = 대상 && 대상 !== ctx.userId ? (ctx.isAdmin ? 대상 : null) : ctx.userId;
+  const 볼사람 = 대상 || ctx.userId;
   if (!볼사람) return {};
   const { data, error } = await supaAdmin.from("profiles").select("shop").eq("id", 볼사람).single();
   if (error) return {}; // shop 컬럼이 아직 없는 상태 — 조용히 빈 값
@@ -159,9 +159,14 @@ async function 샵읽기(ctx, 대상 = null) {
 
 async function 샵쓰기(ctx, 값) {
   // 정해진 항목만 받는다 (아무 키나 들어오면 프롬프트가 오염된다)
-  const 유형 = CONFIG.글쓴이유형?.[값?.유형] ? 값.유형 : "원장";
+  const 유형 = 유형정규화(값?.유형);
+  // 유형을 바꿔도 다른 유형의 값은 지우지 않는다 — 원장↔정보 왕복에 4칸이 통째로 날아갔었다.
+  // 현재 유형의 칸만 이번 입력으로 갈아끼우고(비운 칸은 지워짐), 나머지 유형의 칸은 그대로 둔다.
+  const 기존 = await 샵읽기(ctx);
+  const 내칸 = new Set(샵항목(유형));
   const 정리 = { 유형 };
-  for (const k of 샵항목(유형)) if (typeof 값?.[k] === "string" && 값[k].trim()) 정리[k] = 값[k].trim().slice(0, 2000);
+  for (const [k, v] of Object.entries(기존)) if (!내칸.has(k) && !["유형", "확인일"].includes(k)) 정리[k] = v;
+  for (const k of 내칸) if (typeof 값?.[k] === "string" && 값[k].trim()) 정리[k] = 값[k].trim().slice(0, 2000);
   정리.확인일 = new Date().toISOString().slice(0, 10); // 값이 낡았는지 원장이 알 수 있게
   if (!ctx.authOn) { fs.writeFileSync(SHOP_FILE, JSON.stringify(정리, null, 2)); return 정리; }
   const { error } = await supaAdmin.from("profiles").update({ shop: 정리 }).eq("id", ctx.userId);
@@ -328,15 +333,17 @@ function blankDraft(keyword, ref, 목표글자수) {
 }
 
 // ---------- AI 생성 ----------
-// 시스템 프롬프트는 CONFIG로만 만들어지는 상수 — 시작 시 한 번 조립
+// 시스템 프롬프트는 CONFIG로만 만들어진다 — 시작 시 유형별로 한 번씩 조립해 둔다(PROMPTS).
 // 글쓴이가 누구냐에 따라 화자·제목 전략·본문 칸이 달라진다. 원장은 자기 샵 얘기를 쓰고,
 // 정보 전달자는 파는 것이 없어 '어디까지 확인됐는지'로 신뢰를 얻는다.
 // 공통 규칙(논문·3대 기준·의료법·형식)은 같다. 유형은 계정마다 저장된다.
 const 유형정보 = (t) => CONFIG.글쓴이유형?.[t] || CONFIG.글쓴이유형?.원장 || {};
-const 부름 = (유형) => (유형 === "정보" ? "글쓴이" : "원장");
-const 시스템프롬프트 = (유형 = "원장") => {
+const 기본유형 = "원장";
+const 유형정규화 = (v) => (CONFIG.글쓴이유형?.[v] ? v : 기본유형);
+const 부름 = (유형) => 유형정보(유형).부름 || "원장";
+const 프롬프트조립 = (유형) => {
   const U = 유형정보(유형);
-  return `당신은 ${U.역할}가다. 에스테틱 원장 대상 마케팅 아카데미의 교육 자료로 쓰인다.
+  return `당신은 ${U.역할}다. 에스테틱 원장 대상 마케팅 아카데미의 교육 자료로 쓰인다.
 
 [논문 기반 작성 — 최우선 규칙]
 누가 태클을 걸어도 방어되는 글이어야 한다. 성분·효능·수치에 관한 모든 주장은 논문으로 검증된 것만 쓴다.
@@ -382,7 +389,8 @@ ${(U.본문칸 || []).join("\n")}
    지켜야 할 것:
    a) 다음 단어는 쓰지 않는다 — ${추상어목록(CONFIG).join(", ")}
    b) 정도 부사(${(CONFIG.줄일말?.정도부사 || []).join(", ")})는 글 전체에서 ${CONFIG.줄일말?.허용횟수 ?? 3}번 이하. 정도는 숫자로 말한다.
-   c) 단위가 붙은 숫자(년·개월·분·회·명·원·%)를 공백제외 1,000자당 ${CONFIG.구체성?.["1000자당_권장"] ?? 8}개 이상 쓴다.
+   c) 단위가 붙은 숫자를 공백제외 1,000자당 ${CONFIG.구체성?.["1000자당_권장"] ?? 8}개 이상 쓴다.
+      이때 숫자는 ${U.숫자출처}이어야 한다. 그 밖의 숫자를 만들어 채우지 마라.
       상위노출 글들의 중앙값이 1,000자당 2~3개뿐이다 — 숫자를 더 쓰는 것만으로 확실히 갈린다.
    d) 형용사를 쓰고 싶으면 그 자리에 숫자를 넣어라. 형용사는 의견이고 숫자는 증거다.
    e) 명사구 안에 구성 요소를 접지 마라. 숫자를 넣어도, 금지어를 피해도, 접혀 있으면 여전히 추상이다.
@@ -390,8 +398,7 @@ ${(U.본문칸 || []).join("\n")}
       펴는 방법은 하나다 — 수식어를 버리고 그 자리에 누가 / 어디부터 어디까지 / 몇 분을 문장으로 적어라.
       · "1:1 맞춤형 프라이빗 관리" → "상담부터 관리까지 대표원장이 1:1 밀착 관리합니다"
       · "피부과 경력 15년"        → "피부과에서 리셉션 코디네이터-상담실장-피부관리사까지 15년의 경력"
-${U.경력검사 === false ? "" : `      경력은 특히 그렇다. 그 년수 안에 무슨 자리를 어떤 순서로 거쳤는지가 없으면 쓰지 마라.`}
-      수식어를 하나로 줄이는 것으로는 부족하다. 수식어 자체를 서술로 바꿔라.
+${U.경력주의 ? `      ${U.경력주의}\n` : ""}      수식어를 하나로 줄이는 것으로는 부족하다. 수식어 자체를 서술로 바꿔라.
 
 [지어내지 않기 — 위 e)보다 우선한다]
 원장의 실제 경력 구성, 관리 시간, 담당자, 가격, 재방문율은 네가 알 수 없는 값이다.
@@ -406,10 +413,13 @@ ${U.경력검사 === false ? "" : `      경력은 특히 그렇다. 그 년수 
 
 [출력 형식]
 첫 줄: 제목: <추천 제목 1개 — 손실 회피형>
-둘째 줄: 제목후보: 권위 인용 | <제목> // 손실 회피 | <제목> // 가치 입증 | <제목>
+둘째 줄: 제목후보: <전략 이름> | <제목> // <전략 이름> | <제목> // <전략 이름> | <제목> (전략 이름은 위 제목 항목의 세 가지)
   - 이 두 줄은 각각 한 줄로만 쓴다. 줄바꿈하지 않는다.
 셋째 줄부터: 본문 전체. 제목을 본문에서 반복하지 말고, 설명·머리말·맺음말 코멘트 없이 네이버 에디터에 그대로 붙여넣을 수 있는 본문만 출력한다.`;
 };
+// CONFIG는 시작 시 한 번 읽는 상수다 — 유형별 프롬프트도 시작 시 한 번씩만 조립한다
+const PROMPTS = Object.fromEntries(Object.keys(CONFIG.글쓴이유형 || { 원장: 1 }).map((t) => [t, 프롬프트조립(t)]));
+const 시스템프롬프트 = (유형) => PROMPTS[유형정규화(유형)];
 
 // 통과선은 최소글자수(1,300자), 노리는 지점은 권장글자수(2,000자)로 고정한다.
 // 2,000자는 상위노출 글들을 실제로 재어 본 값이다 — 강의 체크리스트도 같은 숫자를 쓴다.
@@ -448,7 +458,7 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = nu
     `[사진 자리] ${사진목표(ref)}곳 이상${ref?.avgImages ? ` (상위글 평균 ${ref.avgImages}장)` : ""} — [사진: 설명] 형식으로 본문 곳곳에 배치`
   );
   // 원장이 준 값 — 이게 있어야 AI가 숫자를 지어내지 않는다
-  const 준값 = 유형항목(shop?.유형 || "원장").filter((x) => shop?.[x.key]);
+  const 준값 = 유형항목(유형정규화(shop?.유형)).filter((x) => shop?.[x.key]);
   if (준값.length) {
     lines.push("", "[글쓴이가 준 실제 값 — 이 값만 쓰고 여기 없는 숫자를 만들어 내지 말 것]");
     for (const x of 준값) lines.push(`- ${x.이름}: ${shop[x.key]}`);
@@ -456,7 +466,7 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = nu
       lines.push("- 가격은 원장이 공개하지 않는다. 금액·회원권 가격·할인율을 글에 쓰지 말 것 (\"10만 원대\" 같은 어림값도 금지)");
     lines.push("- 이 목록에 없는 연차·금액·소요 시간·인원·비율이 필요하면 지어내지 말고 [원장확인: 무엇] 으로 비워 둘 것");
   }
-  const 나 = 부름(shop?.유형 || "원장");
+  const 나 = 부름(유형정규화(shop?.유형));
   if (사례) lines.push("", `[이번 글에 쓸 실제 사례 — ${나}가 준 것]`, 사례, "이 사례의 숫자만 쓰고 살을 붙여 지어내지 말 것.");
   else lines.push("", `[사례 없음] ${나}가 이번 글의 사례를 주지 않았다. 특정 사례를 지어내지 말 것 — 사례 단락 자체를 넣지 마라.`);
 
@@ -918,7 +928,7 @@ async function handleGenerate(res, body, ctx) {
     const targetChars = 지정 || CONFIG.최소글자수;
     if (지정) send({ type: "status", message: `목표 글자수 ${targetChars.toLocaleString()}자로 맞춰 작성합니다` });
     const shop = await 샵읽기(ctx);
-    const 글쓴이유형 = shop.유형 || "원장"; // 계정마다 다르다 — 원장님들 것은 그대로다
+    const 글쓴이유형 = 유형정규화(shop.유형); // 계정마다 다르다 — 원장님들 것은 그대로다
     const 사례 = (body.사례 || "").trim().slice(0, 1000);
     const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례) }];
     const check = (d) => {
@@ -1131,8 +1141,8 @@ const server = http.createServer(async (req, res) => {
           // 샵 정보를 채웠는지도 함께 — 안 채운 계정은 AI가 숫자를 지어내므로 관리자가 알아야 한다.
           // 값 자체는 보내지 않는다(목록에 필요 없다). 몇 칸을 채웠는지와 언제 확인했는지만.
           (data || []).map(({ shop, ...u }) => {
-            const 유형 = shop?.유형 || "원장";
-            const 칸 = (CONFIG.원장정보항목 || []).filter((x) => (x.유형 || "원장") === 유형);
+            const 유형 = 유형정규화(shop?.유형);
+            const 칸 = 유형항목(유형);
             return {
               ...u,
               draftCount: 통계.get(u.id)?.count || 0,
@@ -1196,18 +1206,15 @@ const server = http.createServer(async (req, res) => {
     }
     // 원장 샵 정보 — 한 번 저장해 두면 글마다 프롬프트에 실린다
     if (p === "/api/shop" && req.method === "GET") {
-      // 관리자가 회원을 지목하면 그 회원 것을 읽기 전용으로 보여 준다
-      const 지목 = url.searchParams.get("user");
-      const 남의것 = !!지목 && 지목 !== ctx.userId;
-      if (남의것 && !ctx.isAdmin) return json(res, 403, { error: "다른 회원의 정보는 볼 수 없습니다" });
-      const 내샵 = await 샵읽기(ctx, 지목);
-      // 창에서 유형을 바꿔 보는 중이면 그 유형의 칸을 미리 보여 준다 (저장 전까지는 미리보기)
-      const 보고싶은 = url.searchParams.get("유형");
-      const 내유형 = CONFIG.글쓴이유형?.[보고싶은] ? 보고싶은 : 내샵.유형 || "원장";
+      // 누구 것을 볼 수 있나는 초안과 같은 규칙이다 (관리자만 남의 것, 그것도 읽기만)
+      const { viewing, readOnly: 남의것, denied } = resolveDraftView(ctx, url.searchParams.get("user"));
+      if (denied) return json(res, 403, { error: denied });
+      const 내샵 = await 샵읽기(ctx, viewing);
+      // 두 유형의 칸을 한 번에 준다 — 드롭다운을 바꿀 때마다 서버에 다시 물을 일이 아니다
       return json(res, 200, {
-        shop: 내샵, 유형: 내유형, readOnly: 남의것,
+        shop: 내샵, 유형: 유형정규화(내샵.유형), readOnly: 남의것,
         유형목록: Object.entries(CONFIG.글쓴이유형 || {}).map(([key, v]) => ({ key, 이름: v.이름 })),
-        항목: 유형항목(내유형),
+        항목별: Object.fromEntries(Object.keys(CONFIG.글쓴이유형 || {}).map((t) => [t, 유형항목(t)])),
       });
     }
     if (p === "/api/shop" && req.method === "PUT") {
@@ -1217,8 +1224,6 @@ const server = http.createServer(async (req, res) => {
     }
     // 빈 칸을 내미는 대신, 원장이 이미 고쳐 저장한 초안에서 값을 뽑아 "맞나요?"로 묻는다
     if (p === "/api/shop/추천" && req.method === "GET") {
-      // 초안에서 뽑는 값은 샵 사실이다 — 정보 전달 유형에는 해당하지 않는다
-      if ((await 샵읽기(ctx)).유형 === "정보") return json(res, 200, { 추천: {}, 본글수: 0 });
       // 로컬 store.get은 동기, 배포는 비동기라 await로 둘 다 받는다
       // 5편을 줄세워 부르면 배포 모드에서 왕복이 5번이다 — 함께 보낸다
       const 목록 = await store.list(ctx.userId);
