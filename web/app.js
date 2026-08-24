@@ -644,6 +644,8 @@ async function loadAdminUsers() {
         <span class="em">${esc(u.email || "(이메일 없음)")}</span>
         <span class="st ${u.status}">${statusLabel(u.status)}</span>
         <span class="drafts ${u.draftCount ? "" : "none"}" title="${u.lastDraftAt ? "마지막 작성 " + 날짜(u.lastDraftAt) : "아직 작성한 초안이 없습니다"}">📝 ${u.draftCount}개${u.lastDraftAt ? ` · ${날짜(u.lastDraftAt)}` : ""}</span>
+        <span class="shopst ${u.샵?.채움 ? (u.샵.채움 === u.샵.전체 ? "full" : "part") : "none"}"
+              title="${u.샵?.채움 ? `${u.샵.유형} 유형 · ${u.샵.전체}칸 중 ${u.샵.채움}칸${u.샵.확인일 ? " · 마지막 확인 " + u.샵.확인일 : ""}` : "샵 정보를 채우지 않았습니다 — AI가 숫자를 지어냅니다"}">🏠 ${u.샵?.채움 ?? 0}/${u.샵?.전체 ?? 4}</span>
         <select class="role">
           <option value="level1" ${u.role === "level1" ? "selected" : ""}>원장(1단계)</option>
           <option value="admin" ${u.role === "admin" ? "selected" : ""}>관리자</option>

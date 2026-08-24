@@ -239,3 +239,9 @@ header { justify-content: flex-start; }
 .뽑은값 { background: #fff6e5; border-color: #f0c987; }
 #shop-suggest { width: 100%; margin-top: 8px; font-size: 13px; }
 #gen-case { flex: 1 1 100%; min-width: 0; }
+
+/* 회원별 샵 정보 상태 (관리자 전용) — 안 채운 계정은 AI가 숫자를 지어낸다 */
+.admin-user .shopst { font-size: 12px; padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
+.shopst.full { background: #e7f7ea; color: #1c8c3c; }
+.shopst.part { background: #fdf0d5; color: #a5691a; }
+.shopst.none { background: #fdeceb; color: #d8483b; }
