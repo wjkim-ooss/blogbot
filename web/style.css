@@ -240,8 +240,9 @@ header { justify-content: flex-start; }
 #shop-suggest { width: 100%; margin-top: 8px; font-size: 13px; }
 #gen-case { flex: 1 1 100%; min-width: 0; }
 
-/* 회원별 샵 정보 상태 (관리자 전용) — 안 채운 계정은 AI가 숫자를 지어낸다 */
-.admin-user .shopst { font-size: 12px; padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
+/* 회원별 샵 정보 상태 (관리자 전용) — 안 채운 계정은 AI가 숫자를 지어낸다.
+   색은 옆의 상태 배지(.st)와 같은 값을 쓴다 — 다른 노란색이 나란히 있으면 버그처럼 보인다. */
+.admin-user .shopst { font-size: 12px; padding: 2px 8px; border-radius: 6px; white-space: nowrap; cursor: pointer; }
 .shopst.full { background: #e7f7ea; color: #1c8c3c; }
-.shopst.part { background: #fdf0d5; color: #a5691a; }
+.shopst.part { background: #fdeecb; color: #a5691a; }
 .shopst.none { background: #fdeceb; color: #d8483b; }

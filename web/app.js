@@ -645,7 +645,7 @@ async function loadAdminUsers() {
         <span class="st ${u.status}">${statusLabel(u.status)}</span>
         <span class="drafts ${u.draftCount ? "" : "none"}" title="${u.lastDraftAt ? "마지막 작성 " + 날짜(u.lastDraftAt) : "아직 작성한 초안이 없습니다"}">📝 ${u.draftCount}개${u.lastDraftAt ? ` · ${날짜(u.lastDraftAt)}` : ""}</span>
         <span class="shopst ${u.샵?.채움 ? (u.샵.채움 === u.샵.전체 ? "full" : "part") : "none"}"
-              title="${u.샵?.채움 ? `${u.샵.유형} 유형 · ${u.샵.전체}칸 중 ${u.샵.채움}칸${u.샵.확인일 ? " · 마지막 확인 " + u.샵.확인일 : ""}` : "샵 정보를 채우지 않았습니다 — AI가 숫자를 지어냅니다"}">🏠 ${u.샵?.채움 ?? 0}/${u.샵?.전체 ?? 4}</span>
+              title="${u.샵?.채움 ? `${u.샵.유형} 유형 · ${u.샵.전체}칸 중 ${u.샵.채움}칸${u.샵.확인일 ? " · 마지막 확인 " + u.샵.확인일 : ""} — 눌러서 내용 보기` : "샵 정보를 채우지 않았습니다 — AI가 숫자를 지어냅니다"}">🏠 ${u.샵?.채움 ?? 0}/${u.샵?.전체 ?? 0}</span>
         <select class="role">
           <option value="level1" ${u.role === "level1" ? "selected" : ""}>원장(1단계)</option>
           <option value="admin" ${u.role === "admin" ? "selected" : ""}>관리자</option>
@@ -658,6 +658,8 @@ async function loadAdminUsers() {
     .join("");
   box.querySelectorAll(".admin-user").forEach((row) => {
     const id = row.dataset.id;
+    // 배지를 누르면 그 회원의 샵 정보를 읽기 전용으로 본다 (대행할 때 값 확인용)
+    row.querySelector(".shopst")?.addEventListener("click", () => 샵열기(id).catch((e) => alert(e.message)));
     const patch = async (body) => {
       try {
         await api("/api/admin/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ...body }) });
@@ -727,34 +729,46 @@ $("#auth-pw").addEventListener("keydown", (e) => { if (e.key === "Enter") authAc
 // ---------- 내 샵 정보 ----------
 // 원장만 아는 값(관리 구성·가격·이력·운영 형태)을 한 번 받아 둔다.
 // 이 값이 없으면 AI가 "8년째"·"30만 원 회원권" 같은 숫자를 지어낸다 — 실제로 그랬다.
-async function 샵열기(바꿀유형) {
-  const { shop, 유형, 유형목록, 항목 } = await api("/api/shop" + (바꿀유형 ? `?유형=${encodeURIComponent(바꿀유형)}` : ""));
-  SHOP = shop;
-  const 고른유형 = 바꿀유형 || 유형;
-  const 칸 = $("#shop-fields");
-  // 글쓴이 유형에 따라 묻는 것이 달라진다 — 샵 없는 사람에게 관리 구성을 묻지 않는다
-  칸.innerHTML = `
+// 서버는 두 유형의 칸을 한 번에 준다. 드롭다운을 바꿀 때마다 다시 물어보면
+// 왕복이 낭비일 뿐 아니라, 치다 만 값이 재조회로 날아간다 — 그리기는 전부 여기서 한다.
+// 회원id를 주면 관리자가 그 회원 것을 읽기 전용으로 본다 (서버가 권한을 판단한다).
+async function 샵열기(회원id) {
+  const { shop, 유형, 유형목록, 항목별, readOnly } = await api(
+    "/api/shop" + (회원id ? `?user=${encodeURIComponent(회원id)}` : "")
+  );
+  if (!회원id) SHOP = shop; // 내 것을 열었을 때만 검증 패널이 쓰는 값을 갱신한다
+  const 잠금 = !!readOnly;
+
+  const 그리기 = (고른유형) => {
+    const 칸 = $("#shop-fields");
+    칸.innerHTML = `
     <label class="shop-row">
       <span class="shop-name">글쓴이 유형</span>
       <span class="shop-help">고르면 아래 칸과 AI가 쓰는 방식이 함께 바뀝니다. 내 계정에만 적용됩니다.</span>
-      <select id="shop-type">${유형목록.map((t) =>
+      <select id="shop-type" ${잠금 ? "disabled" : ""}>${유형목록.map((t) =>
         `<option value="${esc(t.key)}"${t.key === 고른유형 ? " selected" : ""}>${esc(t.이름)}</option>`).join("")}</select>
-    </label>` + 항목.map((x) => `
+    </label>` + (항목별[고른유형] || []).map((x) => `
     <label class="shop-row">
       <span class="shop-name">${esc(x.이름)}</span>
       <span class="shop-help">${esc(x.안내)}</span>
       ${x.형태 === "여러줄"
-        ? `<textarea data-k="${esc(x.key)}" rows="3" placeholder="${esc(x.예시)}"></textarea>`
-        : `<input data-k="${esc(x.key)}" placeholder="${esc(x.예시)}" />`}
+        ? `<textarea data-k="${esc(x.key)}" rows="3" placeholder="${esc(x.예시)}" ${잠금 ? "readonly" : ""}></textarea>`
+        : `<input data-k="${esc(x.key)}" placeholder="${esc(x.예시)}" ${잠금 ? "readonly" : ""} />`}
     </label>`).join("");
-  $("#shop-type").addEventListener("change", (e) => 샵열기(e.target.value).catch((err) => alert(err.message)));
-  for (const el of 칸.querySelectorAll("[data-k]")) {
-    el.value = shop[el.dataset.k] || "";
-    el.addEventListener("input", () => el.classList.remove("뽑은값"), { once: true }); // 고치면 확인된 값이다
-  }
-  $("#shop-suggest").classList.toggle("hidden", 고른유형 === "정보"); // 초안에서 뽑는 값은 샵 사실이다
-  $("#shop-msg").textContent = shop.확인일 ? `마지막 확인: ${shop.확인일}` : "아직 채우지 않았습니다";
-  $("#shop-msg").style.color = shop.확인일 ? "var(--muted, #8a91a0)" : "";
+    $("#shop-type").addEventListener("change", (e) => 그리기(e.target.value));
+    for (const el of 칸.querySelectorAll("[data-k]")) {
+      el.value = shop[el.dataset.k] || "";
+      el.addEventListener("input", () => el.classList.remove("뽑은값"), { once: true }); // 고치면 확인된 값이다
+    }
+    $("#shop-suggest").classList.toggle("hidden", 잠금 || 고른유형 === "정보"); // 초안에서 뽑는 값은 샵 사실이다
+    $("#shop-save").classList.toggle("hidden", 잠금);
+  };
+  그리기(유형);
+
+  $("#shop-msg").textContent = 잠금
+    ? `읽기 전용 — 이 회원의 저장된 값입니다${shop.확인일 ? ` (마지막 확인 ${shop.확인일})` : ""}`
+    : shop.확인일 ? `마지막 확인: ${shop.확인일}` : "아직 채우지 않았습니다";
+  $("#shop-msg").style.color = shop.확인일 || 잠금 ? "var(--muted, #8a91a0)" : "";
   $("#shop-overlay").classList.remove("hidden");
 }
 
