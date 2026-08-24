@@ -192,7 +192,7 @@ function 초벌뽑기(글들) {
 // 인증 ON(배포): Supabase drafts 테이블(user_id별). OFF(로컬): 파일(DRAFT_DIR 루트).
 const validName = (name) => !!name && !name.includes("/") && !name.includes("..") && name.endsWith(".md");
 
-function buildDraftContent(keyword, title, body, v) {
+function buildDraftContent(keyword, title, body, v, 후보 = "") {
   const ok = (cond) => (cond ? "✅" : "⚠️");
   const header = [
     `# ${title}`,
@@ -202,6 +202,8 @@ function buildDraftContent(keyword, title, body, v) {
     // 편집기가 이 글을 다시 판정할 때 쓰는 값. 사람 문장에서 정규식으로 캐내지 않도록
     // 기계가 읽을 자리를 따로 둔다 (문구를 다듬어도 판정이 조용히 틀어지지 않게).
     `- 목표글자수: ${v.targetChars}`,
+    // 제목 후보는 --- 위(헤더)에만 둔다. 본문에 두면 네이버로 복사되고 글자수에도 섞인다.
+    ...(후보 ? [`- 제목 후보: ${후보}`] : []),
     `- 생성: 웹 대시보드 (${MODEL})`,
     "",
     "---",
@@ -286,9 +288,9 @@ const supaStore = {
 // 저장 백엔드는 시작 시 한 번 결정 (인증 ON=Supabase, OFF=로컬 파일)
 const store = AUTH_ON ? supaStore : fileStore;
 
-async function draftCreate(ctx, keyword, title, body, v) {
+async function draftCreate(ctx, keyword, title, body, v, 후보 = "") {
   const base = draftBaseName(keyword);
-  return store.create(ctx.userId, base, buildDraftContent(keyword, title, body, v));
+  return store.create(ctx.userId, base, buildDraftContent(keyword, title, body, v, 후보));
 }
 
 // 손으로 쓰기 시작할 빈 초안. AI 생성이 막혀 있어도(크레딧·키 문제) 글은 쓸 수 있어야 한다.
@@ -337,17 +339,27 @@ const SYSTEM_PROMPT = `당신은 에스테틱(피부관리실) 원장이 자기 
 - 에스테틱 원장 1인칭, 존댓말, 고객 상담하듯 편안하게
 - 원장의 직접 경험담처럼 쓴다 (네이버는 직접 경험 글을 상위노출에 유리하게 평가)
 
-[구조]
-1. 제목: 키워드 포함 + 읽으면 얻는 것 또는 피할 수 있는 손해 암시 + 구체적인 숫자 1개 이상(개수·분·년·원·%·가지 등). 25자 내외
+[제목 — 서로 다른 방법으로 3개를 만든다]
+세 개 모두 키워드를 통째로 넣고, 구체적인 숫자 1개 이상(개수·분·년·원·%·가지 등)을 넣는다. 25자 내외.
    - 숫자가 들어간 제목은 클릭률이 높고, 상위글 대부분이 숫자를 안 쓰면 그 자체가 차별점이 된다
    - 억지로 넣지는 않는다. 숫자가 글 내용과 무관하면 빼는 편이 낫다
-2. 서두: 많은 사람이 아는 상황/고민에서 출발 (업계 용어로 시작 금지)
-3. 본문: 소제목 2~4개(### 사용), 원장의 경험 + 구체 정보
-4. 마무리: 과하지 않은 안내 (예약 강요 금지, 정보를 준 사람으로 남기)
+1. 권위 인용: 거쳐온 자리·기간·다뤄본 수를 빌려 신뢰를 만든다. 예) "피부과에서 10년 보며 확인한 여드름 압출의 기준"
+2. 손실 회피: 지금 그냥 두면 잃는 것을 보여준다. 예) "마곡 피부관리, 모르고 결제하면 돈 날리는 3가지"
+3. 가치 입증: 결과를 약속하지 않고 과정과 기준을 먼저 보여준다. 예) "붉은기 관리를 8주로 잡는 이유와 그 사이 과정"
+셋 중 손실 회피를 추천 제목으로 올린다. 검색해서 오는 고객은 대부분 이미 한 번 실패해봤기 때문에 약속보다 손해에 반응한다.
+효과를 단정하는 제목은 세 개 모두에서 쓰지 않는다.
+
+[본문 구조 — 4칸]
+본문은 네 칸을 이 순서로 쌓는다. 칸 이름 자체를 글에 쓰지는 말고 순서만 지킨다.
+1. 상황: 고객이 지금 겪는 장면에서 시작한다. 많은 사람이 아는 상황이어야 하고 업계 용어로 시작하지 않는다. 3~5줄.
+2. 근거: 왜 그런 일이 생기는지 원리·기준·숫자로 설명한다. 어려운 용어는 바로 뒤에 한 줄로 풀어쓴다.
+3. 차별: "우리는 다르다"고 쓰지 말고 "우리는 이런 순서로 한다"를 보여준다. 원장이 준 관리 구성·운영 형태·이력을 여기서 문장으로 편다. 방식이 곧 차별이다.
+4. 행동: 예약·문의·저장 중 하나만 남긴다. 셋을 다 쓰면 아무것도 하지 않는다. 예약을 강요하지 말고 정보를 준 사람으로 남는다.
+소제목(### 사용)은 2~4개로 나누되, 위 네 칸의 순서가 무너지지 않게 붙인다.
 
 [형식 규칙]
 - 사진 넣을 자리를 [사진: 어떤 사진인지 설명] 으로 표시 — 최소 ${CONFIG.권장이미지최소}곳
-- 공백 제외 ${CONFIG.최소글자수}자 이상 (레퍼런스 평균이 더 높으면 평균 이상을 목표)
+- 공백 제외 ${CONFIG.최소글자수}자 이상, ${권장글자수(CONFIG)}자 근처를 목표로 (레퍼런스 평균이 더 높으면 평균 이상)
 - 키워드는 제목 1회 + 본문 ${CONFIG.키워드횟수.min}~${CONFIG.키워드횟수.max}회, 자연스러운 문장 안에서만
 - 이때 세는 단위는 '키워드 전체'다. 단어를 쪼개 흩어 놓지 말고 키워드를 통째로 문장에 넣는다 (검증기가 띄어쓰기는 무시하고 전체 일치만 센다)
 - ${CONFIG.키워드횟수.max}회를 넘기지 않는다. 반복이 과하면 네이버가 키워드 도배로 보고 감점한다 — 넘칠 것 같으면 지시어나 유의어로 바꾼다
@@ -388,11 +400,13 @@ const SYSTEM_PROMPT = `당신은 에스테틱(피부관리실) 원장이 자기 
 레퍼런스로 제공되는 상위노출 글의 문장을 그대로 베끼지 않는다. 패턴만 참고한다.
 
 [출력 형식]
-첫 줄: 제목: <제목>
-둘째 줄부터: 본문 전체. 제목을 본문에서 반복하지 말고, 설명·머리말·맺음말 코멘트 없이 네이버 에디터에 그대로 붙여넣을 수 있는 본문만 출력한다.`;
+첫 줄: 제목: <추천 제목 1개 — 손실 회피형>
+둘째 줄: 제목후보: 권위 인용 | <제목> // 손실 회피 | <제목> // 가치 입증 | <제목>
+  - 이 두 줄은 각각 한 줄로만 쓴다. 줄바꿈하지 않는다.
+셋째 줄부터: 본문 전체. 제목을 본문에서 반복하지 말고, 설명·머리말·맺음말 코멘트 없이 네이버 에디터에 그대로 붙여넣을 수 있는 본문만 출력한다.`;
 
-// 통과선은 최소글자수(1,300자), 노리는 지점은 권장글자수(1,500자)로 고정한다.
-// 상위글 평균은 2,000자를 넘기도 하지만 원장이 매번 쓸 수 있는 분량이 아니라 목표로 삼지 않는다.
+// 통과선은 최소글자수(1,300자), 노리는 지점은 권장글자수(2,000자)로 고정한다.
+// 2,000자는 상위노출 글들을 실제로 재어 본 값이다 — 강의 체크리스트도 같은 숫자를 쓴다.
 // 사진 목표는 web/rules.js가 정한다 — 설정만 여기서 채운다.
 const 사진목표 = (ref) => targetPhotosFor(ref, CONFIG);
 
@@ -951,7 +965,7 @@ async function handleGenerate(res, body, ctx) {
         : `일부 기준이 남았습니다: ${validation.issues.join(" / ")} — 편집기에서 직접 고쳐 주세요`,
     });
 
-    const file = await draftCreate(ctx, keyword, parsed.title, parsed.body, validation);
+    const file = await draftCreate(ctx, keyword, parsed.title, parsed.body, validation, parsed.후보);
     차감함 = false; // 글이 나왔으니 정상 사용
     send({ type: "done", file, validation, quota });
   } catch (e) {
@@ -1014,8 +1028,12 @@ function describeError(e, ctx) {
 
 function parseDraftOutput(text, keyword) {
   const m = text.match(/^\s*제목:\s*(.+)\n+([\s\S]*)$/);
-  if (m) return { title: m[1].trim(), body: m[2].trim() };
-  return { title: keyword, body: text.trim() };
+  if (!m) return { title: keyword, body: text.trim(), 후보: "" };
+  // 제목 후보는 본문이 아니다. 헤더로 올리고 본문에서는 떼어낸다 —
+  // 남겨 두면 네이버에 그대로 복사되고 글자수에도 섞여 판정이 틀어진다.
+  const c = m[2].match(/^\s*제목후보:\s*(.+?)\s*(?:\n+([\s\S]*))?$/);
+  if (!c) return { title: m[1].trim(), body: m[2].trim(), 후보: "" };
+  return { title: m[1].trim(), body: (c[2] || "").trim(), 후보: c[1].trim() };
 }
 
 // ---------- HTTP ----------
