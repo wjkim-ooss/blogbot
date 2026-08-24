@@ -141,8 +141,7 @@ const draftBaseName = (keyword) =>
 // 배포 모드는 profiles.shop(jsonb), 로컬은 파일 하나. 컬럼이 아직 없어도 그냥 빈 값으로 돈다
 // (SQL을 안 돌린 상태에서 사이트가 죽으면 안 된다).
 const SHOP_FILE = path.join(ROOT, ".shop.json");
-const 유형항목 = (유형) => (CONFIG.원장정보항목 || []).filter((x) => (x.유형 || "원장") === 유형);
-const 샵항목 = (유형) => 유형항목(유형).map((x) => x.key);
+const 샵항목 = () => (CONFIG.원장정보항목 || []).map((x) => x.key);
 
 async function 샵읽기(ctx) {
   if (!ctx.authOn) {
@@ -156,9 +155,8 @@ async function 샵읽기(ctx) {
 
 async function 샵쓰기(ctx, 값) {
   // 정해진 항목만 받는다 (아무 키나 들어오면 프롬프트가 오염된다)
-  const 유형 = CONFIG.글쓴이유형?.[값?.유형] ? 값.유형 : "원장";
-  const 정리 = { 유형 };
-  for (const k of 샵항목(유형)) if (typeof 값?.[k] === "string" && 값[k].trim()) 정리[k] = 값[k].trim().slice(0, 2000);
+  const 정리 = {};
+  for (const k of 샵항목()) if (typeof 값?.[k] === "string" && 값[k].trim()) 정리[k] = 값[k].trim().slice(0, 2000);
   정리.확인일 = new Date().toISOString().slice(0, 10); // 값이 낡았는지 원장이 알 수 있게
   if (!ctx.authOn) { fs.writeFileSync(SHOP_FILE, JSON.stringify(정리, null, 2)); return 정리; }
   const { error } = await supaAdmin.from("profiles").update({ shop: 정리 }).eq("id", ctx.userId);
@@ -324,15 +322,7 @@ function blankDraft(keyword, ref, 목표글자수) {
 
 // ---------- AI 생성 ----------
 // 시스템 프롬프트는 CONFIG로만 만들어지는 상수 — 시작 시 한 번 조립
-// 글쓴이가 누구냐에 따라 화자와 구조가 달라진다. 원장은 자기 샵 얘기를 쓰고,
-// 정보 전달자는 파는 것이 없어 근거로 신뢰를 얻는다. 공통 규칙(논문·3대 기준·의료법)은 같다.
-// 유형은 계정마다 저장된다 — 원장님들 것은 손대지 않는다.
-const 유형정보 = (t) => CONFIG.글쓴이유형?.[t] || CONFIG.글쓴이유형?.원장 || {};
-// 정보 전달자에게 "원장"이라고 부르면 어색하다 — 빈칸 표시와 안내 문구에 쓴다
-const 부름 = (유형) => (유형 === "정보" ? "글쓴이" : "원장");
-const 시스템프롬프트 = (유형 = "원장") => {
-  const U = 유형정보(유형);
-  return `당신은 ${U.역할}다. 에스테틱 원장 대상 마케팅 아카데미의 교육 자료로 쓰인다.
+const SYSTEM_PROMPT = `당신은 에스테틱(피부관리실) 원장이 자기 샵 블로그에 올릴 네이버 블로그 글의 견본을 쓰는 작가다. 에스테틱 원장 대상 마케팅 아카데미의 교육 자료로 쓰인다.
 
 [논문 기반 작성 — 최우선 규칙]
 누가 태클을 걸어도 방어되는 글이어야 한다. 성분·효능·수치에 관한 모든 주장은 논문으로 검증된 것만 쓴다.
@@ -344,13 +334,16 @@ const 시스템프롬프트 = (유형 = "원장") => {
 - 잘 모르면 지어내지 말고, 그 주제는 다루지 않거나 "검증이 더 필요하다"고 쓴다. PMID를 지어내지 않는다.
 
 [화자와 톤]
-${(U.화자 || []).map((x) => `- ${x}`).join("\n")}
+- 에스테틱 원장 1인칭, 존댓말, 고객 상담하듯 편안하게
+- 원장의 직접 경험담처럼 쓴다 (네이버는 직접 경험 글을 상위노출에 유리하게 평가)
 
 [구조]
 1. 제목: 키워드 포함 + 읽으면 얻는 것 또는 피할 수 있는 손해 암시 + 구체적인 숫자 1개 이상(개수·분·년·원·%·가지 등). 25자 내외
    - 숫자가 들어간 제목은 클릭률이 높고, 상위글 대부분이 숫자를 안 쓰면 그 자체가 차별점이 된다
    - 억지로 넣지는 않는다. 숫자가 글 내용과 무관하면 빼는 편이 낫다
-${(U.구조 || []).join("\n")}
+2. 서두: 많은 사람이 아는 상황/고민에서 출발 (업계 용어로 시작 금지)
+3. 본문: 소제목 2~4개(### 사용), 원장의 경험 + 구체 정보
+4. 마무리: 과하지 않은 안내 (예약 강요 금지, 정보를 준 사람으로 남기)
 
 [형식 규칙]
 - 사진 넣을 자리를 [사진: 어떤 사진인지 설명] 으로 표시 — 최소 ${CONFIG.권장이미지최소}곳
@@ -380,7 +373,7 @@ ${(U.구조 || []).join("\n")}
       펴는 방법은 하나다 — 수식어를 버리고 그 자리에 누가 / 어디부터 어디까지 / 몇 분을 문장으로 적어라.
       · "1:1 맞춤형 프라이빗 관리" → "상담부터 관리까지 대표원장이 1:1 밀착 관리합니다"
       · "피부과 경력 15년"        → "피부과에서 리셉션 코디네이터-상담실장-피부관리사까지 15년의 경력"
-${U.경력검사 === false ? "" : `      경력은 특히 그렇다. 그 년수 안에 무슨 자리를 어떤 순서로 거쳤는지가 없으면 쓰지 마라.`}
+      경력은 특히 그렇다. 그 년수 안에 무슨 자리를 어떤 순서로 거쳤는지가 없으면 쓰지 마라.
       수식어를 하나로 줄이는 것으로는 부족하다. 수식어 자체를 서술로 바꿔라.
 
 [지어내지 않기 — 위 e)보다 우선한다]
@@ -397,7 +390,6 @@ ${U.경력검사 === false ? "" : `      경력은 특히 그렇다. 그 년수 
 [출력 형식]
 첫 줄: 제목: <제목>
 둘째 줄부터: 본문 전체. 제목을 본문에서 반복하지 말고, 설명·머리말·맺음말 코멘트 없이 네이버 에디터에 그대로 붙여넣을 수 있는 본문만 출력한다.`;
-};
 
 // 통과선은 최소글자수(1,300자), 노리는 지점은 권장글자수(1,500자)로 고정한다.
 // 상위글 평균은 2,000자를 넘기도 하지만 원장이 매번 쓸 수 있는 분량이 아니라 목표로 삼지 않는다.
@@ -436,17 +428,16 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = nu
     `[사진 자리] ${사진목표(ref)}곳 이상${ref?.avgImages ? ` (상위글 평균 ${ref.avgImages}장)` : ""} — [사진: 설명] 형식으로 본문 곳곳에 배치`
   );
   // 원장이 준 값 — 이게 있어야 AI가 숫자를 지어내지 않는다
-  const 준값 = 유형항목(shop?.유형 || "원장").filter((x) => shop?.[x.key]);
+  const 준값 = (CONFIG.원장정보항목 || []).filter((x) => shop?.[x.key]);
   if (준값.length) {
-    lines.push("", "[글쓴이가 준 실제 값 — 이 값만 쓰고 여기 없는 숫자를 만들어 내지 말 것]");
+    lines.push("", "[원장이 준 실제 값 — 이 값만 쓰고 여기 없는 숫자를 만들어 내지 말 것]");
     for (const x of 준값) lines.push(`- ${x.이름}: ${shop[x.key]}`);
     if (shop.가격 && /비공개/.test(shop.가격))
-      lines.push("- 가격은 공개하지 않는다. 금액·회원권 가격·할인율을 글에 쓰지 말 것 (\"10만 원대\" 같은 어림값도 금지)");
-    lines.push(`- 이 목록에 없는 연차·금액·소요 시간·인원·비율이 필요하면 지어내지 말고 [원장확인: 무엇] 으로 비워 둘 것 (표시는 그대로 "원장확인"을 쓴다 — 검사기가 그 말을 찾는다)`);
+      lines.push("- 가격은 원장이 공개하지 않는다. 금액·회원권 가격·할인율을 글에 쓰지 말 것 (\"10만 원대\" 같은 어림값도 금지)");
+    lines.push("- 이 목록에 없는 연차·금액·소요 시간·인원·비율이 필요하면 지어내지 말고 [원장확인: 무엇] 으로 비워 둘 것");
   }
-  const 나 = 부름(shop?.유형 || "원장");
-  if (사례) lines.push("", `[이번 글에 쓸 실제 사례 — ${나}가 준 것]`, 사례, "이 사례의 숫자만 쓰고 살을 붙여 지어내지 말 것.");
-  else lines.push("", `[사례 없음] ${나}가 이번 글의 사례를 주지 않았다. 특정 사례를 지어내지 말 것 — 사례 단락 자체를 넣지 마라.`);
+  if (사례) lines.push("", "[이번 글에 쓸 실제 사례 — 원장이 준 것]", 사례, "이 사례의 숫자만 쓰고 살을 붙여 지어내지 말 것.");
+  else lines.push("", "[사례 없음] 원장이 이번 글의 사례를 주지 않았다. 특정 고객 사례를 지어내지 말 것 — 사례 단락 자체를 넣지 마라.");
 
   lines.push(
     "",
@@ -582,12 +573,12 @@ const 소진진단 = (ctx, 전체 = []) => {
   return `\n[관리자용] 모델 ${전체.length}개: ${표 || "없음"}`;
 };
 
-async function streamClaude(client, messages, send, 유형 = "원장") {
+async function streamClaude(client, messages, send) {
   const stream = client.messages.stream({
     model: MODEL,
     max_tokens: 64000,
     thinking: { type: "adaptive" },
-    system: 시스템프롬프트(유형),
+    system: SYSTEM_PROMPT,
     messages,
   });
   stream.on("text", (t) => send({ type: "delta", text: t }));
@@ -598,7 +589,7 @@ async function streamClaude(client, messages, send, 유형 = "원장") {
 // Gemini는 SDK 없이 REST로 부른다 (의존성을 늘리지 않으려고).
 // 붐비면 잠깐 쉬었다 다시, 그래도 안 되면 다음 모델로 넘어간다.
 // 원장 입장에서 "나중에 다시 해보세요"는 사실상 못 쓰는 것이나 마찬가지라서.
-async function streamGemini(messages, send, 유형 = "원장") {
+async function streamGemini(messages, send) {
   const models = await geminiModels();
   const contents = messages.map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -606,7 +597,7 @@ async function streamGemini(messages, send, 유형 = "원장") {
   }));
   const 만들기 = (cfg) =>
     JSON.stringify({
-      system_instruction: { parts: [{ text: 시스템프롬프트(유형) }] },
+      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
       contents,
       generationConfig: { maxOutputTokens: 16384, ...cfg },
     });
@@ -682,7 +673,7 @@ async function streamGemini(messages, send, 유형 = "원장") {
   // 스트리밍(SSE)이 계속 빈손이면 방식을 바꿔 한 번만 통째로 받아 본다.
   // 스트리밍 쪽 문제라면 이걸로 그냥 되고, 아니면 왜 비었는지가 응답 안에 그대로 들어 있다.
   send({ type: "status", message: "방식을 바꿔 한 번 더 시도합니다" });
-  const 통째로 = await 한번에받기(남은[0], contents, 유형);
+  const 통째로 = await 한번에받기(남은[0], contents);
   if (통째로.text) {
     send({ type: "delta", text: 통째로.text });
     return 통째로.text;
@@ -695,7 +686,7 @@ async function streamGemini(messages, send, 유형 = "원장") {
 }
 
 // 스트리밍이 아닌 일반 호출. 한 덩어리 JSON이라 차단 사유·중단 사유가 그대로 보인다.
-async function 한번에받기(model, contents, 유형 = "원장") {
+async function 한번에받기(model, contents) {
   try {
     const r = await fetch(
       `${GEMINI_BASE()}/v1beta/models/${model}:generateContent?key=${encodeURIComponent(GEMINI_KEY())}`,
@@ -703,7 +694,7 @@ async function 한번에받기(model, contents, 유형 = "원장") {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          system_instruction: { parts: [{ text: 시스템프롬프트(유형) }] },
+          system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
           contents,
           generationConfig: { maxOutputTokens: 16384 },
         }),
@@ -790,8 +781,8 @@ async function 읽기(res, send) {
   return { out, 이유: 이유설명(막힘, 끝난이유) };
 }
 
-const streamOnce = (client, messages, send, 유형) =>
-  client ? streamClaude(client, messages, send, 유형) : streamGemini(messages, send, 유형);
+const streamOnce = (client, messages, send) =>
+  client ? streamClaude(client, messages, send) : streamGemini(messages, send);
 
 // 통과할 때까지 고쳐 쓰는 최대 횟수. 넘기면 미달인 채로 저장하고 무엇이 남았는지 알린다.
 const MAX_FIX_ROUNDS = 3;
@@ -906,7 +897,6 @@ async function handleGenerate(res, body, ctx) {
     const targetChars = 지정 || CONFIG.최소글자수;
     if (지정) send({ type: "status", message: `목표 글자수 ${targetChars.toLocaleString()}자로 맞춰 작성합니다` });
     const shop = await 샵읽기(ctx);
-    const 글쓴이유형 = shop.유형 || "원장"; // 계정마다 다르다 — 원장님들 것은 그대로다
     const 사례 = (body.사례 || "").trim().slice(0, 1000);
     const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례) }];
     const check = (d) => {
@@ -916,7 +906,7 @@ async function handleGenerate(res, body, ctx) {
 
     // 엔진이 이미 쓸 수 있는 모델을 모두 훑고 일반 호출까지 해 본 뒤에 던진다.
     // 여기서 한 번 더 부르면 그 전부를 처음부터 되풀이할 뿐이다 (무료 한도만 두 배로 태운다).
-    let draft = await streamOnce(client, messages, send, 글쓴이유형);
+    let draft = await streamOnce(client, messages, send);
     let { parsed, validation } = check(draft);
     // 마지막 시도가 늘 제일 낫지는 않다. 고쳐 쓰다 더 나빠질 수도 있으므로 제일 좋았던 것을 들고 간다.
     // 순위: 통과 여부 → 남은 고칠 점이 적은 순 → 긴 순.
@@ -937,7 +927,7 @@ async function handleGenerate(res, body, ctx) {
       messages.push({ role: "assistant", content: draft });
       messages.push({ role: "user", content: fixInstruction(validation, keyword) });
       try {
-        draft = await streamOnce(client, messages, send, 글쓴이유형);
+        draft = await streamOnce(client, messages, send);
       } catch (e) {
         // 한 번 실패했다고 앞서 만든 글까지 버리지 않는다
         if (best.validation.chars >= 100) { send({ type: "status", message: `이번 시도는 실패했습니다 (${e.message}) — 직전 결과를 저장합니다` }); break; }
@@ -1169,16 +1159,7 @@ const server = http.createServer(async (req, res) => {
     }
     // 원장 샵 정보 — 한 번 저장해 두면 글마다 프롬프트에 실린다
     if (p === "/api/shop" && req.method === "GET") {
-      const 내샵 = await 샵읽기(ctx);
-      // 창에서 유형을 바꿔 보는 중이면 그 유형의 칸을 보여 준다 (저장 전까지는 미리보기다)
-      const 보고싶은 = url.searchParams.get("유형");
-      const 내유형 = CONFIG.글쓴이유형?.[보고싶은] ? 보고싶은 : 내샵.유형 || "원장";
-      return json(res, 200, {
-        shop: 내샵,
-        유형: 내유형,
-        유형목록: Object.entries(CONFIG.글쓴이유형 || {}).map(([key, v]) => ({ key, 이름: v.이름 })),
-        항목: 유형항목(내유형),
-      });
+      return json(res, 200, { shop: await 샵읽기(ctx), 항목: CONFIG.원장정보항목 || [] });
     }
     if (p === "/api/shop" && req.method === "PUT") {
       if (ctx.authOn && !ctx.userId) return json(res, 401, { error: "로그인이 필요합니다" });
@@ -1187,8 +1168,6 @@ const server = http.createServer(async (req, res) => {
     }
     // 빈 칸을 내미는 대신, 원장이 이미 고쳐 저장한 초안에서 값을 뽑아 "맞나요?"로 묻는다
     if (p === "/api/shop/추천" && req.method === "GET") {
-      // 초안에서 뽑는 값은 샵 사실이다 — 정보 전달 유형에는 해당하지 않는다
-      if ((await 샵읽기(ctx)).유형 === "정보") return json(res, 200, { 추천: {}, 본글수: 0 });
       // 로컬 store.get은 동기, 배포는 비동기라 await로 둘 다 받는다
       // 5편을 줄세워 부르면 배포 모드에서 왕복이 5번이다 — 함께 보낸다
       const 목록 = await store.list(ctx.userId);
