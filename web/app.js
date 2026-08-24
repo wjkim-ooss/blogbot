@@ -725,11 +725,19 @@ $("#auth-pw").addEventListener("keydown", (e) => { if (e.key === "Enter") authAc
 // ---------- 내 샵 정보 ----------
 // 원장만 아는 값(관리 구성·가격·이력·운영 형태)을 한 번 받아 둔다.
 // 이 값이 없으면 AI가 "8년째"·"30만 원 회원권" 같은 숫자를 지어낸다 — 실제로 그랬다.
-async function 샵열기() {
-  const { shop, 항목 } = await api("/api/shop");
+async function 샵열기(바꿀유형) {
+  const { shop, 유형, 유형목록, 항목 } = await api("/api/shop" + (바꿀유형 ? `?유형=${encodeURIComponent(바꿀유형)}` : ""));
   SHOP = shop;
+  const 고른유형 = 바꿀유형 || 유형;
   const 칸 = $("#shop-fields");
-  칸.innerHTML = 항목.map((x) => `
+  // 글쓴이 유형에 따라 묻는 것이 달라진다 — 샵 없는 사람에게 관리 구성을 묻지 않는다
+  칸.innerHTML = `
+    <label class="shop-row">
+      <span class="shop-name">글쓴이 유형</span>
+      <span class="shop-help">고르면 아래 칸과 AI가 쓰는 방식이 함께 바뀝니다. 내 계정에만 적용됩니다.</span>
+      <select id="shop-type">${유형목록.map((t) =>
+        `<option value="${esc(t.key)}"${t.key === 고른유형 ? " selected" : ""}>${esc(t.이름)}</option>`).join("")}</select>
+    </label>` + 항목.map((x) => `
     <label class="shop-row">
       <span class="shop-name">${esc(x.이름)}</span>
       <span class="shop-help">${esc(x.안내)}</span>
@@ -737,10 +745,12 @@ async function 샵열기() {
         ? `<textarea data-k="${esc(x.key)}" rows="3" placeholder="${esc(x.예시)}"></textarea>`
         : `<input data-k="${esc(x.key)}" placeholder="${esc(x.예시)}" />`}
     </label>`).join("");
+  $("#shop-type").addEventListener("change", (e) => 샵열기(e.target.value).catch((err) => alert(err.message)));
   for (const el of 칸.querySelectorAll("[data-k]")) {
     el.value = shop[el.dataset.k] || "";
     el.addEventListener("input", () => el.classList.remove("뽑은값"), { once: true }); // 고치면 확인된 값이다
   }
+  $("#shop-suggest").classList.toggle("hidden", 고른유형 === "정보"); // 초안에서 뽑는 값은 샵 사실이다
   $("#shop-msg").textContent = shop.확인일 ? `마지막 확인: ${shop.확인일}` : "아직 채우지 않았습니다";
   $("#shop-msg").style.color = shop.확인일 ? "var(--muted, #8a91a0)" : "";
   $("#shop-overlay").classList.remove("hidden");
@@ -760,7 +770,7 @@ $("#shop-save").addEventListener("click", async (e) => {
   )) return;
   e.target.disabled = true;
   try {
-    const 값 = {};
+    const 값 = { 유형: $("#shop-type").value };
     for (const el of $("#shop-fields").querySelectorAll("[data-k]")) 값[el.dataset.k] = el.value.trim();
     const { shop } = await api("/api/shop", {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(값),
