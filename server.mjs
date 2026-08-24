@@ -144,12 +144,15 @@ const SHOP_FILE = path.join(ROOT, ".shop.json");
 const 유형항목 = (유형) => (CONFIG.원장정보항목 || []).filter((x) => (x.유형 || "원장") === 유형);
 const 샵항목 = (유형) => 유형항목(유형).map((x) => x.key);
 
-async function 샵읽기(ctx) {
+// 기본은 '내 것'. 관리자가 특정 회원을 지목했을 때만 그 회원 것을 읽는다 (읽기 전용).
+// 원장끼리는 서로 볼 수 없다 — resolveDraftView가 초안에 대해 하는 것과 같은 규칙이다.
+async function 샵읽기(ctx, 대상 = null) {
   if (!ctx.authOn) {
     try { return JSON.parse(fs.readFileSync(SHOP_FILE, "utf8")); } catch { return {}; }
   }
-  if (!ctx.userId) return {};
-  const { data, error } = await supaAdmin.from("profiles").select("shop").eq("id", ctx.userId).single();
+  const 볼사람 = 대상 && 대상 !== ctx.userId ? (ctx.isAdmin ? 대상 : null) : ctx.userId;
+  if (!볼사람) return {};
+  const { data, error } = await supaAdmin.from("profiles").select("shop").eq("id", 볼사람).single();
   if (error) return {}; // shop 컬럼이 아직 없는 상태 — 조용히 빈 값
   return data?.shop || {};
 }
@@ -1125,7 +1128,18 @@ const server = http.createServer(async (req, res) => {
         return json(
           res,
           200,
-          (data || []).map((u) => ({ ...u, draftCount: 통계.get(u.id)?.count || 0, lastDraftAt: 통계.get(u.id)?.last || null }))
+          // 샵 정보를 채웠는지도 함께 — 안 채운 계정은 AI가 숫자를 지어내므로 관리자가 알아야 한다.
+          // 값 자체는 보내지 않는다(목록에 필요 없다). 몇 칸을 채웠는지와 언제 확인했는지만.
+          (data || []).map(({ shop, ...u }) => {
+            const 유형 = shop?.유형 || "원장";
+            const 칸 = (CONFIG.원장정보항목 || []).filter((x) => (x.유형 || "원장") === 유형);
+            return {
+              ...u,
+              draftCount: 통계.get(u.id)?.count || 0,
+              lastDraftAt: 통계.get(u.id)?.last || null,
+              샵: { 유형, 채움: 칸.filter((x) => shop?.[x.key]).length, 전체: 칸.length, 확인일: shop?.확인일 || null },
+            };
+          })
         );
       }
       if (req.method === "POST") {
@@ -1182,12 +1196,16 @@ const server = http.createServer(async (req, res) => {
     }
     // 원장 샵 정보 — 한 번 저장해 두면 글마다 프롬프트에 실린다
     if (p === "/api/shop" && req.method === "GET") {
-      const 내샵 = await 샵읽기(ctx);
+      // 관리자가 회원을 지목하면 그 회원 것을 읽기 전용으로 보여 준다
+      const 지목 = url.searchParams.get("user");
+      const 남의것 = !!지목 && 지목 !== ctx.userId;
+      if (남의것 && !ctx.isAdmin) return json(res, 403, { error: "다른 회원의 정보는 볼 수 없습니다" });
+      const 내샵 = await 샵읽기(ctx, 지목);
       // 창에서 유형을 바꿔 보는 중이면 그 유형의 칸을 미리 보여 준다 (저장 전까지는 미리보기)
       const 보고싶은 = url.searchParams.get("유형");
       const 내유형 = CONFIG.글쓴이유형?.[보고싶은] ? 보고싶은 : 내샵.유형 || "원장";
       return json(res, 200, {
-        shop: 내샵, 유형: 내유형,
+        shop: 내샵, 유형: 내유형, readOnly: 남의것,
         유형목록: Object.entries(CONFIG.글쓴이유형 || {}).map(([key, v]) => ({ key, 이름: v.이름 })),
         항목: 유형항목(내유형),
       });
