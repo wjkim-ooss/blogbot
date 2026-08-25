@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveDraftView } from "./permissions.mjs";
 // 초안 판정 규칙은 브라우저와 한 파일을 함께 쓴다 (web/rules.js). 두 벌로 두면 반드시 갈라진다.
-import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 추상어목록, 압축찾기, 평가 } from "./web/rules.js";
+import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 추상어목록, 압축찾기, 평가, 검사켜짐, 공감범위 } from "./web/rules.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
@@ -92,8 +92,8 @@ const 논문 = CONFIG.논문검증 || {}; // 프롬프트에 인용한다 (판�
 
 // 초안 채점 — 규칙은 web/rules.js에 있고 여기서는 서버 사정만 채워 넣는다.
 // 말투 "지시": AI에게 "무엇을 어떻게 고쳐라"까지 적어 준다. 그래야 실제로 고쳐진다.
-const validateDraft = (text, keyword, minChars = CONFIG.최소글자수, title = "", ref = null, 원장값 = null) =>
-  평가(text, { keyword, config: CONFIG, 목표글자수: minChars, ref, title, 말투: "지시", 원장값 });
+const validateDraft = (text, keyword, minChars = CONFIG.최소글자수, title = "", ref = null, 원장값 = null, 유형 = "") =>
+  평가(text, { keyword, config: CONFIG, 목표글자수: minChars, ref, title, 말투: "지시", 원장값, 유형 });
 
 // ---------- 레퍼런스 ----------
 // 파일명 앞 10자리 날짜로 오래된 순 정렬한 뒤, 키워드는 파일 '내용'으로 판별한다.
@@ -202,7 +202,7 @@ function 초벌뽑기(글들) {
 // 인증 ON(배포): Supabase drafts 테이블(user_id별). OFF(로컬): 파일(DRAFT_DIR 루트).
 const validName = (name) => !!name && !name.includes("/") && !name.includes("..") && name.endsWith(".md");
 
-function buildDraftContent(keyword, title, body, v, 후보 = "") {
+function buildDraftContent(keyword, title, body, v, 후보 = "", 유형 = 기본유형) {
   const ok = (cond) => (cond ? "✅" : "⚠️");
   const header = [
     `# ${title}`,
@@ -212,6 +212,9 @@ function buildDraftContent(keyword, title, body, v, 후보 = "") {
     // 편집기가 이 글을 다시 판정할 때 쓰는 값. 사람 문장에서 정규식으로 캐내지 않도록
     // 기계가 읽을 자리를 따로 둔다 (문구를 다듬어도 판정이 조용히 틀어지지 않게).
     `- 목표글자수: ${v.targetChars}`,
+    // 이 글을 누구 기준으로 볼 것인가. 판정은 글에 붙어야 한다 —
+    // 관리자가 남의 초안을 열어봐도 그 글의 기준으로 재도록.
+    `- 글쓴이유형: ${유형}`,
     // 제목 후보는 --- 위(헤더)에만 둔다. 본문에 두면 네이버로 복사되고 글자수에도 섞인다.
     ...(후보 ? [`- 제목 후보: ${후보}`] : []),
     `- 생성: 웹 대시보드 (${MODEL})`,
@@ -298,14 +301,14 @@ const supaStore = {
 // 저장 백엔드는 시작 시 한 번 결정 (인증 ON=Supabase, OFF=로컬 파일)
 const store = AUTH_ON ? supaStore : fileStore;
 
-async function draftCreate(ctx, keyword, title, body, v, 후보 = "") {
+async function draftCreate(ctx, keyword, title, body, v, 후보 = "", 유형 = 기본유형) {
   const base = draftBaseName(keyword);
-  return store.create(ctx.userId, base, buildDraftContent(keyword, title, body, v, 후보));
+  return store.create(ctx.userId, base, buildDraftContent(keyword, title, body, v, 후보, 유형));
 }
 
 // 손으로 쓰기 시작할 빈 초안. AI 생성이 막혀 있어도(크레딧·키 문제) 글은 쓸 수 있어야 한다.
 // 뼈대에 3대 기준과 목표치를 적어 둬서 무엇을 채워야 하는지 보이게 한다.
-function blankDraft(keyword, ref, 목표글자수) {
+function blankDraft(keyword, ref, 목표글자수, 유형 = 기본유형) {
   const target = (목표글자수 || CONFIG.최소글자수).toLocaleString();
   const photos = 사진목표(ref);
   return [
@@ -313,6 +316,7 @@ function blankDraft(keyword, ref, 목표글자수) {
     "",
     `- 키워드: ${keyword} / 목표: 공백제외 ${target}자 이상 · 사진 ${photos}곳 이상`,
     `- 목표글자수: ${목표글자수 || CONFIG.최소글자수}`,
+    `- 글쓴이유형: ${유형}`,
     ref
       ? `- 참고 레퍼런스: "${ref.keyword}" ${ref.posts.length}개${ref.출처?.length ? ` (${ref.출처.map((k) => `"${k}"`).join("·")} 보관함에서 모음)` : ""} (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)`
       : `- 참고 레퍼런스 없음 — 기본 기준으로 씁니다`,
@@ -325,7 +329,8 @@ function blankDraft(keyword, ref, 목표글자수) {
     "[사진: 첫 장면]",
     "",
     "안녕하세요.",
-    "OO동에서 피부관리를 하고 있는 원장입니다.",
+    // 뼈대의 첫 줄도 유형을 따라간다 — 정보성 글에 "원장입니다"가 박혀 있으면 지우는 일부터 하게 된다
+    유형정보(유형).첫줄 || "",
     "",
     `(여기부터 본문을 쓰세요. 오른쪽 검증 패널이 글자수·키워드·추상어를 실시간으로 잡아줍니다)`,
     "",
@@ -341,31 +346,13 @@ const 유형정보 = (t) => CONFIG.글쓴이유형?.[t] || CONFIG.글쓴이유�
 const 기본유형 = "원장";
 const 유형정규화 = (v) => (CONFIG.글쓴이유형?.[v] ? v : 기본유형);
 const 부름 = (유형) => 유형정보(유형).부름 || "원장";
-// 공감 어미를 얼마나 섞을지는 유형마다 다르다 — 원장은 고객에게 말을 걸고, 정보 전달자는 담백해야 한다
-const 공감범위 = (U) => U.검사?.공감비율 || CONFIG.말투.기본비율;
-// 반박제거·가격은 파는 사람에게만 해당한다. 정보 전달자는 예약을 받지도, 가격을 숨길 것도 없다.
-const 반박제거지시 = (U) => {
-  const R = CONFIG.반박제거;
-  if (!R || U.검사?.반박제거 === false) return "";
-  return `
-[예약을 막는 생각 지우기 — 반박제거]
-${R.설명}
-막는 생각: ${R.걱정.map((x) => `"${x}"`).join(" / ")}
-${R.심는법.map((x) => `- ${x}`).join("\n")}
-- 최소 ${R.최소}개는 반드시 짚는다. 안 짚으면 글은 좋은데 예약으로 넘어가지 않는다.
-`;
-};
-const 가격지시 = (U) => {
-  const P = CONFIG.가격표기;
-  if (!P || U.검사?.가격표기 === true) return "";
-  return `
-[가격은 적지 않는다]
-${P.설명}
-금액(원·만원)을 본문에 쓰지 마라. 대신 비용 걱정만 지운다 — 예: "${P.대신}".
-`;
-};
+// 유형마다 켜고 끄는 지시 블록. 켜짐 판정은 rules.js가 갖는다 — 검증기와 프롬프트가
+// 같은 스위치를 반대로 읽으면 "쓰지 말라고 해 놓고 안 잡는" 상태가 조용히 생긴다.
+// 산문은 블록마다 다르므로 손으로 쓰고, 게이트만 공유한다.
+const 유형블록 = (U, 키, 만들기) => (CONFIG[키] && 검사켜짐(U.검사, 키) ? 만들기(CONFIG[키]) : "");
 const 프롬프트조립 = (유형) => {
   const U = 유형정보(유형);
+  const [공감최소, 공감최대] = 공감범위(CONFIG, 유형);
   return `당신은 ${U.역할}다. 에스테틱 원장 대상 마케팅 아카데미의 교육 자료로 쓰인다.
 
 [논문 기반 작성 — 최우선 규칙]
@@ -391,7 +378,17 @@ ${(U.제목전략 || []).join("\n")}
 본문은 네 칸을 이 순서로 쌓는다. 칸 이름 자체를 글에 쓰지는 말고 순서만 지킨다.
 ${(U.본문칸 || []).join("\n")}
 소제목(### 사용)은 2~4개로 나누되, 위 네 칸의 순서가 무너지지 않게 붙인다.
-${반박제거지시(U)}${가격지시(U)}
+${유형블록(U, "반박제거", (R) => `
+[예약을 막는 생각 지우기 — 반박제거]
+${R.설명}
+막는 생각: ${R.걱정.map((x) => `"${x}"`).join(" / ")}
+${R.심는법.map((x) => `- ${x}`).join("\n")}
+- 최소 ${R.최소}개는 반드시 짚는다. 안 짚으면 글은 좋은데 예약으로 넘어가지 않는다.
+`)}${유형블록(U, "가격금지", (P) => `
+[가격은 적지 않는다]
+${P.설명}
+금액(원·만원)을 본문에 쓰지 마라. 대신 비용 걱정만 지운다 — 예: "${P.대신}".
+`)}
 [형식 규칙]
 - 사진 넣을 자리를 [사진: 어떤 사진인지 설명] 으로 표시 — 최소 ${CONFIG.권장이미지최소}곳
 - 공백 제외 ${CONFIG.최소글자수}자 이상, ${권장글자수(CONFIG)}자 근처를 목표로 (레퍼런스 평균이 더 높으면 평균 이상)
@@ -401,16 +398,16 @@ ${반박제거지시(U)}${가격지시(U)}
 - 한 문단 3줄 이내 (모바일 가독성)
 
 [문장 규칙 — 폰으로 읽는다는 전제]
-- 한 문장은 ${CONFIG.문장길이.목표}자 안팎을 목표로 한다. 공백 빼고 ${CONFIG.문장길이.상한}자를 넘으면 폰에서 세 줄로 넘어간다 — 쉼표나 마침표로 끊어라.
+- 한 문장은 ${CONFIG.문장길이?.목표}자 안팎을 목표로 한다. 공백 빼고 ${CONFIG.문장길이?.상한}자를 넘으면 폰에서 세 줄로 넘어간다 — 쉼표나 마침표로 끊어라.
   다만 억지로 끊어 어색해질 바에는 그대로 두는 편이 낫다. 소제목은 검색어가 들어가야 하므로 길어도 된다.
 - 한 문장에 메시지 하나. 접속사로 이어 붙이지 마라.
 - 순서·목록은 화살표로 세로 배치한다. 가로로 이으면 폰에서 줄이 어색하게 끊긴다.
 
 [말투 배합]
-기본은 ~입니다 / ~합니다다. 공감하는 지점에만 ~시죠?를 섞되, 문장 100개 중 ${공감범위(U)[0]}~${공감범위(U)[1]}개까지만 쓴다.
+기본은 ~입니다 / ~합니다다. 공감하는 지점에만 ~시죠?를 섞되, 문장 100개 중 ${공감최소}~${공감최대}개까지만 쓴다.
 - 약속하는 문장은 반드시 ~합니다로 끝낸다. ${부름(유형)}이 책임지는 문장이 부드러운 어미로 흐르면 약속이 가벼워진다.
   부드러운 문장 사이에 딱딱한 문장이 하나 서 있으면 그 문장만 도드라져서 더 잘 박힌다.
-- ${CONFIG.말투.주어빼기}
+- ${CONFIG.말투?.주어빼기 || ""}
 
 [3대 기준 — 반드시 통과]
 1. 표본을 넓혔는가: 제목·서두가 업계 사람만 아는 얘기가 아니라 일반인 다수가 아는 상황에서 출발
@@ -1018,7 +1015,7 @@ async function handleGenerate(res, body, ctx) {
         : `일부 기준이 남았습니다: ${validation.issues.join(" / ")} — 편집기에서 직접 고쳐 주세요`,
     });
 
-    const file = await draftCreate(ctx, keyword, parsed.title, parsed.body, validation, parsed.후보);
+    const file = await draftCreate(ctx, keyword, parsed.title, parsed.body, validation, parsed.후보, 글쓴이유형);
     차감함 = false; // 글이 나왔으니 정상 사용
     send({ type: "done", file, validation, quota });
   } catch (e) {
@@ -1217,7 +1214,8 @@ const server = http.createServer(async (req, res) => {
       const keyword = (body.keyword || "").trim();
       if (!keyword) return json(res, 400, { error: "키워드를 입력하세요" });
       const base = draftBaseName(keyword);
-      const file = await store.create(ctx.userId, base, blankDraft(keyword, findReference(keyword), 요청글자수(body.chars)));
+      const 유형 = 유형정규화((await 샵읽기(ctx)).유형);
+      const file = await store.create(ctx.userId, base, blankDraft(keyword, findReference(keyword), 요청글자수(body.chars), 유형));
       return json(res, 200, { file });
     }
     if (p.startsWith("/api/drafts/")) {
@@ -1280,8 +1278,8 @@ const server = http.createServer(async (req, res) => {
 
 // 직접 실행할 때만 포트를 연다. 시험이 import 하면 서버가 떠 버려서 테스트가 끝나지 않는다.
 // 맥 경로를 거치면 한글이 자모 분리형(NFD)으로 올 수 있어 양쪽 다 NFC로 맞춘다.
-const 같은파일 = (a, b) => a && b && a.normalize("NFC") === b.normalize("NFC");
-if (같은파일(process.argv[1] && path.resolve(process.argv[1]), fileURLToPath(import.meta.url)))
+const NFC = (p) => (p || "").normalize("NFC");
+if (process.argv[1] && NFC(path.resolve(process.argv[1])) === NFC(fileURLToPath(import.meta.url)))
   server.listen(PORT, () => console.log(`블로그봇 대시보드: http://localhost:${PORT}`));
 
 // 테스트에서만 쓴다 — 가짜 구글 서버를 세워 놓고 한도·스트리밍 동작을 확인하려고

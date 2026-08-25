@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자 } from "./web/rules.js";
+import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형 } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
@@ -511,7 +511,6 @@ test("원장 유형은 두 검사가 그대로 돈다", () => {
 // 봇은 "추상적으로 쓰지 마라"는 잘 잡았는데 "독자가 왜 예약을 안 누르는가"는 한 번도 안 봤다.
 // 넷 다 불합격이 아니라 권장이다 — 형식을 불합격으로 걸면 AI가 내용을 버리고 형식만 맞춘다.
 const 원장값 = { 유형: "원장", 가격: "비공개", 확인일: "x" };
-const 정보글값 = { 유형: "정보", 다루는분야: "성분 팩트체크", 확인일: "x" };
 const 긴줄 = "여드름이 반복되는 이유는 제품이 나빠서가 아니라 세안 후 방치하는 시간과 덧바르는 습관이 겹치기 때문입니다.";
 const 짧은줄 = "제품이 나빠서가 아닙니다.";
 const 줄글 = (줄, n = 14) => `제목: 여드름 피부관리\n\n${(줄 + " ").repeat(n)}`;
@@ -521,7 +520,6 @@ test("문장이 길면 권장으로 짚고, 짧으면 조용하다", () => {
   const 짧 = 재기(줄글(짧은줄), { 원장값 });
   assert.ok(긴.advice.some((s) => s.includes("긴 문장")), `긴 글에 문장길이 권장이 없다: ${긴.advice.join(" | ")}`);
   assert.ok(!짧.advice.some((s) => s.includes("긴 문장")));
-  assert.ok(긴.pass === 짧.pass || true);
   assert.ok(!긴.issues.some((s) => s.includes("긴 문장")), "문장 길이는 불합격 사유가 아니다");
 });
 
@@ -539,7 +537,7 @@ test("소제목과 사진 표시는 문장 길이에서 빼고 센다", () => {
 
 test("공감 어미가 하나도 없으면 원장에게만 권장이 뜬다", () => {
   const 원장 = 재기(줄글(짧은줄), { 원장값 });
-  const 정보 = 재기(줄글(짧은줄), { 원장값: 정보글값 });
+  const 정보 = 재기(줄글(짧은줄), { 원장값: 정보값 });
   assert.ok(원장.advice.some((s) => s.includes("공감 어미")), 원장.advice.join(" | "));
   assert.ok(!정보.advice.some((s) => s.includes("공감 어미")), "정보 전달자는 담백한 것이 맞다");
 });
@@ -564,13 +562,13 @@ test("예약을 막는 생각을 안 지우면 짚고, 지우면 조용하다", 
 });
 
 test("정보 유형에는 반박제거를 요구하지 않는다 — 예약을 받지 않는다", () => {
-  const v = 재기(줄글(짧은줄), { 원장값: 정보글값 });
+  const v = 재기(줄글(짧은줄), { 원장값: 정보값 });
   assert.ok(!v.advice.some((s) => s.includes("예약을 막는 생각")));
 });
 
 test("금액을 적으면 원장에게만 짚는다 — 가격이 박히면 비교용으로만 읽힌다", () => {
   const 원장 = 재기(줄글(짧은줄) + "10회권은 68만원입니다.", { 원장값 });
-  const 정보 = 재기(줄글(짧은줄) + "이 제품은 3만원대입니다.", { 원장값: 정보글값 });
+  const 정보 = 재기(줄글(짧은줄) + "이 제품은 3만원대입니다.", { 원장값: 정보값 });
   assert.ok(원장.advice.some((s) => s.includes("금액 표기")), 원장.advice.join(" | "));
   assert.ok(!정보.advice.some((s) => s.includes("금액 표기")), "성분 글의 가격대는 자료에서 온 값이다");
 });
@@ -581,10 +579,38 @@ test("네 가지 모두 권장이지 불합격이 아니다", () => {
     assert.ok(!v.issues.some((s) => s.includes(말)), `${말}이 불합격으로 걸렸다`);
 });
 
-test("설정에 유형별 스위치가 서로 반대로 들어가 있다", () => {
-  assert.equal(CONFIG.글쓴이유형.원장.검사.반박제거, true);
-  assert.equal(CONFIG.글쓴이유형.정보.검사.반박제거, false);
-  assert.equal(CONFIG.글쓴이유형.원장.검사.가격표기, false, "원장은 금액을 쓰지 않는다");
-  assert.equal(CONFIG.글쓴이유형.정보.검사.가격표기, true, "정보 글은 제품 가격대를 쓸 수 있다");
-  assert.ok(CONFIG.글쓴이유형.원장.검사.공감비율[0] > CONFIG.글쓴이유형.정보.검사.공감비율[1]);
+test("검사 스위치는 전부 한 방향이다 — true면 그 검사를 돌린다", () => {
+  // 가격만 "true면 써도 된다"였던 적이 있다. 그래서 코드에 !== false 와 !== true 가
+  // 나란히 서고, 같은 판정을 rules.js와 server.mjs가 반대로 적었다.
+  for (const 키 of ["경력압축", "출처", "반박제거", "가격금지"]) {
+    assert.equal(CONFIG.글쓴이유형.원장.검사[키], true, `원장.${키}`);
+    assert.equal(CONFIG.글쓴이유형.정보.검사[키], false, `정보.${키}`);
+  }
+  assert.ok(!("공감비율" in CONFIG.글쓴이유형.원장.검사), "검사 블록에는 켜고 끄는 값만 둔다");
+  assert.ok(공감범위(CONFIG, "원장")[0] > 공감범위(CONFIG, "정보")[1]);
+});
+
+// ---------- 판정 기준은 '글'에 붙는다 ----------
+// 관리자가 남의 초안을 열면 원장값이 null이 된다(그 사람 샵 값은 볼 수 없으니 맞다).
+// 그런데 그 탓에 정보성 글이 원장 기준으로 재어져 "금액 빼라"·"예약 반박 심어라"가 떴다.
+test("초안 머리말에서 글쓴이유형을 읽는다", () => {
+  const 초안 = "# 레티놀\n\n- 목표글자수: 1300\n- 글쓴이유형: 정보\n\n---\n\n제목: 레티놀";
+  assert.equal(적힌유형(초안), "정보");
+  assert.equal(적힌유형("# 옛 초안\n\n- 목표글자수: 1300\n\n---\n\n본문"), "", "그 줄이 없던 옛 초안");
+});
+
+test("남의 정보성 초안을 열어도 그 글의 기준으로 잰다", () => {
+  const 글 = 줄글(짧은줄) + "이 제품은 3만원대입니다.";
+  const 남이봄 = 재기(글, { 원장값: null, 유형: "정보" });   // 관리자 열람 (샵 값은 못 봄)
+  const 본인 = 재기(글, { 원장값: 정보값 });
+  for (const 말 of ["금액 표기", "예약을 막는 생각"])
+    assert.ok(!남이봄.advice.some((s) => s.includes(말)), `${말}이 정보성 글에 떴다: ${남이봄.advice.join(" | ")}`);
+  assert.deepEqual(남이봄.advice, 본인.advice, "누가 보든 같은 지적이 나와야 한다");
+});
+
+test("글에 적힌 유형이 보는 사람의 유형을 이긴다", () => {
+  const 글 = 줄글(짧은줄) + "10회권은 68만원입니다.";
+  // 원장이 로그인해 있어도, 열어 본 글이 정보성이면 정보 기준으로 잰다
+  const v = 재기(글, { 원장값: { 유형: "원장", 가격: "비공개", 확인일: "x" }, 유형: "정보" });
+  assert.ok(!v.advice.some((s) => s.includes("금액 표기")));
 });
