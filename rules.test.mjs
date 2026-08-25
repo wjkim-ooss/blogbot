@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형 } from "./web/rules.js";
+import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기 } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
@@ -613,4 +613,53 @@ test("글에 적힌 유형이 보는 사람의 유형을 이긴다", () => {
   // 원장이 로그인해 있어도, 열어 본 글이 정보성이면 정보 기준으로 잰다
   const v = 재기(글, { 원장값: { 유형: "원장", 가격: "비공개", 확인일: "x" }, 유형: "정보" });
   assert.ok(!v.advice.some((s) => s.includes("금액 표기")));
+});
+
+// ---------- 유사문서 ----------
+// 네이버는 원본만 노출하고 베낀 글은 눌러 놓는다. 몇 %부터 걸리는지는 밝힌 적이 없어서
+// 닮은 정도를 추측하지 않고 '몇 어절이나 그대로 이어 썼나'를 센다.
+// 재는 대상은 AI에게 "참고해서 써라"라고 넘긴 바로 그 상위글이다.
+const 남의글 = "레티놀은 밤에만 바르는 것이 좋습니다. 처음 쓰는 분들은 일주일에 두 번부터 시작해서 피부가 적응하면 횟수를 천천히 늘려 나가시는 것을 권해 드립니다. 각질이 일어나면 하루 쉬어 가세요.";
+const 레퍼 = { keyword: "레티놀", posts: [{ title: "레티놀 초보 가이드", text: 남의글, chars: 100, images: 5 }], avgChars: 100, avgImages: 5 };
+const 내문장 = "레티놀은 바르는 순간 효과가 나는 성분이 아닙니다. 개봉 후에는 3개월 안에 씁니다. ";
+
+test("남의 문장을 그대로 옮기면 어느 대목인지 짚는다", () => {
+  const 베낀곳 = "처음 쓰는 분들은 일주일에 두 번부터 시작해서 피부가 적응하면 횟수를 천천히 늘려 나가시는 것을 권해 드립니다.";
+  const g = 겹침찾기("제목: 레티놀\n\n" + 내문장.repeat(4) + 베낀곳, 레퍼, CONFIG);
+  assert.ok(g.최장 >= CONFIG.유사문서.연속불합격, `이어진 겹침이 ${g.최장}어절뿐`);
+  assert.equal(g.토막[0].출처, "레티놀 초보 가이드", "어느 글에서 왔는지 알려줘야 고칠 수 있다");
+  assert.ok(g.토막[0].말.includes("일주일에 두 번부터"));
+});
+
+test("안 베낀 글은 조용하다", () => {
+  const g = 겹침찾기("제목: 레티놀\n\n" + 내문장.repeat(8), 레퍼, CONFIG);
+  assert.equal(g.최장, 0, `애먼 곳을 짚었다: ${JSON.stringify(g.토막)}`);
+  assert.equal(g.겹침률, 0);
+});
+
+test("짧은 겹침이 흩어져 겹침률만 올라도 짚는다 — 조용해지면 안 된다", () => {
+  // 이어진 겹침이 문턱(8어절)에 못 미쳐도, 여기저기서 빌려 오면 겹침률이 오른다.
+  const v = 재기("제목: 레티놀\n\n" + 내문장.repeat(2) + "처음 쓰는 분들은 일주일에 두 번부터", { ref: 레퍼 });
+  assert.ok(v.겹침.겹침률 >= CONFIG.유사문서.겹침률경고, `겹침률 ${v.겹침.겹침률}%`);
+  assert.ok(v.advice.some((s) => s.includes("겹치는")), v.advice.join(" | "));
+});
+
+test("레퍼런스가 없으면 검사하지 않는다", () => {
+  assert.deepEqual(겹침찾기("아무 글", null, CONFIG), { 겹침률: 0, 최장: 0, 토막: [] });
+  assert.deepEqual(겹침찾기("아무 글", { posts: [] }, CONFIG), { 겹침률: 0, 최장: 0, 토막: [] });
+});
+
+test("문장째 옮긴 것은 불합격, 짧게 겹친 것은 권장", () => {
+  const 문장째 = 재기("제목: 레티놀\n\n" + 내문장.repeat(4) + "처음 쓰는 분들은 일주일에 두 번부터 시작해서 피부가 적응하면 횟수를 천천히 늘려 나가시는 것을 권해 드립니다.", { ref: 레퍼 });
+  assert.ok(문장째.issues.some((s) => s.includes("옮긴")), 문장째.issues.join(" | "));
+
+  const 짧게 = 재기("제목: 레티놀\n\n" + 내문장.repeat(4) + "처음 쓰는 분들은 일주일에 두 번부터 시작해서 피부가 적응하면", { ref: 레퍼 });
+  assert.ok(!짧게.issues.some((s) => s.includes("옮긴")), "불합격까지는 가지 않는다");
+  assert.ok(짧게.advice.some((s) => s.includes("겹치는")), 짧게.advice.join(" | "));
+});
+
+test("베끼기는 유형과 무관하다 — 파는 사람이든 아니든 원본이 위로 간다", () => {
+  const 글 = "제목: 레티놀\n\n" + 내문장.repeat(4) + "처음 쓰는 분들은 일주일에 두 번부터 시작해서 피부가 적응하면 횟수를 천천히 늘려 나가시는 것을 권해 드립니다.";
+  for (const 유형 of ["원장", "정보"])
+    assert.ok(재기(글, { ref: 레퍼, 유형 }).issues.some((s) => s.includes("옮긴")), 유형);
 });
