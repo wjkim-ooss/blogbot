@@ -92,8 +92,8 @@ const 논문 = CONFIG.논문검증 || {}; // 프롬프트에 인용한다 (판�
 
 // 초안 채점 — 규칙은 web/rules.js에 있고 여기서는 서버 사정만 채워 넣는다.
 // 말투 "지시": AI에게 "무엇을 어떻게 고쳐라"까지 적어 준다. 그래야 실제로 고쳐진다.
-const validateDraft = (text, keyword, minChars = CONFIG.최소글자수, title = "", ref = null, 원장값 = null) =>
-  평가(text, { keyword, config: CONFIG, 목표글자수: minChars, ref, title, 말투: "지시", 원장값 });
+const validateDraft = (text, keyword, minChars = CONFIG.최소글자수, title = "", ref = null, 원장값 = null, 유형 = "") =>
+  평가(text, { keyword, config: CONFIG, 목표글자수: minChars, ref, title, 말투: "지시", 원장값, 유형 });
 
 // ---------- 레퍼런스 ----------
 // 파일명 앞 10자리 날짜로 오래된 순 정렬한 뒤, 키워드는 파일 '내용'으로 판별한다.
@@ -202,7 +202,7 @@ function 초벌뽑기(글들) {
 // 인증 ON(배포): Supabase drafts 테이블(user_id별). OFF(로컬): 파일(DRAFT_DIR 루트).
 const validName = (name) => !!name && !name.includes("/") && !name.includes("..") && name.endsWith(".md");
 
-function buildDraftContent(keyword, title, body, v, 후보 = "") {
+function buildDraftContent(keyword, title, body, v, 후보 = "", 유형 = 기본유형) {
   const ok = (cond) => (cond ? "✅" : "⚠️");
   const header = [
     `# ${title}`,
@@ -212,6 +212,9 @@ function buildDraftContent(keyword, title, body, v, 후보 = "") {
     // 편집기가 이 글을 다시 판정할 때 쓰는 값. 사람 문장에서 정규식으로 캐내지 않도록
     // 기계가 읽을 자리를 따로 둔다 (문구를 다듬어도 판정이 조용히 틀어지지 않게).
     `- 목표글자수: ${v.targetChars}`,
+    // 이 글을 누구 기준으로 볼 것인가. 판정은 글에 붙어야 한다 —
+    // 관리자가 남의 초안을 열어봐도 그 글의 기준으로 재도록.
+    `- 글쓴이유형: ${유형}`,
     // 제목 후보는 --- 위(헤더)에만 둔다. 본문에 두면 네이버로 복사되고 글자수에도 섞인다.
     ...(후보 ? [`- 제목 후보: ${후보}`] : []),
     `- 생성: 웹 대시보드 (${MODEL})`,
@@ -298,14 +301,14 @@ const supaStore = {
 // 저장 백엔드는 시작 시 한 번 결정 (인증 ON=Supabase, OFF=로컬 파일)
 const store = AUTH_ON ? supaStore : fileStore;
 
-async function draftCreate(ctx, keyword, title, body, v, 후보 = "") {
+async function draftCreate(ctx, keyword, title, body, v, 후보 = "", 유형 = 기본유형) {
   const base = draftBaseName(keyword);
-  return store.create(ctx.userId, base, buildDraftContent(keyword, title, body, v, 후보));
+  return store.create(ctx.userId, base, buildDraftContent(keyword, title, body, v, 후보, 유형));
 }
 
 // 손으로 쓰기 시작할 빈 초안. AI 생성이 막혀 있어도(크레딧·키 문제) 글은 쓸 수 있어야 한다.
 // 뼈대에 3대 기준과 목표치를 적어 둬서 무엇을 채워야 하는지 보이게 한다.
-function blankDraft(keyword, ref, 목표글자수) {
+function blankDraft(keyword, ref, 목표글자수, 유형 = 기본유형) {
   const target = (목표글자수 || CONFIG.최소글자수).toLocaleString();
   const photos = 사진목표(ref);
   return [
@@ -313,6 +316,7 @@ function blankDraft(keyword, ref, 목표글자수) {
     "",
     `- 키워드: ${keyword} / 목표: 공백제외 ${target}자 이상 · 사진 ${photos}곳 이상`,
     `- 목표글자수: ${목표글자수 || CONFIG.최소글자수}`,
+    `- 글쓴이유형: ${유형}`,
     ref
       ? `- 참고 레퍼런스: "${ref.keyword}" ${ref.posts.length}개${ref.출처?.length ? ` (${ref.출처.map((k) => `"${k}"`).join("·")} 보관함에서 모음)` : ""} (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)`
       : `- 참고 레퍼런스 없음 — 기본 기준으로 씁니다`,
@@ -325,7 +329,8 @@ function blankDraft(keyword, ref, 목표글자수) {
     "[사진: 첫 장면]",
     "",
     "안녕하세요.",
-    "OO동에서 피부관리를 하고 있는 원장입니다.",
+    // 뼈대의 첫 줄도 유형을 따라간다 — 정보성 글에 "원장입니다"가 박혀 있으면 지우는 일부터 하게 된다
+    유형정보(유형).첫줄 || "",
     "",
     `(여기부터 본문을 쓰세요. 오른쪽 검증 패널이 글자수·키워드·추상어를 실시간으로 잡아줍니다)`,
     "",
@@ -1010,7 +1015,7 @@ async function handleGenerate(res, body, ctx) {
         : `일부 기준이 남았습니다: ${validation.issues.join(" / ")} — 편집기에서 직접 고쳐 주세요`,
     });
 
-    const file = await draftCreate(ctx, keyword, parsed.title, parsed.body, validation, parsed.후보);
+    const file = await draftCreate(ctx, keyword, parsed.title, parsed.body, validation, parsed.후보, 글쓴이유형);
     차감함 = false; // 글이 나왔으니 정상 사용
     send({ type: "done", file, validation, quota });
   } catch (e) {
@@ -1209,7 +1214,8 @@ const server = http.createServer(async (req, res) => {
       const keyword = (body.keyword || "").trim();
       if (!keyword) return json(res, 400, { error: "키워드를 입력하세요" });
       const base = draftBaseName(keyword);
-      const file = await store.create(ctx.userId, base, blankDraft(keyword, findReference(keyword), 요청글자수(body.chars)));
+      const 유형 = 유형정규화((await 샵읽기(ctx)).유형);
+      const file = await store.create(ctx.userId, base, blankDraft(keyword, findReference(keyword), 요청글자수(body.chars), 유형));
       return json(res, 200, { file });
     }
     if (p.startsWith("/api/drafts/")) {

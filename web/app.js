@@ -1,7 +1,7 @@
 // 블로그봇 대시보드 프런트
 // 판정 규칙은 서버와 같은 파일을 쓴다 — 두 벌로 두면 반드시 갈라진다 (web/rules.js)
 import {
-  countLoose, 요청글자수, 적힌목표, 분량표시 as 분량문구,
+  countLoose, 요청글자수, 적힌목표, 적힌유형, 분량표시 as 분량문구,
   참고레퍼런스, 레퍼런스안내, targetPhotosFor, 평가,
 } from "/rules.js";
 
@@ -263,7 +263,7 @@ async function markDraft(name, div) {
     const 전체 = await draftContent(name);
     const body = draftBody(전체);
     blank = body.includes(BLANK_MARK);
-    v = evaluateDraft(body, keywordOf(name), 적힌목표(전체));
+    v = evaluateDraft(body, keywordOf(name), 적힌목표(전체), 적힌유형(전체));
   } catch {
     sub.textContent = ""; // 본문을 못 읽으면 조용히 비워 둔다 — 목록 자체는 계속 쓸 수 있어야 한다
     return;
@@ -313,12 +313,14 @@ async function openDraft(name, el) {
 // 초안 하나를 채점한다. 규칙은 서버와 같은 파일(rules.js)이 갖고 있고,
 // 여기서는 브라우저 사정(설정·레퍼런스 목록)만 채워 넣는다.
 // 말투 "요약": 검증 패널이 좁아 짧게 말한다. 조건은 서버와 한 글자도 다르지 않다.
-function evaluateDraft(body, keyword, 지정목표 = 0) {
+function evaluateDraft(body, keyword, 지정목표 = 0, 유형 = "") {
   const { ref: refHit } = 레퍼런스고르기(keyword);
   // 남의 초안을 열람할 때는 출처 검사를 하지 않는다. 그 원장의 샵 값은 내가 볼 수 없고,
   // 내 값으로 대조하면 멀쩡한 숫자를 "출처 없음"이라고 지적하게 된다.
+  // 다만 '어느 기준으로 볼 것인가'는 글에 적힌 유형을 따른다 — 남의 정보성 초안을
+  // 내 유형으로 재면 금액·예약 반박 같은 엉뚱한 지적이 뜬다.
   const 원장값 = viewingOther() ? null : SHOP;
-  return { ...평가(body, { keyword, config: CONFIG, 목표글자수: 지정목표, ref: refHit, 말투: "요약", 원장값 }), refHit };
+  return { ...평가(body, { keyword, config: CONFIG, 목표글자수: 지정목표, ref: refHit, 말투: "요약", 원장값, 유형 }), refHit };
 }
 
 // 실시간 검증
@@ -336,7 +338,7 @@ function runValidation() {
           title, titleHasKw, titleHasNum, titleLen,
           abstractFound, abstractByKind, medicalFound, overclaimFound, pmids, needsEvidence,
           구체, 구체밀도, 구체최소, 구체권장, 정도부사, 정도부사횟수,
-          issues, advice } = evaluateDraft(body, keyword, 적힌목표(raw));
+          issues, advice } = evaluateDraft(body, keyword, 적힌목표(raw), 적힌유형(raw));
   const kwCls = kwLack ? "v-bad" : kwOver ? "v-warn" : "v-ok";
   const kwNote = kwLack ? " 부족" : kwOver ? " 과다" : "";
   const kwRows = keyword

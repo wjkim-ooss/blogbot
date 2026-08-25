@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위 } from "./web/rules.js";
+import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형 } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
@@ -588,4 +588,29 @@ test("검사 스위치는 전부 한 방향이다 — true면 그 검사를 돌�
   }
   assert.ok(!("공감비율" in CONFIG.글쓴이유형.원장.검사), "검사 블록에는 켜고 끄는 값만 둔다");
   assert.ok(공감범위(CONFIG, "원장")[0] > 공감범위(CONFIG, "정보")[1]);
+});
+
+// ---------- 판정 기준은 '글'에 붙는다 ----------
+// 관리자가 남의 초안을 열면 원장값이 null이 된다(그 사람 샵 값은 볼 수 없으니 맞다).
+// 그런데 그 탓에 정보성 글이 원장 기준으로 재어져 "금액 빼라"·"예약 반박 심어라"가 떴다.
+test("초안 머리말에서 글쓴이유형을 읽는다", () => {
+  const 초안 = "# 레티놀\n\n- 목표글자수: 1300\n- 글쓴이유형: 정보\n\n---\n\n제목: 레티놀";
+  assert.equal(적힌유형(초안), "정보");
+  assert.equal(적힌유형("# 옛 초안\n\n- 목표글자수: 1300\n\n---\n\n본문"), "", "그 줄이 없던 옛 초안");
+});
+
+test("남의 정보성 초안을 열어도 그 글의 기준으로 잰다", () => {
+  const 글 = 줄글(짧은줄) + "이 제품은 3만원대입니다.";
+  const 남이봄 = 재기(글, { 원장값: null, 유형: "정보" });   // 관리자 열람 (샵 값은 못 봄)
+  const 본인 = 재기(글, { 원장값: 정보값 });
+  for (const 말 of ["금액 표기", "예약을 막는 생각"])
+    assert.ok(!남이봄.advice.some((s) => s.includes(말)), `${말}이 정보성 글에 떴다: ${남이봄.advice.join(" | ")}`);
+  assert.deepEqual(남이봄.advice, 본인.advice, "누가 보든 같은 지적이 나와야 한다");
+});
+
+test("글에 적힌 유형이 보는 사람의 유형을 이긴다", () => {
+  const 글 = 줄글(짧은줄) + "10회권은 68만원입니다.";
+  // 원장이 로그인해 있어도, 열어 본 글이 정보성이면 정보 기준으로 잰다
+  const v = 재기(글, { 원장값: { 유형: "원장", 가격: "비공개", 확인일: "x" }, 유형: "정보" });
+  assert.ok(!v.advice.some((s) => s.includes("금액 표기")));
 });
