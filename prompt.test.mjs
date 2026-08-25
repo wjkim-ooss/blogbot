@@ -6,7 +6,15 @@
 // 정보 전달자에게 새어 나가면 팔지 않는 사람에게 예약을 받으라고 시키는 꼴이 된다.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { __test } from "./server.mjs";
+import { 유형검사, 검사켜짐 } from "./web/rules.js";
+
+const CONFIG = JSON.parse(
+  fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
+);
 
 const { 시스템프롬프트 } = __test;
 const 원장 = 시스템프롬프트("원장");
@@ -40,4 +48,17 @@ test("공감 어미를 얼마나 섞을지는 유형마다 다르다", () => {
 test("모르는 유형은 원장으로 떨어진다", () => {
   assert.equal(시스템프롬프트("없는유형"), 원장);
   assert.equal(시스템프롬프트(undefined), 원장);
+});
+
+test("프롬프트와 검증기가 같은 스위치를 본다", () => {
+  // 지시는 나가는데 검사는 안 도는(또는 반대인) 상태가 이 저장소에서 이미 한 번 났다.
+  // 스위치를 두 파일이 각자 해석하면 조용히 갈린다 — 판정은 rules.js 한 곳에만 둔다.
+  for (const [유형, 켜짐] of [["원장", true], ["정보", false]]) {
+    const p = 시스템프롬프트(유형);
+    for (const 키 of ["반박제거", "가격금지"]) {
+      assert.equal(검사켜짐(유형검사(CONFIG, 유형), 키), 켜짐, `${유형}.${키} 설정`);
+    }
+    assert.equal(p.includes("[예약을 막는 생각 지우기 — 반박제거]"), 켜짐, `${유형} 프롬프트`);
+    assert.equal(p.includes("[가격은 적지 않는다]"), 켜짐, `${유형} 프롬프트`);
+  }
 });
