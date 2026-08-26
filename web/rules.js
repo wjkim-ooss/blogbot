@@ -149,8 +149,12 @@ export function 레퍼런스안내(keyword, ref, 종류, 말투 = "요약") {
 }
 
 // 상위글은 사진이 30장을 넘기도 하지만 원장이 실제로 준비할 수 있는 양을 넘으면 의미가 없어 20장에서 끊는다.
-export const targetPhotosFor = (ref, config) =>
-  Math.max(config.권장이미지최소, Math.min(ref?.avgImages || 0, 20));
+// 글 길이에도 맞춘다 — 상위글 평균이 37장이라고 1,300자 글에 21곳을 요구하면
+// AI가 사진 설명만 잔뜩 쓰고 본문이 모자라진다(실제로 1,079자에서 멈췄다).
+export const targetPhotosFor = (ref, config, 목표글자수 = 0) => {
+  const 길이몫 = 목표글자수 ? Math.round(목표글자수 / (config.사진간격 || 120)) : Infinity;
+  return Math.max(config.권장이미지최소, Math.min(ref?.avgImages || 0, 20, 길이몫));
+};
 
 // ---------- 문장 쪼개기 ----------
 // claimSentences·추상문장·압축찾기가 같은 자리에서 끊어야 같은 문장을 가리킨다.
@@ -581,7 +585,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const 부사허용 = config.줄일말?.허용횟수 ?? 3;
   const 문장허용 = config.문장길이?.허용비율 ?? 100; // 없으면 안 걸린다 — 기본값을 두 벌로 두지 않는다
   const 표본최소 = config.검사표본?.최소문장 ?? 10;
-  const 목표사진 = targetPhotosFor(ref, config);
+  const 목표사진 = targetPhotosFor(ref, config, 목표);
 
   const chars = noSpace(stripPhotos(text));
   const photos = ((text || "").match(/\[사진:/g) || []).length;
