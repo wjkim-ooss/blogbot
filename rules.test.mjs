@@ -46,10 +46,13 @@ test("말투만 다르고 통과/불통과와 지적 개수는 같다", () => {
 test("사진 목표는 레퍼런스를 따라간다 — 서버·화면 같은 값", () => {
   const ref = { keyword: "여드름 피부관리", avgImages: 37 };
   assert.equal(targetPhotosFor(null, CONFIG), CONFIG.권장이미지최소);
-  assert.equal(targetPhotosFor(ref, CONFIG), 20); // 상위글이 37장이어도 20장에서 끊는다
+  // 상위글이 37장이어도 원장이 실제로 찍을 수 있는 양(최대치)에서 끊는다
+  assert.equal(targetPhotosFor(ref, CONFIG), CONFIG.권장이미지최대);
   // 글 길이에도 맞춘다 — 1,300자 글에 21곳을 요구하니 AI가 사진 설명만 쓰고 본문이 모자랐다
   assert.equal(targetPhotosFor(ref, CONFIG, 1300), Math.round(1300 / CONFIG.사진간격));
   assert.equal(targetPhotosFor(ref, CONFIG, 600), CONFIG.권장이미지최소, "짧아도 최소치 밑으로는 안 내린다");
+  assert.equal(targetPhotosFor(ref, CONFIG, 5000), CONFIG.권장이미지최대, "길어도 최대치 위로는 안 올린다");
+  assert.ok(CONFIG.권장이미지최소 <= CONFIG.권장이미지최대);
   // 판정할 때도 그 글의 목표 분량에 맞춘 수로 조언한다
   const v = 재기(본문(1400), { ref });
   const 그글목표 = targetPhotosFor(ref, CONFIG, CONFIG.최소글자수);
