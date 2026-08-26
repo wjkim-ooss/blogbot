@@ -49,7 +49,7 @@ const api = async (url, opts = {}) => {
   if (!res.ok) throw new Error(data.error || res.statusText);
   return data;
 };
-const targetPhotosOf = (ref) => targetPhotosFor(ref, CONFIG);
+const targetPhotosOf = (ref, 목표글자수 = 0) => targetPhotosFor(ref, CONFIG, 목표글자수 || CONFIG.최소글자수);
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // 초안 파일에서 헤더(--- 위)를 뺀 본문만 추출
@@ -363,7 +363,7 @@ function runValidation() {
     <div class="v-item"><span>글자수 (공백제외)</span><span class="${ok(chars >= targetChars)}">${chars.toLocaleString()}자</span></div>
     <div class="v-item"><span>목표 기준</span><span class="muted">${분량표시(지정목표)}</span></div>
     <div class="v-item"><span>사진 자리</span><span class="${photos >= targetPhotos ? "v-ok" : "v-warn"}">${photos}곳</span></div>
-    ${refHit ? `<div class="v-sub">${targetPhotos}곳 이상 권장 · 상위글 평균 ${refHit.avgImages}장</div>` : ""}
+    ${refHit ? `<div class="v-sub">${targetPhotos}곳쯤 권장 (${CONFIG.권장이미지최소}~${CONFIG.권장이미지최대}곳) · 상위글 평균 ${refHit.avgImages}장</div>` : ""}
     ${title
       ? `<h4>제목</h4>
          <div class="v-item"><span>키워드 포함</span><span class="${ok(titleHasKw)}">${titleHasKw ? "포함" : "없음"}</span></div>
@@ -460,7 +460,7 @@ function updateGenHint() {
   }
   const { ref, 종류 } = 레퍼런스고르기(kw);
   const 표시 = 분량표시(요청글자수($("#gen-chars").value));
-  const 수치 = ref ? ` · 사진 ${targetPhotosOf(ref)}곳 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)` : "";
+  const 수치 = ref ? ` · 사진 ${targetPhotosOf(ref, 요청글자수($("#gen-chars").value))}곳 (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)` : "";
   // 무엇을 참고하는지 원장이 알아야 한다 — 엉뚱한 걸 보고 쓰면 글이 겉돈다
   el.className = `gen-hint ${ref ? "ok" : "warn"}`;
   el.textContent = `${ref ? "✅" : "⚠️"} ${레퍼런스안내(kw, ref, 종류)} — 목표 ${표시}${수치}`;
