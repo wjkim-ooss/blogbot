@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveDraftView } from "./permissions.mjs";
 // 초안 판정 규칙은 브라우저와 한 파일을 함께 쓴다 (web/rules.js). 두 벌로 두면 반드시 갈라진다.
-import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 추상어목록, 압축찾기, 평가, 검사켜짐, 공감범위 } from "./web/rules.js";
+import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 압축찾기, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형 } from "./web/rules.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
@@ -310,7 +310,7 @@ async function draftCreate(ctx, keyword, title, body, v, 후보 = "", 유형 = �
 // 뼈대에 3대 기준과 목표치를 적어 둬서 무엇을 채워야 하는지 보이게 한다.
 function blankDraft(keyword, ref, 목표글자수, 유형 = 기본유형) {
   const target = (목표글자수 || CONFIG.최소글자수).toLocaleString();
-  const photos = 사진목표(ref, 목표글자수 || CONFIG.최소글자수);
+  const photos = 사진목표(ref, 목표글자수);
   return [
     `# ${keyword}`,
     "",
@@ -343,8 +343,7 @@ function blankDraft(keyword, ref, 목표글자수, 유형 = 기본유형) {
 // 정보 전달자는 파는 것이 없어 '어디까지 확인됐는지'로 신뢰를 얻는다.
 // 공통 규칙(논문·3대 기준·의료법·형식)은 같다. 유형은 계정마다 저장된다.
 const 유형정보 = (t) => CONFIG.글쓴이유형?.[t] || CONFIG.글쓴이유형?.원장 || {};
-const 기본유형 = "원장";
-const 유형정규화 = (v) => (CONFIG.글쓴이유형?.[v] ? v : 기본유형);
+const 유형정규화 = (v) => 유형정규화규칙(CONFIG, v);
 const 부름 = (유형) => 유형정보(유형).부름 || "원장";
 // 유형마다 켜고 끄는 지시 블록. 켜짐 판정은 rules.js가 갖는다 — 검증기와 프롬프트가
 // 같은 스위치를 반대로 읽으면 "쓰지 말라고 해 놓고 안 잡는" 상태가 조용히 생긴다.
@@ -407,7 +406,7 @@ ${P.설명}
 
 [말투 배합]
 기본은 ~입니다 / ~합니다다. 공감하는 지점에만 ~시죠?를 섞는다.
-- 분량은 문장 열 개에 한두 개다(전체의 ${공감최소}~${공감최대}%). 하나도 없으면 말을 거는 느낌이 사라지고, 많으면 전문성이 흐려진다.
+- 분량은 전체 문장의 ${공감최소}~${공감최대}%다. 너무 적으면 말을 거는 느낌이 사라지고, 많으면 전문성이 흐려진다.
 - 넣는 자리는 정해져 있다 — 독자가 겪는 장면을 묘사한 바로 다음 문장이다. 설명하는 대목에는 넣지 마라.
 - 약속하는 문장은 반드시 ~합니다로 끝낸다. ${부름(유형)}이 책임지는 문장이 부드러운 어미로 흐르면 약속이 가벼워진다.
   부드러운 문장 사이에 딱딱한 문장이 하나 서 있으면 그 문장만 도드라져서 더 잘 박힌다.
@@ -466,9 +465,11 @@ const 시스템프롬프트 = (유형) => PROMPTS[유형정규화(유형)];
 // 통과선은 최소글자수(1,300자), 노리는 지점은 권장글자수(2,000자)로 고정한다.
 // 2,000자는 상위노출 글들을 실제로 재어 본 값이다 — 강의 체크리스트도 같은 숫자를 쓴다.
 // 사진 목표는 web/rules.js가 정한다 — 설정만 여기서 채운다.
-const 사진목표 = (ref, 목표글자수 = 0) => targetPhotosFor(ref, CONFIG, 목표글자수);
-// 모델은 글자를 못 센다. 문장 개수는 셀 수 있다 — 상위글 문장 평균 길이로 환산해 준다.
-const 문장수목표 = (목표글자수) => Math.round((목표글자수 || CONFIG.최소글자수) / (CONFIG.문장길이?.상한 || 40));
+const 사진목표 = (ref, 목표글자수) => targetPhotosFor(ref, CONFIG, 목표글자수);
+// 모델은 글자를 못 센다. 문장 개수는 셀 수 있다.
+// 상한(넘으면 안 되는 길이)으로 나누므로 이건 '목표'가 아니라 '적어도 이만큼'이다 —
+// 문장이 짧을수록 더 많이 써야 한다. 문구도 그렇게 말해야 15자 지시와 어긋나지 않는다.
+const 최소문장수 = (목표글자수) => Math.round((목표글자수 || CONFIG.최소글자수) / CONFIG.문장길이.상한);
 
 
 function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = null, 사례 = "") {
@@ -501,9 +502,9 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = nu
       : `[목표 분량] 공백 제외 ${분량표시(0, CONFIG)} (이 범위를 노릴 것. 너무 길게 쓰지 말 것)`,
     // 글자수는 모델이 셀 수 없다. 셀 수 있는 것(문장·문단 개수)으로 바꿔 준다 —
     // 안 그러면 한 문장씩 뚝뚝 떼어 놓고 사진만 끼워 넣어 분량이 안 나온다(1,079자·754자에서 멈췄다).
-    `  └ 글자수는 네가 셀 수 없으니 이렇게 잡아라: 본문 문장 약 ${문장수목표(목표글자수)}개, 문단은 2~3문장씩 묶고, 소제목(###) 3~4개로 나눈다.`,
+    `  └ 글자수는 네가 셀 수 없으니 이렇게 잡아라: 본문 문장을 적어도 ${최소문장수(목표글자수)}개 쓴다(문장이 짧으면 더 많이). 문단은 2~3문장씩 묶고, 소제목(###) 3~4개로 나눈다.`,
     `  └ 한 문장씩 떼어 놓지 마라. 문단 하나가 한 문장이면 분량이 절대 안 나온다.`,
-    `[사진 자리] ${사진목표(ref, 목표글자수 || CONFIG.최소글자수)}곳 (${CONFIG.권장이미지최소}~${CONFIG.권장이미지최대}곳 범위)${ref?.avgImages ? ` — 상위글 평균은 ${ref.avgImages}장이지만 원장이 실제로 찍을 수 있는 양으로 맞춘다` : ""} — [사진: 설명] 형식`,
+    `[사진 자리] ${사진목표(ref, 목표글자수)}곳 (${사진범위(CONFIG)} 범위)${ref?.avgImages ? ` — 상위글 평균은 ${ref.avgImages}장이지만 원장이 실제로 찍을 수 있는 양으로 맞춘다` : ""} — [사진: 설명] 형식`,
     `  └ 사진 표시는 문단과 문단 사이에만 넣는다. 두 개를 연달아 붙이지 말고, 문장 사이에 끼우지도 마라.`
   );
   // 원장이 준 값 — 이게 있어야 AI가 숫자를 지어내지 않는다
@@ -536,7 +537,7 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = nu
     `4. 추상어(${추상어목록(CONFIG).slice(0, 8).join(", ")} 등)를 하나도 쓰지 않았는가`,
     `5. 단위 붙은 숫자를 1,000자당 ${CONFIG.구체성?.["1000자당_권장"] ?? 8}개 이상 썼는가 (지금 목표 분량이면 ${Math.ceil((목표글자수 || CONFIG.최소글자수) / 1000 * (CONFIG.구체성?.["1000자당_권장"] ?? 8))}개 이상)`,
     `6. 정도 부사(정말·너무·굉장히 등)가 ${CONFIG.줄일말?.허용횟수 ?? 3}번 이하인가`,
-    `7. [사진: ...] 자리가 ${사진목표(ref, 목표글자수 || CONFIG.최소글자수)}곳쯤인가 (${CONFIG.권장이미지최대}곳을 넘기지 말 것)`,
+    `7. [사진: ...] 자리가 ${사진목표(ref, 목표글자수)}곳쯤인가 (${사진범위(CONFIG)}을 넘기지 말 것)`,
     `8. 수식어를 2개 이상 겹쳐 붙인 명사구가 없는가 ("1:1 맞춤 케어", "프리미엄 집중관리" 같은 꼴) — 있으면 '누가·어디부터 어디까지·몇 분'을 넣은 문장으로 펴라`,
     `9. 경력·연차를 적었다면 그 년수 안에 맡았던 자리가 2개 이상 순서대로 적혀 있는가 ("경력 15년" X / "리셉션-상담실장-피부관리사까지 15년" O) — 모르면 "[원장확인: 맡았던 자리를 순서대로]"로 비워 둘 것`,
     "위 아홉 개를 다 만족한 뒤에 출력하세요."
@@ -982,7 +983,7 @@ async function handleGenerate(res, body, ctx) {
     const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례) }];
     const check = (d) => {
       const p = parseDraftOutput(d, keyword);
-      return { parsed: p, validation: validateDraft(`${p.title}\n${p.body}`, keyword, targetChars, p.title, ref, { ...shop, 사례 }) };
+      return { parsed: p, validation: validateDraft(`${p.title}\n${p.body}`, keyword, targetChars, p.title, ref, { ...shop, 사례 }, 글쓴이유형) };
     };
 
     // 엔진이 이미 쓸 수 있는 모델을 모두 훑고 일반 호출까지 해 본 뒤에 던진다.
