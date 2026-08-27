@@ -22,7 +22,8 @@ const 정보 = 시스템프롬프트("정보");
 
 test("반박제거는 파는 사람에게만 간다", () => {
   assert.ok(원장.includes("[예약을 막는 생각 지우기 — 반박제거]"));
-  assert.ok(원장.includes("회원권부터 결제하라고 하겠지"));
+  assert.ok(원장.includes("한 번 받아서 뭐가 달라지나"));
+  assert.ok(!원장.includes("회원권부터 결제하라고"), "가격·회원권 반박은 뺐다");
   assert.ok(!정보.includes("반박제거"), "정보 전달자는 예약을 받지 않는다");
 });
 
