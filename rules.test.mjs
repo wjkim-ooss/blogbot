@@ -15,7 +15,7 @@ const CONFIG = JSON.parse(
 // 실제 초안처럼 숫자가 섞인 글 — 구체성 기준(1,000자당 3개)을 넘도록 만든다.
 // 밋밋한 "가가가…"로 재면 새 기준에 걸려서, 검사하려던 것과 다른 게 걸린다.
 const 본문 = (n = 1400, 키워드 = "여드름") =>
-  `제목: ${키워드} 피부관리, 리셉션부터 관리사까지 8년차 원장이 본 3가지\n\n` +
+  `제목: ${키워드} 피부관리, 리셉션부터 관리사까지 8년차 원장이 보는 기준\n\n` +
   `${키워드} 관리로 오시는 분이 한 달에 20명입니다. 1회 70분, 10회권 기준 3개월을 봅니다. `.repeat(3) +
   `8년간 2000명을 봤고 재방문율은 74%입니다. `.repeat(Math.max(1, Math.round(n / 700))) +
   "가".repeat(n);
@@ -48,14 +48,14 @@ test("사진 목표는 레퍼런스를 따라간다 — 서버·화면 같은 �
   assert.equal(targetPhotosFor(null, CONFIG), CONFIG.권장이미지최소);
   // 글 길이에 맞춘다 — 1,300자 글에 21곳을 요구하니 AI가 사진 설명만 쓰고 본문이 모자랐다.
   // 계산식을 다시 쓰지 않고 값으로 못박는다(식을 베끼면 둘이 같이 틀린다).
-  assert.equal(targetPhotosFor(ref, CONFIG, 1300), 9);
+  assert.equal(targetPhotosFor(ref, CONFIG, 1500), 6); // 250자당 1곳
   assert.equal(targetPhotosFor(ref, CONFIG, 600), CONFIG.권장이미지최소, "짧아도 최소치 밑으로는 안 내린다");
   assert.equal(targetPhotosFor(ref, CONFIG, 5000), CONFIG.권장이미지최대, "길어도 최대치 위로는 안 올린다");
   // 지정이 없으면 최소글자수로 떨어진다 — 폴백은 함수 안에서 한 번만 정한다
   assert.equal(targetPhotosFor(ref, CONFIG), targetPhotosFor(ref, CONFIG, CONFIG.최소글자수));
   // 판정할 때도 그 글의 목표 분량에 맞춘 수로 조언한다
   const v = 재기(본문(1400), { ref });
-  assert.ok(v.advice.some((a) => a.includes("9곳")), `9곳으로 조언해야 한다: ${v.advice.join(" | ")}`);
+  assert.ok(v.advice.some((a) => a.includes(`${targetPhotosFor(ref, CONFIG)}곳`)), v.advice.join(" | "));
   assert.ok(v.advice.some((a) => a.includes(`${CONFIG.권장이미지최소}~${CONFIG.권장이미지최대}곳`)), "범위도 같이 보여준다");
   assert.equal(v.pass, true, "사진 부족은 불합격 사유가 아니다");
 });
@@ -261,7 +261,7 @@ test("말투는 문구만 바꾸고 사실은 그대로 둔다", () => {
 // ---------- 추상 vs 구체 ----------
 // 핵심은 금지어 목록이 아니라 "검증할 수 있게 썼는가"다.
 const 구체글 = (n = 1400) =>
-  "제목: 여드름 피부관리, 리셉션부터 관리사까지 8년차가 본 3가지\n\n" +
+  "제목: 여드름 피부관리, 리셉션부터 관리사까지 8년차가 보는 기준\n\n" +
   "여드름으로 오시는 분이 한 달에 20명입니다. 1회 70분이고 10회권은 3개월을 봅니다. ".repeat(4) +
   "가".repeat(n);
 
@@ -672,4 +672,29 @@ test("문장째 옮긴 것은 불합격, 짧게 겹친 것은 권장", () => {
 test("베끼기는 유형과 무관하다 — 파는 사람이든 아니든 원본이 위로 간다", () => {
   for (const 유형 of ["원장", "정보"])
     assert.ok(재기(베낀글(베낀곳), { ref: 레퍼, 유형 }).issues.some((s) => s.includes("옮긴")), 유형);
+});
+
+// ---------- 제목이 약속한 항목 수 ----------
+// "3가지"라고 써 놓고 본문이 두 항목이면 읽는 사람은 하나를 못 찾고 나간다.
+test("제목의 숫자와 본문 항목 수가 맞아야 한다", () => {
+  const 세항목 = "### 하나\n내용입니다.\n### 둘\n내용입니다.\n### 셋\n내용입니다.";
+  const 두항목 = "### 하나\n내용입니다.\n### 둘\n내용입니다.";
+  const 제목 = "마곡 모낭염 관리, 자가 압출하면 안 되는 이유 3가지";
+  assert.equal(재기(세항목, { title: 제목 }).issues.some((s) => s.includes("본문 항목은")), false);
+  assert.ok(재기(두항목, { title: 제목 }).issues.some((s) => s.includes("본문 항목은")), "수가 안 맞으면 불합격");
+  // 소제목 없이 첫째·둘째로 나눈 손글씨도 항목으로 센다
+  assert.equal(재기("첫째, 하나.\n둘째, 둘.\n셋째, 셋.", { title: 제목 }).약속.항목, 3);
+});
+
+test("제목에 항목 약속이 없으면 세지 않는다", () => {
+  for (const 제목 of ["마곡 모낭염 관리, 자가 압출을 멈춰야 했던 이유", "피부과에서 15년 보며 확인한 기준", "1회 60분으로 잡는 이유"])
+    assert.equal(재기("### 하나\n내용입니다.", { title: 제목 }).약속, null, 제목);
+});
+
+test("해시태그는 파는 사람 글에만 요구한다", () => {
+  const 글 = 줄글(짧은줄) + "회원권은 권하지 않습니다.";
+  const 원장 = 재기(글, { 원장값: { 유형: "원장", 확인일: "x" } });
+  const 정보 = 재기(글, { 원장값: 정보값 });
+  assert.ok(원장.advice.some((s) => s.includes("해시태그")), 원장.advice.join(" | "));
+  assert.ok(!정보.advice.some((s) => s.includes("해시태그")));
 });
