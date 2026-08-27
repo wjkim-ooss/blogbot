@@ -2,7 +2,7 @@
 // 판정 규칙은 서버와 같은 파일을 쓴다 — 두 벌로 두면 반드시 갈라진다 (web/rules.js)
 import {
   countLoose, 요청글자수, 적힌목표, 적힌유형, 분량표시 as 분량문구,
-  참고레퍼런스, 레퍼런스안내, targetPhotosFor, 평가,
+  참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 평가,
 } from "/rules.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -49,7 +49,7 @@ const api = async (url, opts = {}) => {
   if (!res.ok) throw new Error(data.error || res.statusText);
   return data;
 };
-const targetPhotosOf = (ref, 목표글자수 = 0) => targetPhotosFor(ref, CONFIG, 목표글자수 || CONFIG.최소글자수);
+const targetPhotosOf = (ref, 목표글자수) => targetPhotosFor(ref, CONFIG, 목표글자수);
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // 초안 파일에서 헤더(--- 위)를 뺀 본문만 추출
@@ -148,7 +148,7 @@ function renderInsights() {
         <div class="stat"><div class="num">${kwInTitle}%</div><div class="label">제목에 키워드 일부 포함</div></div>
       </div>
       <div class="reco">📌 이 키워드로 쓸 때: 공백제외 <b>${분량표시(0)}</b>,
-      사진 <b>${Math.max(CONFIG?.권장이미지최소 || 10, Math.min(r.avgImages, 20))}장 이상</b>,
+      사진 <b>${targetPhotosOf(r)}장</b>,
       제목에 숫자와 이득/손해 암시 넣기${numRate < 50 ? " (상위글 대부분 숫자가 없으니 숫자로 차별화 가능)" : ""}</div>
     </div>`;
   }).join("");
@@ -363,7 +363,7 @@ function runValidation() {
     <div class="v-item"><span>글자수 (공백제외)</span><span class="${ok(chars >= targetChars)}">${chars.toLocaleString()}자</span></div>
     <div class="v-item"><span>목표 기준</span><span class="muted">${분량표시(지정목표)}</span></div>
     <div class="v-item"><span>사진 자리</span><span class="${photos >= targetPhotos ? "v-ok" : "v-warn"}">${photos}곳</span></div>
-    ${refHit ? `<div class="v-sub">${targetPhotos}곳쯤 권장 (${CONFIG.권장이미지최소}~${CONFIG.권장이미지최대}곳) · 상위글 평균 ${refHit.avgImages}장</div>` : ""}
+    ${refHit ? `<div class="v-sub">${targetPhotos}곳쯤 권장 (${사진범위(CONFIG)}) · 상위글 평균 ${refHit.avgImages}장</div>` : ""}
     ${title
       ? `<h4>제목</h4>
          <div class="v-item"><span>키워드 포함</span><span class="${ok(titleHasKw)}">${titleHasKw ? "포함" : "없음"}</span></div>
@@ -395,7 +395,10 @@ $("#editor").addEventListener("input", () => {
   clearTimeout(vTimer);
   vTimer = setTimeout(runValidation, 300);
 });
-$("#draft-keyword").addEventListener("input", runValidation);
+$("#draft-keyword").addEventListener("input", () => {
+  clearTimeout(vTimer);
+  vTimer = setTimeout(runValidation, 300);
+});
 
 // 저장 / 복사
 $("#save-btn").addEventListener("click", async () => {

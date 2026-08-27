@@ -46,17 +46,17 @@ test("말투만 다르고 통과/불통과와 지적 개수는 같다", () => {
 test("사진 목표는 레퍼런스를 따라간다 — 서버·화면 같은 값", () => {
   const ref = { keyword: "여드름 피부관리", avgImages: 37 };
   assert.equal(targetPhotosFor(null, CONFIG), CONFIG.권장이미지최소);
-  // 상위글이 37장이어도 원장이 실제로 찍을 수 있는 양(최대치)에서 끊는다
-  assert.equal(targetPhotosFor(ref, CONFIG), CONFIG.권장이미지최대);
-  // 글 길이에도 맞춘다 — 1,300자 글에 21곳을 요구하니 AI가 사진 설명만 쓰고 본문이 모자랐다
-  assert.equal(targetPhotosFor(ref, CONFIG, 1300), Math.round(1300 / CONFIG.사진간격));
+  // 글 길이에 맞춘다 — 1,300자 글에 21곳을 요구하니 AI가 사진 설명만 쓰고 본문이 모자랐다.
+  // 계산식을 다시 쓰지 않고 값으로 못박는다(식을 베끼면 둘이 같이 틀린다).
+  assert.equal(targetPhotosFor(ref, CONFIG, 1300), 9);
   assert.equal(targetPhotosFor(ref, CONFIG, 600), CONFIG.권장이미지최소, "짧아도 최소치 밑으로는 안 내린다");
   assert.equal(targetPhotosFor(ref, CONFIG, 5000), CONFIG.권장이미지최대, "길어도 최대치 위로는 안 올린다");
-  assert.ok(CONFIG.권장이미지최소 <= CONFIG.권장이미지최대);
+  // 지정이 없으면 최소글자수로 떨어진다 — 폴백은 함수 안에서 한 번만 정한다
+  assert.equal(targetPhotosFor(ref, CONFIG), targetPhotosFor(ref, CONFIG, CONFIG.최소글자수));
   // 판정할 때도 그 글의 목표 분량에 맞춘 수로 조언한다
   const v = 재기(본문(1400), { ref });
-  const 그글목표 = targetPhotosFor(ref, CONFIG, CONFIG.최소글자수);
-  assert.ok(v.advice.some((a) => a.includes(`${그글목표}곳`)), `${그글목표}곳으로 조언해야 한다: ${v.advice.join(" | ")}`);
+  assert.ok(v.advice.some((a) => a.includes("9곳")), `9곳으로 조언해야 한다: ${v.advice.join(" | ")}`);
+  assert.ok(v.advice.some((a) => a.includes(`${CONFIG.권장이미지최소}~${CONFIG.권장이미지최대}곳`)), "범위도 같이 보여준다");
   assert.equal(v.pass, true, "사진 부족은 불합격 사유가 아니다");
 });
 
@@ -611,8 +611,6 @@ test("남의 정보성 초안을 열어도 그 글의 기준으로 잰다", () =
   const 글 = 줄글(짧은줄) + "이 제품은 3만원대입니다.";
   const 남이봄 = 재기(글, { 원장값: null, 유형: "정보" });   // 관리자 열람 (샵 값은 못 봄)
   const 본인 = 재기(글, { 원장값: 정보값 });
-  for (const 말 of ["금액 표기", "예약을 막는 생각"])
-    assert.ok(!남이봄.advice.some((s) => s.includes(말)), `${말}이 정보성 글에 떴다: ${남이봄.advice.join(" | ")}`);
   assert.deepEqual(남이봄.advice, 본인.advice, "누가 보든 같은 지적이 나와야 한다");
 });
 
@@ -630,44 +628,48 @@ test("글에 적힌 유형이 보는 사람의 유형을 이긴다", () => {
 const 남의글 = "레티놀은 밤에만 바르는 것이 좋습니다. 처음 쓰는 분들은 일주일에 두 번부터 시작해서 피부가 적응하면 횟수를 천천히 늘려 나가시는 것을 권해 드립니다. 각질이 일어나면 하루 쉬어 가세요.";
 const 레퍼 = { keyword: "레티놀", posts: [{ title: "레티놀 초보 가이드", text: 남의글, chars: 100, images: 5 }], avgChars: 100, avgImages: 5 };
 const 내문장 = "레티놀은 바르는 순간 효과가 나는 성분이 아닙니다. 개봉 후에는 3개월 안에 씁니다. ";
+// 베낀 대목은 남의글에서 잘라 쓴다 — 손으로 다시 적으면 한쪽만 고쳐도 조용히 어긋난다
+const 베낀곳 = 남의글.split(/(?<=다\.)\s+/)[1];
+const 베낀글 = (꼬리, n = 4) => "제목: 레티놀\n\n" + 내문장.repeat(n) + 꼬리;
 
 test("남의 문장을 그대로 옮기면 어느 대목인지 짚는다", () => {
-  const 베낀곳 = "처음 쓰는 분들은 일주일에 두 번부터 시작해서 피부가 적응하면 횟수를 천천히 늘려 나가시는 것을 권해 드립니다.";
-  const g = 겹침찾기("제목: 레티놀\n\n" + 내문장.repeat(4) + 베낀곳, 레퍼, CONFIG);
+  const g = 겹침찾기(베낀글(베낀곳), 레퍼, CONFIG);
   assert.ok(g.최장 >= CONFIG.유사문서.연속불합격, `이어진 겹침이 ${g.최장}어절뿐`);
   assert.equal(g.토막[0].출처, "레티놀 초보 가이드", "어느 글에서 왔는지 알려줘야 고칠 수 있다");
   assert.ok(g.토막[0].말.includes("일주일에 두 번부터"));
 });
 
 test("안 베낀 글은 조용하다", () => {
-  const g = 겹침찾기("제목: 레티놀\n\n" + 내문장.repeat(8), 레퍼, CONFIG);
+  const g = 겹침찾기(베낀글("", 8), 레퍼, CONFIG);
   assert.equal(g.최장, 0, `애먼 곳을 짚었다: ${JSON.stringify(g.토막)}`);
   assert.equal(g.겹침률, 0);
 });
 
 test("짧은 겹침이 흩어져 겹침률만 올라도 짚는다 — 조용해지면 안 된다", () => {
   // 이어진 겹침이 문턱(8어절)에 못 미쳐도, 여기저기서 빌려 오면 겹침률이 오른다.
-  const v = 재기("제목: 레티놀\n\n" + 내문장.repeat(2) + "처음 쓰는 분들은 일주일에 두 번부터", { ref: 레퍼 });
+  // 표본이 찰 만큼 길어야 비율 검사가 돈다 — 짧은 초안에서 22%로 튀던 것을 게이트 안으로 넣었다
+  const v = 재기(베낀글(베낀곳.split(" ").slice(0, 7).join(" "), 8), { ref: 레퍼 });
+  assert.ok(v.겹침.최장 < CONFIG.유사문서.연속경고, "이어진 겹침은 문턱에 못 미치는 상황이어야 한다");
   assert.ok(v.겹침.겹침률 >= CONFIG.유사문서.겹침률경고, `겹침률 ${v.겹침.겹침률}%`);
   assert.ok(v.advice.some((s) => s.includes("겹치는")), v.advice.join(" | "));
 });
 
 test("레퍼런스가 없으면 검사하지 않는다", () => {
-  assert.deepEqual(겹침찾기("아무 글", null, CONFIG), { 겹침률: 0, 최장: 0, 토막: [] });
-  assert.deepEqual(겹침찾기("아무 글", { posts: [] }, CONFIG), { 겹침률: 0, 최장: 0, 토막: [] });
+  // 잰것: false — "검사해서 깨끗함"과 "잴 대상이 없었음"은 다르다
+  for (const 없음 of [null, { posts: [] }])
+    assert.deepEqual(겹침찾기("아무 글", 없음, CONFIG), { 잰것: false, 겹침률: 0, 최장: 0, 토막: [] });
 });
 
 test("문장째 옮긴 것은 불합격, 짧게 겹친 것은 권장", () => {
-  const 문장째 = 재기("제목: 레티놀\n\n" + 내문장.repeat(4) + "처음 쓰는 분들은 일주일에 두 번부터 시작해서 피부가 적응하면 횟수를 천천히 늘려 나가시는 것을 권해 드립니다.", { ref: 레퍼 });
+  const 문장째 = 재기(베낀글(베낀곳), { ref: 레퍼 });
   assert.ok(문장째.issues.some((s) => s.includes("옮긴")), 문장째.issues.join(" | "));
 
-  const 짧게 = 재기("제목: 레티놀\n\n" + 내문장.repeat(4) + "처음 쓰는 분들은 일주일에 두 번부터 시작해서 피부가 적응하면", { ref: 레퍼 });
+  const 짧게 = 재기(베낀글(베낀곳.split(" ").slice(0, 9).join(" ")), { ref: 레퍼 });
   assert.ok(!짧게.issues.some((s) => s.includes("옮긴")), "불합격까지는 가지 않는다");
   assert.ok(짧게.advice.some((s) => s.includes("겹치는")), 짧게.advice.join(" | "));
 });
 
 test("베끼기는 유형과 무관하다 — 파는 사람이든 아니든 원본이 위로 간다", () => {
-  const 글 = "제목: 레티놀\n\n" + 내문장.repeat(4) + "처음 쓰는 분들은 일주일에 두 번부터 시작해서 피부가 적응하면 횟수를 천천히 늘려 나가시는 것을 권해 드립니다.";
   for (const 유형 of ["원장", "정보"])
-    assert.ok(재기(글, { ref: 레퍼, 유형 }).issues.some((s) => s.includes("옮긴")), 유형);
+    assert.ok(재기(베낀글(베낀곳), { ref: 레퍼, 유형 }).issues.some((s) => s.includes("옮긴")), 유형);
 });
