@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveDraftView } from "./permissions.mjs";
 // 초안 판정 규칙은 브라우저와 한 파일을 함께 쓴다 (web/rules.js). 두 벌로 두면 반드시 갈라진다.
-import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 압축찾기, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형 } from "./web/rules.js";
+import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 쓴사람셈, 추상어목록, 압축찾기, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형 } from "./web/rules.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
@@ -532,8 +532,14 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = nu
     if (ref.출처?.length)
       lines.push(`- 이 글들은 "${keyword}"가 본문에 나오는 상위글만 ${ref.출처.map((k) => `"${k}"`).join("·")} 보관함에서 골라 모은 것이다 (그 키워드 전용 보관함은 아직 없다)`);
     lines.push(`- 상위 ${ref.posts.length}개 글 평균: 공백제외 ${ref.avgChars}자, 이미지 ${ref.avgImages}장`);
+    // 누가 쓴 글인지 함께 알려 준다. 상위글의 대부분은 고객 후기·제품 협찬이라
+    // 그 화법을 그대로 따라 하면 원장이 고객 흉내를 내게 된다.
     lines.push(`- 상위 글 제목들 (그대로 베끼지 말 것):`);
-    ref.posts.forEach((p) => lines.push(`  · ${p.title}`));
+    ref.posts.forEach((p) => lines.push(`  · [${p.쓴사람 || "불명"}] ${p.title}`));
+    const 셈 = 쓴사람셈(ref.posts, CONFIG);
+    lines.push(`- 이 ${ref.posts.length}편의 글쓴이: 원장 ${셈.원장} · 병원 ${셈.병원} · 고객후기·제품 ${셈.고객} · 불명 ${셈.불명}`);
+    if (셈.고객 + 셈.병원 > 셈.원장)
+      lines.push(`- 상위글 대부분이 ${부름(유형정규화(shop?.유형))}이 쓴 글이 아니다. 다루는 주제와 순서만 참고하고 화법은 따라 하지 마라 — 후기체("다녀왔어요")나 병원 말투를 쓰면 안 된다`);
     lines.push(`- 이 제목들과 화자 포지션이 겹치지 않게 차별화할 것 (예: 후기 일색이면 "원장이 알려주는 기준" 포지션)`);
     const numRate = Math.round((ref.posts.filter((p) => /\d/.test(p.title)).length / ref.posts.length) * 100);
     lines.push(
