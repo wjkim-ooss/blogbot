@@ -6,7 +6,7 @@
 import { chromium } from "playwright-core";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import { 추상어목록 } from "../web/rules.js";
+import { 추상어목록, 쓴사람, 레퍼런스점수 } from "../web/rules.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,9 +27,12 @@ async function cdpAlive() {
   }
 }
 
+// 크롬 창은 기본으로 안 띄운다. 크롤링이 도는 동안 창이 계속 앞으로 튀어나오면
+// 같은 컴퓨터로 다른 일을 할 수가 없다. 눈으로 봐야 할 때만 SHOW=1로 띄운다.
+const 보이기 = process.env.SHOW === "1";
 async function ensureChrome() {
   if (await cdpAlive()) return;
-  console.log("크롬(디버깅 모드)을 새로 띄웁니다...");
+  console.log(보이기 ? "크롬(디버깅 모드)을 새로 띄웁니다..." : "크롬을 화면 없이(headless) 띄웁니다...");
   spawn(
     CHROME_BIN,
     [
@@ -38,6 +41,7 @@ async function ensureChrome() {
       "--no-first-run",
       "--no-default-browser-check",
       "--window-size=1280,900",
+      ...(보이기 ? [] : ["--headless=new", "--disable-gpu", "--mute-audio"]),
     ],
     { detached: true, stdio: "ignore" }
   ).unref();
@@ -186,6 +190,9 @@ function saveReference(keyword, safeKw, posts, failed = [], keptFromBefore = 0) 
     md += `\n## 실패한 URL\n\n${failed.map((p) => `- ${p.url} (${p.error})`).join("\n")}\n`;
   }
 
+  // 누가 쓴 글인지, 본받을 값이 있는지 저장할 때 같이 적어 둔다.
+  // 나중에 따로 돌리면 새로 모은 것만 표시가 빠져 조용히 갈라진다.
+  posts.forEach((p, i) => { p.쓴사람 = 쓴사람(p, CONFIG); p.평가 = 레퍼런스점수(p, CONFIG, i + 1); });
   fs.writeFileSync(outPath, md);
   fs.writeFileSync(
     outPath.replace(/\.md$/, ".json"),
