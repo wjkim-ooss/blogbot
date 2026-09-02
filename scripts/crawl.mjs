@@ -2,11 +2,13 @@
 // 사용법: node scripts/crawl.mjs "키워드" [수집개수=7] [모드=new|append]
 //   new    = 새로 수집(기존 파일 덮어씀)
 //   append = 기존 레퍼런스 유지 + 중복 아닌 새 글을 수집개수만큼 추가
+// 크롬 창은 기본으로 안 뜬다. 보려면 앞에 SHOW=1 을 붙인다.
+// 수집한 글이 어떤지 보려면: node scripts/ref-report.mjs [키워드]
 // 크롬을 원격 디버깅 포트(9222)로 띄우고 Playwright를 CDP로 연결해서 수집한다.
 import { chromium } from "playwright-core";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import { 추상어목록, 쓴사람, 레퍼런스점수 } from "../web/rules.js";
+import { 추상어목록 } from "../web/rules.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -32,7 +34,7 @@ async function cdpAlive() {
 const 보이기 = process.env.SHOW === "1";
 async function ensureChrome() {
   if (await cdpAlive()) return;
-  console.log(보이기 ? "크롬(디버깅 모드)을 새로 띄웁니다..." : "크롬을 화면 없이(headless) 띄웁니다...");
+  console.log(`크롬을 띄웁니다${보이기 ? "" : " — 화면 없이(headless). 보려면 SHOW=1"}...`);
   spawn(
     CHROME_BIN,
     [
@@ -190,9 +192,6 @@ function saveReference(keyword, safeKw, posts, failed = [], keptFromBefore = 0) 
     md += `\n## 실패한 URL\n\n${failed.map((p) => `- ${p.url} (${p.error})`).join("\n")}\n`;
   }
 
-  // 누가 쓴 글인지, 본받을 값이 있는지 저장할 때 같이 적어 둔다.
-  // 나중에 따로 돌리면 새로 모은 것만 표시가 빠져 조용히 갈라진다.
-  posts.forEach((p, i) => { p.쓴사람 = 쓴사람(p, CONFIG); p.평가 = 레퍼런스점수(p, CONFIG, i + 1); });
   fs.writeFileSync(outPath, md);
   fs.writeFileSync(
     outPath.replace(/\.md$/, ".json"),

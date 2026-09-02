@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기 } from "./web/rules.js";
+import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈 } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
@@ -697,4 +697,42 @@ test("해시태그는 파는 사람 글에만 요구한다", () => {
   const 정보 = 재기(글, { 원장값: 정보값 });
   assert.ok(원장.advice.some((s) => s.includes("해시태그")), 원장.advice.join(" | "));
   assert.ok(!정보.advice.some((s) => s.includes("해시태그")));
+});
+
+// ---------- 누가 쓴 글인가 ----------
+// 레퍼런스는 두 가지 일을 한다 — 본보기와 대조본. 본보기로 값을 하려면 원장 글이어야 하고,
+// 대조본은 상위글 전부가 있어야 한다. 그래서 지우지 않고 표시만 한다.
+const 글쓴이 = (제목, 본문) => ({ title: 제목, text: 본문 });
+
+test("관리를 해 준 사람과 받은 사람을 가른다", () => {
+  assert.equal(쓴사람(글쓴이("여드름 관리", "농포는 압출해 드리고 붉은 곳은 팩을 올렸습니다. 오신 고객께 안내드렸습니다."), CONFIG), "원장");
+  assert.equal(쓴사람(글쓴이("여드름 관리 후기", "내돈내산 솔직 후기입니다. 다녀왔어요. 써봤는데 좋았어요."), CONFIG), "고객");
+  assert.equal(쓴사람(글쓴이("여드름 치료", "진료를 받고 처방받았습니다. 의사 선생님이 설명해 주셨어요."), CONFIG), "병원");
+  assert.equal(쓴사람(글쓴이("여드름이란", "여드름은 모공이 막혀 생깁니다."), CONFIG), "불명", "신호가 없으면 불명");
+});
+
+test("신호가 제일 많은 갈래가 이긴다 — 병원만 무조건 이기지 않는다", () => {
+  // 예전에는 병원 신호 하나만 걸려도 무조건 병원이라, "피부과 솔직 후기" 같은 고객 글이 병원으로 갔다
+  const 고객글 = 글쓴이("부산 피부과 후기", "내돈내산 솔직 후기예요. 다녀왔고 써봤습니다. 진료를 받고 왔어요.");
+  assert.equal(쓴사람(고객글, CONFIG), "고객");
+});
+
+test("설정이 없으면 조용히 불명 — 판정을 지어내지 않는다", () => {
+  assert.equal(쓴사람(글쓴이("제목", "저희 샵에서 압출해 드렸습니다"), {}), "불명");
+});
+
+test("갈래별 셈의 합은 글 수와 같다", () => {
+  const 글들 = [
+    글쓴이("a", "압출해 드렸습니다"), 글쓴이("b", "내돈내산 후기입니다"),
+    글쓴이("c", "처방받았습니다"), 글쓴이("d", "아무 신호 없음"),
+  ];
+  const 셈 = 쓴사람셈(글들, CONFIG);
+  assert.equal(Object.values(셈).reduce((a, b) => a + b, 0), 글들.length);
+  assert.deepEqual(셈, { 원장: 1, 병원: 1, 고객: 1, 불명: 1 });
+});
+
+test("저장된 라벨이 아니라 지금 규칙으로 센다 — 규칙이 바뀌면 값도 따라간다", () => {
+  // 옛 라벨을 붙여 두어도 무시한다. 저장하면 신호어를 고쳤을 때 옛 값과 섞인다.
+  const 글 = { ...글쓴이("a", "내돈내산 후기입니다"), 쓴사람: "원장" };
+  assert.equal(쓴사람셈([글], CONFIG).고객, 1);
 });
