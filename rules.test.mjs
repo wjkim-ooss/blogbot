@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기 } from "./web/rules.js";
+import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈 } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
@@ -697,4 +697,76 @@ test("해시태그는 파는 사람 글에만 요구한다", () => {
   const 정보 = 재기(글, { 원장값: 정보값 });
   assert.ok(원장.advice.some((s) => s.includes("해시태그")), 원장.advice.join(" | "));
   assert.ok(!정보.advice.some((s) => s.includes("해시태그")));
+});
+
+// ---------- 누가 쓴 글인가 ----------
+// 레퍼런스는 두 가지 일을 한다 — 본보기와 대조본. 본보기로 값을 하려면 원장 글이어야 하고,
+// 대조본은 상위글 전부가 있어야 한다. 그래서 지우지 않고 표시만 한다.
+const 글쓴이 = (제목, 본문) => ({ title: 제목, text: 본문 });
+
+test("관리를 해 준 사람과 받은 사람을 가른다", () => {
+  assert.equal(쓴사람(글쓴이("여드름 관리", "농포는 압출해 드리고 붉은 곳은 팩을 올렸습니다. 오신 고객께 안내드렸습니다."), CONFIG), "원장");
+  assert.equal(쓴사람(글쓴이("여드름 관리 후기", "내돈내산 솔직 후기입니다. 다녀왔어요. 써봤는데 좋았어요."), CONFIG), "고객");
+  assert.equal(쓴사람(글쓴이("여드름 치료", "진료를 받고 처방받았습니다. 의사 선생님이 설명해 주셨어요."), CONFIG), "병원");
+  assert.equal(쓴사람(글쓴이("여드름이란", "여드름은 모공이 막혀 생깁니다."), CONFIG), "불명", "신호가 없으면 불명");
+});
+
+test("신호가 제일 많은 갈래가 이긴다 — 병원만 무조건 이기지 않는다", () => {
+  // 예전에는 병원 신호 하나만 걸려도 무조건 병원이라, "피부과 솔직 후기" 같은 고객 글이 병원으로 갔다
+  const 고객글 = 글쓴이("부산 피부과 후기", "내돈내산 솔직 후기예요. 다녀왔고 써봤습니다. 진료를 받고 왔어요.");
+  assert.equal(쓴사람(고객글, CONFIG), "고객");
+});
+
+test("설정이 없으면 조용히 불명 — 판정을 지어내지 않는다", () => {
+  assert.equal(쓴사람(글쓴이("제목", "저희 샵에서 압출해 드렸습니다"), {}), "불명");
+});
+
+test("갈래별 셈의 합은 글 수와 같다", () => {
+  const 글들 = [
+    글쓴이("a", "압출해 드렸습니다"), 글쓴이("b", "내돈내산 후기입니다"),
+    글쓴이("c", "처방받았습니다"), 글쓴이("d", "아무 신호 없음"),
+  ];
+  const 셈 = 쓴사람셈(글들, CONFIG);
+  assert.equal(Object.values(셈).reduce((a, b) => a + b, 0), 글들.length);
+  assert.deepEqual(셈, { 원장: 1, 병원: 1, 고객: 1, 불명: 1 });
+});
+
+test("저장된 라벨이 아니라 지금 규칙으로 센다 — 규칙이 바뀌면 값도 따라간다", () => {
+  // 옛 라벨을 붙여 두어도 무시한다. 저장하면 신호어를 고쳤을 때 옛 값과 섞인다.
+  const 글 = { ...글쓴이("a", "내돈내산 후기입니다"), 쓴사람: "원장" };
+  assert.equal(쓴사람셈([글], CONFIG).고객, 1);
+});
+
+// ---------- 강의 낱말을 옮긴 뒤 못박는 것 ----------
+test("추상어 대체 표는 전부 목록에 있는 낱말이고, 값은 지시문이 아니라 문장이다", () => {
+  const 목록 = new Set(추상어목록(CONFIG));
+  for (const [k, v] of Object.entries(CONFIG.추상어대체)) {
+    assert.ok(목록.has(k), `대체 표의 "${k}"가 추상어 목록에 없다`);
+    assert.ok(!v.startsWith("("), `"${k}"의 대체어가 지시문이다: ${v}`); // 화면에 "→(지워라…)"로 찍힌다
+  }
+});
+
+test("'제품마다 다릅니다'는 추상어가 아니다 — 논문 블록이 권하는 정직한 유보다", () => {
+  const v = 재기("제목: 레티놀\n\n제품마다 안정화 방식이 다릅니다. 사람마다 원인이 다릅니다. " + 채움글);
+  assert.equal(v.abstractFound.filter((w) => w.includes("다릅니다")).length, 0, v.abstractFound.join(", "));
+  const w = 재기("제목: 레티놀\n\n저희는 다릅니다. " + 채움글);
+  assert.ok(w.abstractFound.includes("저희는 다릅니다"), "자기자랑형은 잡는다");
+});
+
+test("반박 걱정은 답과 한 덩어리다 — 인용이 어긋날 자리가 없다", () => {
+  for (const x of CONFIG.반박제거.걱정) {
+    assert.ok(typeof x.걱정 === "string" && x.걱정.length, JSON.stringify(x));
+    assert.ok(typeof x.답 === "string" && x.답.length, `"${x.걱정}"에 답이 없다`);
+  }
+  const v = 재기(줄글(짧은줄), { 원장값: { 유형: "원장", 확인일: "x" } });
+  const 말 = v.advice.find((s) => s.includes("예약을 막는 생각")) || "";
+  assert.ok(말.includes("또 광고겠지"), "화면 문구가 걱정 문장을 그대로 쓴다");
+});
+
+test("정체성·반박표 칸은 원장 유형에만 있고, 프롬프트가 정체성 배치를 안다", () => {
+  const 원장칸 = CONFIG.원장정보항목.filter((x) => x.유형 === "원장").map((x) => x.key);
+  assert.ok(원장칸.includes("정체성") && 원장칸.includes("반박표"));
+  assert.ok(!CONFIG.원장정보항목.some((x) => x.유형 === "정보" && ["정체성", "반박표"].includes(x.key)));
+  assert.ok(CONFIG.글쓴이유형.원장.본문칸.some((s) => s.includes("정체성 한 문장")), "본문칸 3이 배치를 말해야 한다");
+  for (const x of CONFIG.원장정보항목) assert.ok(!/\d-\d/.test(x.이름), `칸 이름에 강의 번호가 샌다: ${x.이름}`);
 });

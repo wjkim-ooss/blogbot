@@ -169,57 +169,25 @@ export const 사진범위 = (config) => `${config.권장이미지최소}~${confi
 // 그래서 지우지 않고 표시만 한다. 가르는 기준은 하나다: 관리를 해 준 사람인가, 받은 사람인가.
 //
 // 상위노출 글의 대부분은 원장 글이 아니다 — 290편을 재어 보니 원장 2%, 고객 후기·제휴가 47%였다.
+// 신호가 제일 많이 걸린 갈래가 이긴다. 예전에는 병원만 개수 비교 없이 이겨서,
+// "부산 피부과 솔직 후기" 같은 고객 글이 병원으로 넘어갔다.
+// 저장하지 않고 읽을 때마다 계산한다 — 신호어를 고치면 옛 라벨과 섞이기 때문이다.
+// (텍스트는 파일에 그대로 있으므로 다시 계산해도 같은 값이 나온다)
 export function 쓴사람(post, config) {
-  const 설정 = config.쓴사람;
-  if (!설정) return "불명";
+  const 갈래 = config.쓴사람?.갈래;
+  if (!갈래) return "불명";
   const 글 = `${post?.title || ""}\n${post?.text || ""}`;
-  const 센다 = (갈래) => (설정.갈래?.[갈래]?.신호 || []).filter((w) => 글.includes(w)).length;
-  const 원장 = 센다("원장"), 병원 = 센다("병원"), 고객 = 센다("고객");
-  if (원장 > 0 && 원장 >= 고객 && 병원 === 0) return "원장";
-  if (병원 > 0) return "병원";
-  if (고객 > 0) return "고객";
-  return "불명";
+  let 이긴것 = "불명", 최다 = 0;
+  for (const [이름, { 신호 }] of Object.entries(갈래)) {
+    const n = (신호 || []).filter((w) => 글.includes(w)).length;
+    if (n > 최다) { 최다 = n; 이긴것 = 이름; }
+  }
+  return 이긴것;
 }
-// 보관함 하나를 갈래별로 세어 준다 — 화면과 크롤러가 같은 수를 보여주도록
 export function 쓴사람셈(posts, config) {
   const 셈 = { 원장: 0, 병원: 0, 고객: 0, 불명: 0 };
-  for (const p of posts || []) 셈[p.쓴사람 || 쓴사람(p, config)] += 1;
+  for (const p of posts || []) 셈[쓴사람(p, config)] += 1;
   return 셈;
-}
-
-// ---------- 레퍼런스로 값을 하는 글인가 ----------
-// 상위노출 됐다고 다 본받을 글은 아니다. 네이버가 올려준 자리·폰에서 읽히는가·
-// 첫 줄에서 붙잡는가·숫자로 말하는가, 넷을 각각 재서 못 미치는 것은 보관함에서 뺀다.
-export function 레퍼런스점수(post, config, 순위 = 0) {
-  const 글 = post?.text || "";
-  const 제목 = post?.title || "";
-  const 문장 = 문장나누기(글).filter((x) => noSpace(x) > 0);
-  const 긴것 = 문장.filter((x) => noSpace(x) > (config.문장길이?.상한 ?? 40)).length;
-  const 긴비율 = 문장.length ? (긴것 / 문장.length) * 100 : 100;
-
-  const 상위노출 =
-    (순위 && 순위 <= 10 ? 2 : 순위 && 순위 <= 20 ? 1 : 0) +
-    ((post?.chars || 0) >= 1000 ? 1 : 0) +
-    ((post?.images || 0) >= (config.권장이미지최소 ?? 5) ? 1 : 0);
-
-  const 가독성 = (긴비율 <= (config.문장길이?.허용비율 ?? 25) ? 2 : 긴비율 <= 45 ? 1 : 0) + (문장.length >= 15 ? 1 : 0);
-
-  const 후킹 =
-    (/\d/.test(제목) ? 1 : 0) +
-    (/[?？]|왜|어떻게|이유|안 되는|하면 안|모르고|놓치/.test(제목) ? 1 : 0) +
-    (문장나누기(글).slice(0, 3).some((x) => /[?？]|시죠|있으신|하시나요|적 있/.test(x)) ? 1 : 0);
-
-  const 추상 = 추상어목록(config).filter((w) => 글.includes(w)).length;
-  const 밀도 = noSpace(stripPhotos(글)) ? (구체수(글) / noSpace(stripPhotos(글))) * 1000 : 0;
-  const 초사고 = (추상 === 0 ? 2 : 추상 <= 2 ? 1 : 0) + (밀도 >= (config.구체성?.["1000자당_최소"] ?? 3) ? 1 : 0);
-
-  const 점수 = { 상위노출, 가독성, 후킹, 초사고 };
-  점수.합계 = 상위노출 + 가독성 + 후킹 + 초사고;
-  const 선 = config.레퍼런스평가?.통과선 || {};
-  점수.통과 = 점수.합계 >= (선.합계 ?? 0) && Object.entries(선).every(([k, v]) => k === "합계" || (점수[k] ?? 0) >= v);
-  점수.긴문장비율 = Math.round(긴비율);
-  점수.추상어 = 추상;
-  return 점수;
 }
 
 // ---------- 문장 쪼개기 ----------
@@ -782,7 +750,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
     사진최소: config.권장이미지최소, 사진최대: config.권장이미지최대,
     문장상한: config.문장길이?.상한 ?? 0, 문장허용,
     공감본보기: config.말투?.본보기 || "", 약속본보기: config.말투?.약속본보기 || { 나쁨: "", 좋음: "" },
-    반박최소, 반박걱정: config.반박제거?.걱정 || [], 반박심는법: (config.반박제거?.심는법 || []).join(" "),
+    반박최소, 반박걱정: (config.반박제거?.걱정 || []).map((x) => x.걱정 ?? x), 반박심는법: (config.반박제거?.심는법 || []).join(" "),
     가격대신: config.가격금지?.대신 || "",
     겹침, 약속, 태그, 태그범위: config.마무리?.해시태그?.개수 || null,
   };

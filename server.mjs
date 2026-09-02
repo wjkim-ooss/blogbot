@@ -1,12 +1,13 @@
 // 블로그봇 웹 대시보드 서버 — 레퍼런스 보관함 · 인사이트 · 초안 작성
 // 실행: node server.mjs (포트 4039)
 import http from "node:http";
+import zlib from "node:zlib";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveDraftView } from "./permissions.mjs";
 // 초안 판정 규칙은 브라우저와 한 파일을 함께 쓴다 (web/rules.js). 두 벌로 두면 반드시 갈라진다.
-import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 쓴사람셈, 추상어목록, 압축찾기, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형 } from "./web/rules.js";
+import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 압축찾기, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형 } from "./web/rules.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
@@ -405,7 +406,7 @@ ${(B.목록 || []).map((x) => `- ${x}`).join("\n")}
 `)}${유형블록(U, "반박제거", (R) => `
 [예약을 막는 생각 지우기 — 반박제거]
 ${R.설명}
-막는 생각: ${R.걱정.map((x) => `"${x}"`).join(" / ")}
+${R.걱정.map((x) => `- "${x.걱정}" → ${x.답}`).join("\n")}
 ${R.심는법.map((x) => `- ${x}`).join("\n")}
 - 제목의 질문과 이어지는 것으로 ${R.최소}~3개만 짚는다. 안 짚으면 글은 좋은데 예약으로 넘어가지 않는다.
 `)}${유형블록(U, "가격금지", (P) => `
@@ -532,14 +533,10 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = nu
     if (ref.출처?.length)
       lines.push(`- 이 글들은 "${keyword}"가 본문에 나오는 상위글만 ${ref.출처.map((k) => `"${k}"`).join("·")} 보관함에서 골라 모은 것이다 (그 키워드 전용 보관함은 아직 없다)`);
     lines.push(`- 상위 ${ref.posts.length}개 글 평균: 공백제외 ${ref.avgChars}자, 이미지 ${ref.avgImages}장`);
-    // 누가 쓴 글인지 함께 알려 준다. 상위글의 대부분은 고객 후기·제품 협찬이라
-    // 그 화법을 그대로 따라 하면 원장이 고객 흉내를 내게 된다.
     lines.push(`- 상위 글 제목들 (그대로 베끼지 말 것):`);
-    ref.posts.forEach((p) => lines.push(`  · [${p.쓴사람 || "불명"}] ${p.title}`));
-    const 셈 = 쓴사람셈(ref.posts, CONFIG);
-    lines.push(`- 이 ${ref.posts.length}편의 글쓴이: 원장 ${셈.원장} · 병원 ${셈.병원} · 고객후기·제품 ${셈.고객} · 불명 ${셈.불명}`);
-    if (셈.고객 + 셈.병원 > 셈.원장)
-      lines.push(`- 상위글 대부분이 ${부름(유형정규화(shop?.유형))}이 쓴 글이 아니다. 다루는 주제와 순서만 참고하고 화법은 따라 하지 마라 — 후기체("다녀왔어요")나 병원 말투를 쓰면 안 된다`);
+    ref.posts.forEach((p) => lines.push(`  · ${p.title}`));
+    // 글마다 라벨을 붙여 보냈더니 분류가 못 미더워 오히려 헷갈렸다. 대신 늘 참인 사실
+    // 하나만 말한다 — 보관함 22개를 재어 보니 예외 없이 원장 글이 소수였다.
     lines.push(`- 이 제목들과 화자 포지션이 겹치지 않게 차별화할 것 (예: 후기 일색이면 "원장이 알려주는 기준" 포지션)`);
     const numRate = Math.round((ref.posts.filter((p) => /\d/.test(p.title)).length / ref.posts.length) * 100);
     lines.push(
@@ -1162,9 +1159,21 @@ function parseDraftOutput(text, keyword) {
 // ---------- HTTP ----------
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json" };
 
+// 레퍼런스 응답이 1.3MB다(상위글 본문이 91%). 브라우저가 페이지 열 때마다 통째로 받는데
+// gzip이 꺼져 있어 그대로 나가고 있었다 — 켜니 855KB로 473KB(36%)가 줄었다.
+// 작은 응답까지 압축하면 오히려 손해라 일정 크기부터만 압축한다.
+const 압축최소 = 4096;
 function json(res, code, data) {
-  res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
-  res.end(JSON.stringify(data));
+  const 본문 = Buffer.from(JSON.stringify(data), "utf8");
+  const 머리 = { "Content-Type": "application/json; charset=utf-8" };
+  // 받는 쪽이 gzip을 받겠다고 했을 때만 누른다. 안 물어보고 누르면 못 푸는 쪽에는 깨져 나간다.
+  const 받겠다 = /\bgzip\b/.test(res.req?.headers?.["accept-encoding"] || "");
+  if (!받겠다 || 본문.length < 압축최소) { res.writeHead(code, 머리); return res.end(본문); }
+  zlib.gzip(본문, (err, 눌린것) => {
+    if (err) { res.writeHead(code, 머리); return res.end(본문); }
+    res.writeHead(code, { ...머리, "Content-Encoding": "gzip" });
+    res.end(눌린것);
+  });
 }
 
 function serveStatic(res, p) {
