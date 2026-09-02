@@ -736,3 +736,37 @@ test("저장된 라벨이 아니라 지금 규칙으로 센다 — 규칙이 바
   const 글 = { ...글쓴이("a", "내돈내산 후기입니다"), 쓴사람: "원장" };
   assert.equal(쓴사람셈([글], CONFIG).고객, 1);
 });
+
+// ---------- 강의 낱말을 옮긴 뒤 못박는 것 ----------
+test("추상어 대체 표는 전부 목록에 있는 낱말이고, 값은 지시문이 아니라 문장이다", () => {
+  const 목록 = new Set(추상어목록(CONFIG));
+  for (const [k, v] of Object.entries(CONFIG.추상어대체)) {
+    assert.ok(목록.has(k), `대체 표의 "${k}"가 추상어 목록에 없다`);
+    assert.ok(!v.startsWith("("), `"${k}"의 대체어가 지시문이다: ${v}`); // 화면에 "→(지워라…)"로 찍힌다
+  }
+});
+
+test("'제품마다 다릅니다'는 추상어가 아니다 — 논문 블록이 권하는 정직한 유보다", () => {
+  const v = 재기("제목: 레티놀\n\n제품마다 안정화 방식이 다릅니다. 사람마다 원인이 다릅니다. " + 채움글);
+  assert.equal(v.abstractFound.filter((w) => w.includes("다릅니다")).length, 0, v.abstractFound.join(", "));
+  const w = 재기("제목: 레티놀\n\n저희는 다릅니다. " + 채움글);
+  assert.ok(w.abstractFound.includes("저희는 다릅니다"), "자기자랑형은 잡는다");
+});
+
+test("반박 걱정은 답과 한 덩어리다 — 인용이 어긋날 자리가 없다", () => {
+  for (const x of CONFIG.반박제거.걱정) {
+    assert.ok(typeof x.걱정 === "string" && x.걱정.length, JSON.stringify(x));
+    assert.ok(typeof x.답 === "string" && x.답.length, `"${x.걱정}"에 답이 없다`);
+  }
+  const v = 재기(줄글(짧은줄), { 원장값: { 유형: "원장", 확인일: "x" } });
+  const 말 = v.advice.find((s) => s.includes("예약을 막는 생각")) || "";
+  assert.ok(말.includes("또 광고겠지"), "화면 문구가 걱정 문장을 그대로 쓴다");
+});
+
+test("정체성·반박표 칸은 원장 유형에만 있고, 프롬프트가 정체성 배치를 안다", () => {
+  const 원장칸 = CONFIG.원장정보항목.filter((x) => x.유형 === "원장").map((x) => x.key);
+  assert.ok(원장칸.includes("정체성") && 원장칸.includes("반박표"));
+  assert.ok(!CONFIG.원장정보항목.some((x) => x.유형 === "정보" && ["정체성", "반박표"].includes(x.key)));
+  assert.ok(CONFIG.글쓴이유형.원장.본문칸.some((s) => s.includes("정체성 한 문장")), "본문칸 3이 배치를 말해야 한다");
+  for (const x of CONFIG.원장정보항목) assert.ok(!/\d-\d/.test(x.이름), `칸 이름에 강의 번호가 샌다: ${x.이름}`);
+});
