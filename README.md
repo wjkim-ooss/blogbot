@@ -174,13 +174,15 @@ https://blogbot-u7s9.onrender.com
 `GEMINI_MODEL`은 **"이것부터 써라"**는 뜻입니다(고정이 아닙니다). 그 모델이 막히면 나머지로 넘어갑니다.
 평소에는 **비워 두는 것을 권장**합니다 — 구글이 모델을 교체해도 알아서 따라갑니다.
 
-### 💰 유료 — Claude (품질 최상)
+### 💰 유료 — Claude Fable 5.1 (품질 최상)
 
 1. `https://console.anthropic.com` → **Billing** → 충전 (최소 $5)
 2. **API Keys** → **Create Key** → 키 복사
 3. Render → Environment → `ANTHROPIC_API_KEY` → Save
 
-초안 1건당 약 $0.1~0.2. $5로 25~50건. "모델을 Sonnet으로 바꿔줘"라고 하시면 60% 절감됩니다.
+모델은 `claude-fable-5-1`(Anthropic 최상위 등급, 입력 $10·출력 $50 / 100만 토큰)입니다.
+초안 1건당 약 $0.3~0.6(고쳐 쓰기 포함). $5로 8~15건. "모델을 Opus 5로 바꿔줘"라고 하시면 절반 값입니다.
+안전 분류기가 요청을 거절하면 자동으로 대체 모델이 이어 씁니다. 초안 머리말의 `생성:` 줄에 실제로 쓴 모델이 찍힙니다.
 
 > **둘 다 넣으면 Claude를 씁니다.** 무료로 쓰시려면 `ANTHROPIC_API_KEY`를 비우거나 삭제하세요.
 

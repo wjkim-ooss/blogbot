@@ -15,7 +15,8 @@ const REF_DIR = path.join(ROOT, "references");
 const DRAFT_DIR = path.join(ROOT, "drafts");
 const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
 const PORT = Number(process.env.PORT) || 4039;
-const MODEL = "claude-opus-4-8";
+// 유료 엔진(ANTHROPIC_API_KEY가 있을 때만). Fable 5.1 = Opus 위 최상위 등급, 값은 Opus의 두 배.
+const MODEL = "claude-fable-5-1";
 
 // .env 로드 (ANTHROPIC_API_KEY 등 — 사용자가 직접 기입)
 const envPath = path.join(ROOT, ".env");
@@ -203,7 +204,7 @@ function 초벌뽑기(글들) {
 // 인증 ON(배포): Supabase drafts 테이블(user_id별). OFF(로컬): 파일(DRAFT_DIR 루트).
 const validName = (name) => !!name && !name.includes("/") && !name.includes("..") && name.endsWith(".md");
 
-function buildDraftContent(keyword, title, body, v, 후보 = "", 유형 = 기본유형) {
+function buildDraftContent(keyword, title, body, v, 후보 = "", 유형 = 기본유형, 모델 = MODEL) {
   const ok = (cond) => (cond ? "✅" : "⚠️");
   const header = [
     `# ${title}`,
@@ -218,7 +219,8 @@ function buildDraftContent(keyword, title, body, v, 후보 = "", 유형 = 기본
     `- 글쓴이유형: ${유형}`,
     // 제목 후보는 --- 위(헤더)에만 둔다. 본문에 두면 네이버로 복사되고 글자수에도 섞인다.
     ...(후보 ? [`- 제목 후보: ${후보}`] : []),
-    `- 생성: 웹 대시보드 (${MODEL})`,
+    // 실제로 글을 쓴 모델. (예전엔 Gemini가 썼는데도 Claude 이름을 찍었다.)
+    `- 생성: 웹 대시보드 (${모델})`,
     "",
     "---",
     "",
@@ -302,9 +304,9 @@ const supaStore = {
 // 저장 백엔드는 시작 시 한 번 결정 (인증 ON=Supabase, OFF=로컬 파일)
 const store = AUTH_ON ? supaStore : fileStore;
 
-async function draftCreate(ctx, keyword, title, body, v, 후보 = "", 유형 = 기본유형) {
+async function draftCreate(ctx, keyword, title, body, v, 후보 = "", 유형 = 기본유형, 모델 = MODEL) {
   const base = draftBaseName(keyword);
-  return store.create(ctx.userId, base, buildDraftContent(keyword, title, body, v, 후보, 유형));
+  return store.create(ctx.userId, base, buildDraftContent(keyword, title, body, v, 후보, 유형, 모델));
 }
 
 // 손으로 쓰기 시작할 빈 초안. AI 생성이 막혀 있어도(크레딧·키 문제) 글은 쓸 수 있어야 한다.
@@ -706,23 +708,36 @@ const 소진진단 = (ctx, 전체 = []) => {
   return `\n[관리자용] 모델 ${전체.length}개: ${표 || "없음"}`;
 };
 
-async function streamClaude(client, messages, send, 유형 = "원장") {
-  const stream = client.messages.stream({
+// Fable 5.1은 생각(thinking)이 늘 켜져 있다 — 따로 지정하면 400이다.
+// 안전 분류기가 요청을 거절하면(HTTP 200인데 stop_reason이 "refusal") 서버가 대체 모델로
+// 같은 요청을 이어 쓰게 한다(fallbacks "default"). 피부 관리 글이 걸릴 일은 드물지만,
+// 걸렸을 때 빈 글로 끝나지 않게. 대체 모델까지 거절하면 그때 오류로 알린다.
+// 고쳐 쓰기 대화의 assistant 차례는 글(텍스트)만 넘긴다 — 생각 블록을 안 돌려보내면
+// '앞 차례를 고쳤는가' 검사(preserved thinking)에 걸릴 것이 없다.
+async function streamClaude(client, messages, send, 유형 = "원장", 기록 = {}) {
+  const stream = client.beta.messages.stream({
     model: MODEL,
     max_tokens: 64000,
-    thinking: { type: "adaptive" },
+    betas: ["server-side-fallback-2026-07-01"],
+    fallbacks: "default",
     system: 시스템프롬프트(유형),
     messages,
   });
   stream.on("text", (t) => send({ type: "delta", text: t }));
   const final = await stream.finalMessage();
+  기록.모델 = final.model; // 대체 모델이 이어 썼으면 그 이름이 온다
+  if (final.stop_reason === "refusal") {
+    send({ type: "reset" }); // 화면에 흘러간 조각은 완성본이 아니다
+    const 이유 = final.stop_details?.category || "이유 없음";
+    throw Object.assign(new Error(`AI가 이 요청을 거절했습니다 (${이유})`), { engine: "claude", 거절: true });
+  }
   return final.content.filter((b) => b.type === "text").map((b) => b.text).join("");
 }
 
 // Gemini는 SDK 없이 REST로 부른다 (의존성을 늘리지 않으려고).
 // 붐비면 잠깐 쉬었다 다시, 그래도 안 되면 다음 모델로 넘어간다.
 // 원장 입장에서 "나중에 다시 해보세요"는 사실상 못 쓰는 것이나 마찬가지라서.
-async function streamGemini(messages, send, 유형 = "원장") {
+async function streamGemini(messages, send, 유형 = "원장", 기록 = {}) {
   const models = await geminiModels();
   const contents = messages.map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -764,7 +779,7 @@ async function streamGemini(messages, send, 유형 = "원장") {
 
         if (r.ok) {
           const 결과 = await 읽기(r, send);
-          if (noSpace(결과.out) >= 100) return 결과.out;
+          if (noSpace(결과.out) >= 100) { 기록.모델 = `Gemini ${model}`; return 결과.out; }
           // 200인데 글이 없다 = 이 설정이 이 모델에 안 맞는 것. 다음 후보로.
           마지막오류 = Object.assign(new Error(`글이 거의 나오지 않았습니다 — ${결과.이유}`), { status: 502, engine: "gemini" });
           break;
@@ -914,8 +929,9 @@ async function 읽기(res, send) {
   return { out, 이유: 이유설명(막힘, 끝난이유) };
 }
 
-const streamOnce = (client, messages, send, 유형) =>
-  client ? streamClaude(client, messages, send, 유형) : streamGemini(messages, send, 유형);
+// 기록.모델에 실제로 글을 쓴 모델 이름이 남는다 (초안 머리말에 찍는다)
+const streamOnce = (client, messages, send, 유형, 기록) =>
+  client ? streamClaude(client, messages, send, 유형, 기록) : streamGemini(messages, send, 유형, 기록);
 
 // 통과할 때까지 고쳐 쓰는 최대 횟수. 넘기면 미달인 채로 저장하고 무엇이 남았는지 알린다.
 const MAX_FIX_ROUNDS = 3;
@@ -1040,11 +1056,12 @@ async function handleGenerate(res, body, ctx) {
 
     // 엔진이 이미 쓸 수 있는 모델을 모두 훑고 일반 호출까지 해 본 뒤에 던진다.
     // 여기서 한 번 더 부르면 그 전부를 처음부터 되풀이할 뿐이다 (무료 한도만 두 배로 태운다).
-    let draft = await streamOnce(client, messages, send, 글쓴이유형);
+    const 기록 = {}; // 어느 모델이 썼는지
+    let draft = await streamOnce(client, messages, send, 글쓴이유형, 기록);
     let { parsed, validation } = check(draft);
     // 마지막 시도가 늘 제일 낫지는 않다. 고쳐 쓰다 더 나빠질 수도 있으므로 제일 좋았던 것을 들고 간다.
     // 순위: 통과 여부 → 남은 고칠 점이 적은 순 → 긴 순.
-    let best = { parsed, validation };
+    let best = { parsed, validation, 모델: 기록.모델 };
     const 더나은가 = (a, b) =>
       a.validation.pass !== b.validation.pass ? a.validation.pass
       : a.validation.issues.length !== b.validation.issues.length ? a.validation.issues.length < b.validation.issues.length
@@ -1061,14 +1078,14 @@ async function handleGenerate(res, body, ctx) {
       messages.push({ role: "assistant", content: draft });
       messages.push({ role: "user", content: fixInstruction(validation, keyword) });
       try {
-        draft = await streamOnce(client, messages, send, 글쓴이유형);
+        draft = await streamOnce(client, messages, send, 글쓴이유형, 기록);
       } catch (e) {
         // 한 번 실패했다고 앞서 만든 글까지 버리지 않는다
         if (best.validation.chars >= 100) { send({ type: "status", message: `이번 시도는 실패했습니다 (${e.message}) — 직전 결과를 저장합니다` }); break; }
         throw e;
       }
       ({ parsed, validation } = check(draft));
-      const 이번 = { parsed, validation };
+      const 이번 = { parsed, validation, 모델: 기록.모델 };
       const 나아졌나 = 더나은가(이번, best);
       if (나아졌나) best = 이번;
       // 안 나아지면 더 불러도 대개 안 나아진다. 무료 등급의 분당 한도를 헛되이 태우지 않는다.
@@ -1085,7 +1102,7 @@ async function handleGenerate(res, body, ctx) {
         : `일부 기준이 남았습니다: ${validation.issues.join(" / ")} — 편집기에서 직접 고쳐 주세요`,
     });
 
-    const file = await draftCreate(ctx, keyword, parsed.title, parsed.body, validation, parsed.후보, 글쓴이유형);
+    const file = await draftCreate(ctx, keyword, parsed.title, parsed.body, validation, parsed.후보, 글쓴이유형, best.모델);
     차감함 = false; // 글이 나왔으니 정상 사용
     send({ type: "done", file, validation, quota });
   } catch (e) {
@@ -1137,6 +1154,9 @@ function describeError(e, ctx) {
     const 진단 = ctx.isAdmin && e?.진단 ? `\n[관리자용 진단] ${e.진단}` : "";
     return adminHint(ctx, "무료 엔진에서 오류가 발생했습니다.", `상세: ${요약.slice(0, 200)}`) + 대안안내 + 진단;
   }
+  // 안전 분류기가 거절한 것 — 키·잔액 문제가 아니다. 키워드나 사례 문구를 바꾸면 대개 풀린다.
+  if (e?.거절)
+    return `${e.message}. 키워드나 사례 문구를 조금 바꿔 다시 눌러 주세요.` + 대안안내;
   if (type === "authentication_error" || status === 401)
     return adminHint(ctx, "AI 생성 인증에 실패했습니다.", "ANTHROPIC_API_KEY 값이 올바른지 확인하세요.") + 대안안내;
   if (type === "billing_error" || status === 403 || 크레딧부족(e))
@@ -1365,4 +1385,4 @@ if (process.argv[1] && NFC(path.resolve(process.argv[1])) === NFC(fileURLToPath(
   server.listen(PORT, () => console.log(`블로그봇 대시보드: http://localhost:${PORT}`));
 
 // 테스트에서만 쓴다 — 가짜 구글 서버를 세워 놓고 한도·스트리밍 동작을 확인하려고
-export const __test = { streamGemini, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트 };
+export const __test = { streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트 };
