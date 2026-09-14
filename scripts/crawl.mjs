@@ -8,7 +8,7 @@
 import { chromium } from "playwright-core";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import { 추상어목록 } from "../web/rules.js";
+import { 품질점수 } from "../web/rules.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -151,31 +151,14 @@ function charCountNoSpace(text) {
 }
 
 // ---------- 글 품질 점수 (후보를 많이 모아 좋은 글만 채택할 때 사용) ----------
-// 기준·가중치는 전부 config.json의 품질점수 블록에서 읽는다 (검증 규칙과 같은 자리에서 조정)
+// 계산은 rules.js 품질점수 한 곳이다 — 기준·가중치는 config.json의 품질점수 블록에서 읽는다.
 const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
-const Q = CONFIG.품질점수;
-const MIN_SCORE = Q.최소점수;
-const 구체성RX = new RegExp(Q.구체성패턴, "g");
+const MIN_SCORE = CONFIG.품질점수.최소점수;
 
 // 점수 없는 옛 글은 undefined < n === false 라 유지된다
 const belowMin = (p) => p.score < MIN_SCORE;
 const dropLine = (p) => `기준 미달 제외: ${p.score}점 (추상어 ${p.abstract}개) — ${p.title.slice(0, 45)}`;
-
-function scorePost(text) {
-  const chars = charCountNoSpace(text) || 1;
-  const per1k = (n) => (n / chars) * 1000;
-  // 단어별로 센다 — "장단점"처럼 겹치는 단어를 각각 세는 기존 집계 방식 유지 (저장된 점수와 호환)
-  const hits = (words) => words.reduce((a, w) => a + countOccurrences(text, w), 0);
-  const abstract = hits(추상어목록(CONFIG)); // 추상어는 갈래별 객체다 — 납작하게 펴서 센다
-  const concrete = (text.match(구체성RX) || []).length;
-  const story = hits(Q.스토리텔링어);
-  const rebut = hits(Q.반박제거어);
-  const w = Q.가중치;
-  const score = Math.round(
-    per1k(concrete) * w.구체성 + per1k(story) * w.스토리텔링 + per1k(rebut) * w.반박제거 + per1k(abstract) * w.추상어
-  );
-  return { score, abstract, concrete, story, rebut };
-}
+const scorePost = (text) => 품질점수(text, CONFIG);
 
 // 레퍼런스 md + json 저장 (신규 수집·재정리가 같은 경로를 쓴다)
 // extra: json에 덧붙일 것(원장글 보관함의 종류·블로그 목록). 요약표는 키워드 보관함에만 뜻이 있다.

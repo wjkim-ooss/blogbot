@@ -102,7 +102,7 @@ function renderRefDetail(r) {
         <td class="ref-title">${esc(p.title)}</td>
         <td>${p.chars.toLocaleString()}</td>
         <td>${p.images}</td>
-        <td title="추상어 감점 + 구체성·스토리텔링·반박제거 가점">${p.score ?? "–"}</td>
+        <td title="${p.score == null ? "점수 없음" : `구체성 ${p.concrete ?? "–"} · 스토리텔링 ${p.story ?? "–"} · 내 이야기 ${p.내이야기 ?? "–"} · 공감 ${p.공감 ?? "–"} · 걱정 풀기 ${p.걱정풀기 ?? "–"} · 반박제거 ${p.rebut ?? "–"} · 추상어 ${p.abstract ?? "–"}(감점)`}">${p.score ?? "–"}</td>
       </tr>
       <tr class="ref-body hidden"><td colspan="5">
         <a href="${esc(p.url)}" target="_blank">${esc(p.url)}</a>

@@ -489,6 +489,36 @@ export function 반박제거찾기(text, config) {
   return (config.반박제거?.신호 || []).filter((w) => 글.includes(w));
 }
 
+// ---------- 레퍼런스 글 품질 점수 ----------
+// 상위글이 '본받을 값'이 있는지 — 원장 관점의 잣대다. 크롤러가 수집 때 저장하고, rescore.mjs가 다시 매긴다.
+// 축과 가중치는 config.품질점수. 축마다 세는 방법은 config.품질점수.축설명에 적혀 있다.
+//   구체성·스토리텔링·내이야기·공감·반박제거·추상어 = 1,000자당 개수 × 가중치
+//   걱정풀기 = 글 전체에서 서로 다른 걱정 신호 몇 가지를 풀었나 × 가중치 (개수가 작아 비율로 안 잰다)
+// 2026-09-14 우진: "실제 내 이야기가 들어갔는가, 공감 포인트, 고객이 걱정할 요소를 잘 풀었는가"까지.
+const 세기 = (글, 말들) => (말들 || []).reduce((n, w) => n + (w ? 글.split(w).length - 1 : 0), 0);
+export function 품질점수(text, config) {
+  const Q = config.품질점수 || {};
+  const 글 = text || "";
+  const 자수 = noSpace(글) || 1;
+  const 천자당 = (n) => (n / 자수) * 1000;
+  const w = Q.가중치 || {};
+  const 축 = {
+    concrete: (글.match(new RegExp(Q.구체성패턴 || "$^", "g")) || []).length,
+    story: 세기(글, Q.스토리텔링어),
+    내이야기: 세기(글, Q.내이야기어),
+    공감: 말투재기(본문만(글), config).공감,
+    걱정풀기: 반박제거찾기(글, config).length,
+    rebut: 세기(글, Q.반박제거어),
+    abstract: 세기(글, 추상어목록(config)),
+  };
+  const score = Math.round(
+    천자당(축.concrete) * (w.구체성 ?? 0) + 천자당(축.story) * (w.스토리텔링 ?? 0) + 천자당(축.내이야기) * (w.내이야기 ?? 0) +
+    천자당(축.공감) * (w.공감 ?? 0) + 축.걱정풀기 * (w.걱정풀기 ?? 0) + 천자당(축.rebut) * (w.반박제거 ?? 0) +
+    천자당(축.abstract) * (w.추상어 ?? 0)
+  );
+  return { score, ...축 };
+}
+
 // ---------- 가격 표기 ----------
 // 금액이 박히는 순간 그 글은 가격 비교용으로만 소비된다.
 // 출처검사와 겹쳐 보이지만 묻는 것이 다르다 — 저쪽은 "그 숫자 어디서 났나",
@@ -636,6 +666,8 @@ const 문구 = {
       `제목이 "${v.약속.말}"이라고 약속했는데 본문 항목은 ${v.약속.항목}개다 — 소제목을 ${v.약속.약속}개로 맞추거나, ` +
       `제목에서 숫자를 빼고 "…했던 이유"처럼 바꿔라. 항목은 셋 다 제목의 질문에 직접 답해야 한다.`,
     해시태그: (v) => `해시태그가 ${v.태그}개다 — ${v.태그범위[0]}~${v.태그범위[1]}개로 맞춰라. 지역+세부 고민+관리 방식+상호명을 조합하고 띄어쓰기를 넣지 마라.`,
+    첫문단키워드: (v) => `첫 문단(${v.첫문단문장수}문장 안)에 "${v.keyword}"가 없다 — 도입 문장 하나에 자연스럽게 넣어라. 검색이 글 초반에서 주제를 읽는다.`,
+    소제목키워드: (v) => `소제목(###) 어디에도 "${v.keyword}"가 없다 — 소제목 하나에 키워드나 그 일부를 넣어라. 나머지는 그대로 둔다.`,
     가격: (v) => `금액을 적었다: ${v.가격.join(", ")} — 금액은 전부 빼라. 대신 "${v.가격대신}"처럼 비용 걱정만 지워라.`,
     베낀문장: (v) =>
       `레퍼런스 글의 문장을 그대로 옮겨 썼다(${v.겹침.최장}어절 연속): ` +
@@ -677,6 +709,8 @@ const 문구 = {
     반박제거: (v) => `예약을 막는 생각(${v.반박걱정.join(" / ")})을 지운 문장이 없습니다 — ${v.반박최소}개 이상 심으세요`,
     제목약속: (v) => `제목은 "${v.약속.말}"인데 본문 항목은 ${v.약속.항목}개 — 수를 맞추거나 제목에서 숫자를 빼세요`,
     해시태그: (v) => `해시태그 ${v.태그}개 — ${v.태그범위[0]}~${v.태그범위[1]}개 권장`,
+    첫문단키워드: (v) => `첫 문단에 "${v.keyword}"가 없습니다 — 도입 ${v.첫문단문장수}문장 안에 한 번 (네이버가 초반에서 주제를 읽습니다)`,
+    소제목키워드: (v) => `소제목에 "${v.keyword}"가 없습니다 — 소제목 하나에 키워드를 넣으면 노출에 유리합니다`,
     가격: (v) => `금액 표기 ${v.가격.length}곳: ${v.가격.join(", ")} — 가격이 박히면 비교용으로만 읽힙니다. 빼는 편이 낫습니다`,
     베낀문장: (v) =>
       `보관함 글(상위글·원장 글) 문장을 그대로 옮긴 곳 ${v.겹침.토막.length}군데 (가장 길게 ${v.겹침.최장}어절): ` +
@@ -775,6 +809,13 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const 제목 = title ?? ((text.match(/^제목:\s*(.+)$/m) || text.match(/^#{1,3}\s+(.+)$/m) || [])[1]?.trim() || "");
   const titleHasKw = !!제목 && !!keyword && countLoose(제목, keyword) > 0;
   const titleHasNum = /\d/.test(제목);
+  // 네이버는 글 초반과 소제목에서 주제를 읽는다(config.네이버형식) — 둘 다 권장이지 불합격이 아니다.
+  const 첫문단문장수 = config.네이버형식?.첫문단문장수 ?? 0;
+  const 첫문단키워드 = !첫문단문장수 || !keyword || 본문들.length < 첫문단문장수
+    || countLoose(본문들.slice(0, 첫문단문장수).join(" "), keyword) > 0;
+  const 소제목들 = (text.match(/^#{2,4}\s+\S.*$/gm) || []);
+  const 소제목키워드 = !첫문단문장수 || !keyword || !소제목들.length
+    || 소제목들.some((s) => countLoose(s, keyword) > 0 || tokens.some((w) => w.length >= 2 && s.includes(w)));
   // 제목이 "3가지"라고 약속했으면 본문도 세 항목이어야 한다 — 기계가 셀 수 있는 약속이다
   const 약속 = 약속숫자(제목, text);
   const 태그 = 해시태그수(text);
@@ -833,6 +874,8 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const advice = [];
   if (photos < 목표사진) advice.push(말.사진(v));
   if (제목 && !titleHasNum) advice.push(말.제목숫자(v));
+  if (!첫문단키워드) advice.push(말.첫문단키워드(v));
+  if (!소제목키워드) advice.push(말.소제목키워드(v));
   if (정도부사횟수 > 부사허용) advice.push(말.정도부사(v));
   // AI가 모르는 값을 지어내지 않고 비워 둔 것은 잘한 것이다 — 불합격이 아니라 발행 전 확인 사항
   if (채움.length) advice.push(말.채움(v));
@@ -861,7 +904,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
 
   return {
     chars, photos, kwCount, kwParts, tokens, kwLack, kwOver,
-    title: 제목, titleHasKw, titleHasNum, titleLen: noSpace(제목),
+    title: 제목, titleHasKw, titleHasNum, titleLen: noSpace(제목), 첫문단문장수, 첫문단키워드, 소제목키워드,
     abstractFound, abstractByKind, medicalFound, overclaimFound, pmids, claims, needsEvidence,
     구체, 구체밀도, 구체최소, 구체권장, 정도부사, 정도부사횟수, 압축, 채움, 출처없음,
     // 아래 넷은 화면에 따로 칸을 두지 않는다(전부 권장이라 advice 줄로 나간다) — 시험이 읽는 자리다
