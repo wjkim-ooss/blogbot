@@ -1417,6 +1417,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/shop" && req.method === "PUT") {
       if (ctx.authOn && !ctx.userId) return json(res, 401, { error: "로그인이 필요합니다" });
+      // 샵 정보는 그 원장 것이다. 관리자도 남의 것은 읽기만 한다 — 샵쓰기가 ctx.userId에만 쓰지만,
+      // ?user=를 붙여 온 요청은 의도가 다르므로 조용히 내 것에 덮어쓰지 않고 거절한다.
+      if (url.searchParams.get("user")) return json(res, 403, { error: "다른 회원의 샵 정보는 고칠 수 없습니다 (읽기만 됩니다)" });
       try { return json(res, 200, { shop: await 샵쓰기(ctx, await readBody(req)) }); }
       catch (e) { return json(res, 400, { error: e.message, 안내: e.안내 || "" }); }
     }
