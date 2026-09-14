@@ -534,6 +534,17 @@ test("문장이 길면 불합격으로 걸어 다시 쓰게 하고, 짧으면 �
   assert.ok(옛.advice.some((s) => s.includes("긴 문장")) && !옛.issues.some((s) => s.includes("긴 문장")));
 });
 
+// 우진(2026-09-14): 내용이 길어지면 문장을 나누고, 나누기 어색하면 줄을 바꿔 여러 줄로.
+// 독자가 보는 것은 문장이 아니라 줄이다 — 줄바꿈으로 나뉜 줄은 각각 센다.
+test("한 문장을 여러 줄로 나눠 쓰면 긴 문장으로 세지 않는다", () => {
+  const 두줄 = 긴줄.replace("아니라 ", "아니라\n");
+  const 한줄 = 재기(`제목: 여드름 피부관리\n\n${(긴줄 + "\n").repeat(14)}`, { 원장값 });
+  const 나눔 = 재기(`제목: 여드름 피부관리\n\n${(두줄 + "\n").repeat(14)}`, { 원장값 });
+  assert.ok(한줄.issues.some((s) => s.includes("문장이 길다") || s.includes("긴 문장")));
+  assert.equal(나눔.문장길이.긴것.length, 0);
+  assert.ok(!나눔.issues.some((s) => s.includes("문장이 길다") || s.includes("긴 문장")));
+});
+
 test("문장이 몇 개 없으면 비율 검사를 하지 않는다 — 숫자가 튄다", () => {
   const v = 재기(`제목: 여드름 피부관리\n\n${긴줄}`, { 원장값 });
   assert.ok(!v.advice.some((s) => s.includes("긴 문장")));
