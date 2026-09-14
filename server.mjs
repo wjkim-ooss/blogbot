@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveDraftView } from "./permissions.mjs";
 // 초안 판정 규칙은 브라우저와 한 파일을 함께 쓴다 (web/rules.js). 두 벌로 두면 반드시 갈라진다.
-import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 압축찾기, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형 } from "./web/rules.js";
+import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 압축찾기, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형, 원장글보관함, 원장글고르기 } from "./web/rules.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
@@ -94,8 +94,8 @@ const 논문 = CONFIG.논문검증 || {}; // 프롬프트에 인용한다 (판�
 
 // 초안 채점 — 규칙은 web/rules.js에 있고 여기서는 서버 사정만 채워 넣는다.
 // 말투 "지시": AI에게 "무엇을 어떻게 고쳐라"까지 적어 준다. 그래야 실제로 고쳐진다.
-const validateDraft = (text, keyword, minChars = CONFIG.최소글자수, title = "", ref = null, 원장값 = null, 유형 = "") =>
-  평가(text, { keyword, config: CONFIG, 목표글자수: minChars, ref, title, 말투: "지시", 원장값, 유형 });
+const validateDraft = (text, keyword, minChars = CONFIG.최소글자수, title = "", ref = null, 원장값 = null, 유형 = "", 원장글 = null) =>
+  평가(text, { keyword, config: CONFIG, 목표글자수: minChars, ref, title, 말투: "지시", 원장값, 유형, 원장글 });
 
 // ---------- 레퍼런스 ----------
 // 파일명 앞 10자리 날짜로 오래된 순 정렬한 뒤, 키워드는 파일 '내용'으로 판별한다.
@@ -543,7 +543,22 @@ const 사진목표 = (ref, 목표글자수) => targetPhotosFor(ref, CONFIG, 목�
 const 최소문장수 = (목표글자수) => Math.round((목표글자수 || CONFIG.최소글자수) / CONFIG.문장길이.상한);
 
 
-function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = null, 사례 = "") {
+// 원장이 직접 쓴 글 발췌 — 상위글과 다른 자리에 둔다. 상위글은 '경향과 순위', 이것은 '말투와 화자 위치'.
+// 누구에게 주느냐(원장만)는 호출부가 config.글쓴이유형.X.원장글본보기 스위치로 정한다.
+function 원장본보기블록(원장본보기) {
+  if (!원장본보기?.length) return [];
+  const 발췌 = CONFIG.원장글?.발췌글자 ?? 600;
+  const lines = ["", "[원장이 직접 쓴 글 본보기 — 말투와 화자 위치만 본다]",
+    "- 아래는 에스테틱 원장이 자기 샵 블로그에 쓴 글이다. 상위글이 아니라 순위와 무관하다.",
+    "- 고객을 대하는 말투, 자기 샵 이야기를 꺼내는 자리, 관리 장면을 설명하는 방식을 본다.",
+    "- 문장·표현을 가져오지 마라. 유사문서 검사가 이 글들과도 대조한다. 주제가 이번 키워드와 달라도 상관없다."];
+  원장본보기.forEach((p, i) => {
+    lines.push(`· 본보기 ${i + 1} — 제목: ${p.title}`, `  ${p.text.slice(0, 발췌).replace(/\s*\n+\s*/g, " / ")}${p.text.length > 발췌 ? " …" : ""}`);
+  });
+  return lines;
+}
+
+function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = null, 사례 = "", 원장본보기 = []) {
   const lines = [`키워드: ${keyword}`];
   if (region) lines.push(`지역: ${region} (본문에 자연스럽게 반영)`);
   if (point) lines.push(`강조 포인트: ${point} (이 말이 수식어를 겹친 명사구라면 그대로 쓰지 말고, 뜻은 살리되 '누가·어디부터 어디까지·몇 분'을 넣은 문장으로 펴서 쓸 것)`);
@@ -568,6 +583,7 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = nu
   } else {
     lines.push("", "(레퍼런스 없음 — 형식 규칙의 최소 기준으로 작성)");
   }
+  lines.push(...원장본보기블록(원장본보기));
   lines.push(
     "",
     목표글자수
@@ -1087,10 +1103,15 @@ async function handleGenerate(res, body, ctx) {
     const shop = await 샵읽기(ctx);
     const 글쓴이유형 = 유형정규화(shop.유형); // 계정마다 다르다 — 원장님들 것은 그대로다
     const 사례 = (body.사례 || "").trim().slice(0, 1000);
-    const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례) }];
+    // 원장이 쓴 글 보관함 — 원장 유형에만 본보기로 보여주고, 그때만 베끼기 대조에도 넣는다(안 본 글과 대조할 이유가 없다).
+    // 보관함은 여기서 한 번만 읽는다 — check()는 고쳐 쓰기마다 돈다.
+    const 원장글 = 유형정보(글쓴이유형).원장글본보기 ? 원장글보관함(loadReferences()) : null;
+    const 원장본보기 = 원장글 ? 원장글고르기([원장글], keyword, CONFIG) : [];
+    if (원장본보기.length) send({ type: "status", message: `원장이 직접 쓴 글 ${원장본보기.length}편을 말투 본보기로 같이 보여줍니다` });
+    const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례, 원장본보기) }];
     const check = (d) => {
       const p = parseDraftOutput(d, keyword);
-      return { parsed: p, validation: validateDraft(`${p.title}\n${p.body}`, keyword, targetChars, p.title, ref, { ...shop, 사례 }, 글쓴이유형) };
+      return { parsed: p, validation: validateDraft(`${p.title}\n${p.body}`, keyword, targetChars, p.title, ref, { ...shop, 사례 }, 글쓴이유형, 원장글) };
     };
 
     // 엔진이 이미 쓸 수 있는 모델을 모두 훑고 일반 호출까지 해 본 뒤에 던진다.
@@ -1469,4 +1490,4 @@ if (process.argv[1] && NFC(path.resolve(process.argv[1])) === NFC(fileURLToPath(
   server.listen(PORT, () => console.log(`블로그봇 대시보드: http://localhost:${PORT}`));
 
 // 테스트에서만 쓴다 — 가짜 구글 서버를 세워 놓고 한도·스트리밍 동작을 확인하려고
-export const __test = { streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트 };
+export const __test = { streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, buildUserPrompt };

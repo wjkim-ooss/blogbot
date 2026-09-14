@@ -55,10 +55,12 @@ async function ensureChrome() {
 }
 
 // 네이버 검색 블로그탭에서 상위노출된 글 URL 수집
-async function collectTopUrls(page, keyword) {
+// 스크롤: 블로그탭은 내려야 더 나온다 — 원장 글 찾기처럼 넓게 훑을 때만 쓴다
+async function collectTopUrls(page, keyword, { 스크롤 = 0, 개수 = 40 } = {}) {
   const url = `https://search.naver.com/search.naver?ssc=tab.blog.all&query=${encodeURIComponent(keyword)}`;
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
   await page.waitForTimeout(2000);
+  for (let i = 0; i < 스크롤; i++) { await page.mouse.wheel(0, 4000); await page.waitForTimeout(1200); }
   const links = await page.evaluate(() => {
     const seen = new Set();
     const out = [];
@@ -72,8 +74,14 @@ async function collectTopUrls(page, keyword) {
     }
     return out;
   });
-  return links.slice(0, 40); // 검색 결과 상위 다수를 확보해두고, 개수/중복 필터는 호출부에서
+  return links.slice(0, 개수); // 검색 결과 상위 다수를 확보해두고, 중복 필터는 호출부에서
 }
+
+// 수집한 글을 저장 형태로 — 이 모양을 rules.js·ref-report·편집기가 읽는다. 두 크롤러가 같은 것을 쓴다.
+const 정규화 = (p, extra = {}) => ({
+  title: p.title, url: p.url, chars: charCountNoSpace(p.text), images: p.images,
+  ...extra, ...scorePost(p.text), text: p.text.slice(0, 4000),
+});
 
 // 같은 키워드의 기존 레퍼런스(json) 로드 — append 모드에서 병합·중복제거에 사용
 function loadExisting(safeKw) {
@@ -170,7 +178,8 @@ function scorePost(text) {
 }
 
 // 레퍼런스 md + json 저장 (신규 수집·재정리가 같은 경로를 쓴다)
-function saveReference(keyword, safeKw, posts, failed = [], keptFromBefore = 0) {
+// extra: json에 덧붙일 것(원장글 보관함의 종류·블로그 목록). 요약표는 키워드 보관함에만 뜻이 있다.
+function saveReference(keyword, safeKw, posts, failed = [], keptFromBefore = 0, extra = {}) {
   const today = new Date().toISOString().slice(0, 10);
   const outPath = path.join(REF_DIR, `${today}_${safeKw}.md`);
   const avg = (arr) => (arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0);
@@ -195,7 +204,7 @@ function saveReference(keyword, safeKw, posts, failed = [], keptFromBefore = 0) 
   fs.writeFileSync(outPath, md);
   fs.writeFileSync(
     outPath.replace(/\.md$/, ".json"),
-    JSON.stringify({ keyword, date: today, avgChars, avgImages, posts, failed: failed.map((p) => ({ url: p.url, error: p.error })) }, null, 2)
+    JSON.stringify({ keyword, date: today, avgChars, avgImages, ...extra, posts, failed: failed.map((p) => ({ url: p.url, error: p.error })) }, null, 2)
   );
 
   // 같은 키워드의 지난 파일은 이번 파일의 부분집합 → 보관함으로 옮겨 중복 적재를 막는다
@@ -259,17 +268,7 @@ async function main() {
   await browser.close(); // CDP 연결만 끊음, 크롬은 계속 떠 있음
 
   // 새로 수집한 글을 json 구조로 정규화 (품질 점수 포함)
-  let newOk = fetched
-    .filter((p) => !p.error)
-    .map((p) => ({
-      title: p.title,
-      url: p.url,
-      chars: charCountNoSpace(p.text),
-      images: p.images,
-      rank: p.rank,
-      ...scorePost(p.text),
-      text: p.text.slice(0, 4000),
-    }));
+  let newOk = fetched.filter((p) => !p.error).map((p) => 정규화(p, { rank: p.rank }));
 
   // 최소 점수 미달은 항상(후보가 모자라도) 제외한다
   newOk.filter(belowMin).forEach((p) => console.log(`  ${dropLine(p)}`));
@@ -289,7 +288,13 @@ async function main() {
   saveReference(keyword, safeKw, posts, fetched.filter((p) => p.error), append ? existing.posts?.length || 0 : 0);
 }
 
-main().catch((e) => {
-  console.error("오류:", e.message);
-  process.exit(1);
-});
+// 다른 스크립트(crawl-owner.mjs)가 크롬 띄우기·본문 추출·점수를 돌려쓴다.
+export { ensureChrome, collectTopUrls, extractPost, loadExisting, saveReference, 정규화, charCountNoSpace, sleep, CDP_URL, REF_DIR, CONFIG };
+
+// 직접 실행할 때만 돈다 — import 되면 함수만 내준다.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((e) => {
+    console.error("오류:", e.message);
+    process.exit(1);
+  });
+}

@@ -60,11 +60,31 @@ export const 적힌유형 = (content) => 머리값(content, "글쓴이유형");
 // ③ 없으면 한쪽이 다른 쪽을 품는 것 — "여드름"으로 써도 "여드름 피부관리" 40개를 참고하게.
 //    여러 개면 길이가 가장 가까운 것 = 가장 덜 벗어난 것.
 // 맥 경로를 거치면 한글이 자모 분리형(NFD)으로 올 수 있어 양쪽 다 NFC로 맞춘다.
+// 보관함에는 두 종류가 있다. 상위글(순위·경향을 보는 것)과 원장글(순위와 무관, 말투 본보기).
+// 상위글 고르기는 원장글을 보면 안 된다 — "원장"이라는 키워드가 원장글 보관함에 걸리는 식의 사고를 막는다.
+export const 원장글인가 = (r) => r?.종류 === "원장글";
+const 상위글만 = (list) => (list || []).filter((r) => !원장글인가(r));
+export const 원장글보관함 = (list) => (list || []).find(원장글인가) || null;
+
+// 원장글에서 이번 키워드에 가장 가까운 글 몇 편 — 제목에 있으면 먼저, 다음은 본문, 그다음 점수.
+// 키워드가 한 편에도 없으면 점수 높은 것으로 채운다. 말투를 보는 것이지 주제를 맞추는 것이 아니다.
+export function 원장글고르기(list, keyword, config) {
+  const 함 = 원장글보관함(list);
+  const n = config?.원장글?.본보기수 ?? 2;
+  if (!함?.posts?.length || !n) return [];
+  const 나온다 = 키워드찾개(keyword)?.나온다 || (() => false);
+  return 함.posts
+    .map((p) => ({ p, 가중치: 키워드가중치(p, 나온다) }))
+    .sort(가중치순)
+    .slice(0, n)
+    .map(({ p }) => p);
+}
+
 export function pickReference(list, keyword) {
   const want = despace((keyword || "").normalize("NFC"));
   if (!want) return null;
   let best = null, bestGap = Infinity;
-  for (const r of list || []) {
+  for (const r of 상위글만(list)) {
     const k = despace((r.keyword || "").normalize("NFC"));
     if (!k) continue;
     if (k === want) return r;
@@ -81,25 +101,34 @@ export function pickReference(list, keyword) {
 // 흩어져 있는 그 글들만 골라 즉석에서 한 묶음으로 만든다.
 //   제목에 있으면 2점, 본문에만 있으면 1점 — 제목에 걸린 글이 그 키워드의 중심 글이다.
 // (본문 전체를 공백 제거하면 수 MB를 매번 훑게 되므로, 원래 말과 붙인 말 둘 다로 그냥 찾는다)
-export function 본문에서찾기(list, keyword, { 최소 = 3, 최대 = 20 } = {}) {
+// 키워드가 글에 나오는지 보는 판정 — 본문에서찾기와 원장글고르기가 같이 쓴다.
+// 한글 키워드는 대개 띄어쓰기가 없다. 그때 붙인말은 원말과 같으니 한 번만 훑는다
+// (안 그러면 안 걸리는 글마다 본문 전체를 두 번씩 훑게 된다).
+function 키워드찾개(keyword) {
   const 원말 = (keyword || "").trim().normalize("NFC");
   if (!원말) return null;
   const 붙인말 = despace(원말);
-  // 한글 키워드는 대개 띄어쓰기가 없다. 그때 붙인말은 원말과 같으니 한 번만 훑는다
-  // (안 그러면 안 걸리는 글마다 본문 전체를 두 번씩 훑게 된다).
-  const 나온다 =
-    붙인말 === 원말
-      ? (s) => !!s && s.includes(원말)
-      : (s) => !!s && (s.includes(원말) || s.includes(붙인말));
+  const 나온다 = 붙인말 === 원말
+    ? (s) => !!s && s.includes(원말)
+    : (s) => !!s && (s.includes(원말) || s.includes(붙인말));
+  return { 원말, 나온다 };
+}
+// 제목에 있으면 2점, 본문에만 있으면 1점 — 제목에 걸린 글이 그 키워드의 중심 글이다.
+const 키워드가중치 = (p, 나온다) => (나온다(p.title) ? 2 : 0) + (나온다(p.text) ? 1 : 0);
+const 가중치순 = (a, b) => b.가중치 - a.가중치 || (b.p.score ?? 0) - (a.p.score ?? 0);
+
+export function 본문에서찾기(list, keyword, { 최소 = 3, 최대 = 20 } = {}) {
+  const 찾개 = 키워드찾개(keyword);
+  if (!찾개) return null;
+  const { 원말, 나온다 } = 찾개;
 
   const 후보 = [];
   const 출처 = new Set();
-  for (const r of list || []) {
+  for (const r of 상위글만(list)) {
     for (const p of r.posts || []) {
-      const 제목에 = 나온다(p.title);
-      const 본문에 = 나온다(p.text);
-      if (!제목에 && !본문에) continue;
-      후보.push({ p, 가중치: (제목에 ? 2 : 0) + (본문에 ? 1 : 0) });
+      const 가중치 = 키워드가중치(p, 나온다);
+      if (!가중치) continue;
+      후보.push({ p, 가중치 });
       출처.add(r.keyword);
     }
   }
@@ -107,7 +136,7 @@ export function 본문에서찾기(list, keyword, { 최소 = 3, 최대 = 20 } = 
   if (후보.length < 최소) return null;
 
   // 추릴 때는 짝만 들고 다니고, 남는 것만 글로 만든다 (한 글자 치는 동안 175개를 통째로 복사하지 않게)
-  후보.sort((a, b) => b.가중치 - a.가중치 || (b.p.score ?? 0) - (a.p.score ?? 0));
+  후보.sort(가중치순);
   const posts = 후보.slice(0, 최대).map(({ p }) => p);
   const 평균 = (뽑기) => Math.round(posts.reduce((s, p) => s + (뽑기(p) || 0), 0) / posts.length);
   return {
@@ -173,12 +202,16 @@ export const 사진범위 = (config) => `${config.권장이미지최소}~${confi
 // "부산 피부과 솔직 후기" 같은 고객 글이 병원으로 넘어갔다.
 // 저장하지 않고 읽을 때마다 계산한다 — 신호어를 고치면 옛 라벨과 섞이기 때문이다.
 // (텍스트는 파일에 그대로 있으므로 다시 계산해도 같은 값이 나온다)
+// 제목제외: 그 갈래로는 절대 보지 않는 제목 신호. "피부관리실 창업 절차"는 원장 말투를 써도
+// 원장을 상대로 파는 글(컨설턴트·학원)이다 — 크롤러·보고서·화면이 같은 판정을 보게 여기 둔다.
 export function 쓴사람(post, config) {
   const 갈래 = config.쓴사람?.갈래;
   if (!갈래) return "불명";
-  const 글 = `${post?.title || ""}\n${post?.text || ""}`;
+  const 제목 = post?.title || "";
+  const 글 = `${제목}\n${post?.text || ""}`;
   let 이긴것 = "불명", 최다 = 0;
-  for (const [이름, { 신호 }] of Object.entries(갈래)) {
+  for (const [이름, { 신호, 제목제외 }] of Object.entries(갈래)) {
+    if ((제목제외 || []).some((w) => 제목.includes(w))) continue;
     const n = (신호 || []).filter((w) => 글.includes(w)).length;
     if (n > 최다) { 최다 = n; 이긴것 = 이름; }
   }
@@ -381,7 +414,7 @@ export function 압축찾기(text, config, 문장들 = null) {
 // 프롬프트는 원장 기준으로 지시하는데 검증기는 제3의 기본값으로 재는 일이 생긴다.
 export const 기본유형 = "원장";
 export const 유형정규화 = (config, 유형) => (config.글쓴이유형?.[유형] ? 유형 : 기본유형);
-const 유형정보 = (config, 유형) => config.글쓴이유형?.[유형정규화(config, 유형)] || {};
+export const 유형정보 = (config, 유형) => config.글쓴이유형?.[유형정규화(config, 유형)] || {};
 export const 유형검사 = (config, 유형) => 유형정보(config, 유형).검사 || {};
 export const 검사켜짐 = (검사, 키) => 검사?.[키] !== false;
 export const 공감범위 = (config, 유형) => 유형정보(config, 유형).공감비율 || config.말투?.기본비율 || [0, 100];
@@ -499,15 +532,20 @@ function 조각지도(ref, n) {
 
 // 잰것: false면 "검사해서 깨끗함"이 아니라 "잴 대상이 없었음"이다. 불합격을 가르는
 // 검사라 이 둘이 화면에서 같아 보이면 안 된다.
-export function 겹침찾기(text, ref, config) {
+// 대조본은 하나(상위글 보관함)일 수도, 여럿(상위글 + 원장글 보관함)일 수도 있다.
+// 보관함마다 조각 색인은 따로 둔다(편집기가 글자마다 불러도 색인을 다시 만들지 않게) —
+// 글은 한 번만 쪼개고, 창마다 색인들을 차례로 본다.
+export function 겹침찾기(text, refs, config) {
   const 설정 = config.유사문서;
-  if (!설정 || !ref?.posts?.length) return { 잰것: false, 겹침률: 0, 최장: 0, 토막: [] };
+  const 대조본 = [].concat(refs).filter((r) => r?.posts?.length);
+  if (!설정 || !대조본.length) return { 잰것: false, 겹침률: 0, 최장: 0, 토막: [] };
   const n = 설정.조각어절;
-  const 지도 = 조각지도(ref, n);
+  const 지도들 = 대조본.map((r) => 조각지도(r, n));
   const 어절 = 어절나누기(text);
   const 창수 = Math.max(0, 어절.length - n + 1);
   // 창마다 '어느 글에서 왔나'를 먼저 뽑아 두면, 이어진 구간을 훑는 일이 단순해진다
-  const 출처들 = Array.from({ length: 창수 }, (_, i) => 지도.get(어절.slice(i, i + n).join(" ")));
+  const 출처찾기 = (조각) => { for (const 지도 of 지도들) { const 제목 = 지도.get(조각); if (제목 !== undefined) return 제목; } };
+  const 출처들 = Array.from({ length: 창수 }, (_, i) => 출처찾기(어절.slice(i, i + n).join(" ")));
   // 이어진 겹침은 길이와 무관하게 다 적어 둔다. 짧은 겹침이 여기저기 흩어져
   // 겹침률만 오르는 글도 있는데, 문턱 넘는 것만 적으면 짚어 줄 대목이 없어 조용해진다.
   const 토막 = [];
@@ -641,10 +679,10 @@ const 문구 = {
     해시태그: (v) => `해시태그 ${v.태그}개 — ${v.태그범위[0]}~${v.태그범위[1]}개 권장`,
     가격: (v) => `금액 표기 ${v.가격.length}곳: ${v.가격.join(", ")} — 가격이 박히면 비교용으로만 읽힙니다. 빼는 편이 낫습니다`,
     베낀문장: (v) =>
-      `상위글 문장을 그대로 옮긴 곳 ${v.겹침.토막.length}군데 (가장 길게 ${v.겹침.최장}어절): ` +
+      `보관함 글(상위글·원장 글) 문장을 그대로 옮긴 곳 ${v.겹침.토막.length}군데 (가장 길게 ${v.겹침.최장}어절): ` +
       `${v.겹침.토막.map((x) => `"${자르기(x.말, 40)}"${x.출처 ? ` ← ${자르기(x.출처, 20)}` : ""}`).join(" / ")} — 발행 전에 반드시 바꿔 쓰세요`,
     겹침주의: (v) =>
-      `상위글과 겹치는 대목 ${v.겹침.토막.length}군데 (겹침률 ${v.겹침.겹침률}%): ` +
+      `보관함 글과 겹치는 대목 ${v.겹침.토막.length}군데 (겹침률 ${v.겹침.겹침률}%): ` +
       `${v.겹침.토막.map((x) => `"${자르기(x.말, 35)}"`).join(" / ")} — 내 문장으로 바꾸는 편이 안전합니다`,
   },
 };
@@ -661,7 +699,7 @@ const 자르기 = (s, n) => `${(s || "").slice(0, n)}${(s || "").length > n ? "�
 //   title       따로 파싱해 둔 제목. 없으면 본문에서 뽑는다.
 //   말투        "지시" | "요약"
 //   유형        이 글을 누구 기준으로 볼 것인가 (초안 머리말에 적힌 값). 없으면 원장값의 유형.
-export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = null, title, 말투 = "요약", 원장값 = null, 유형 = "" } = {}) {
+export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = null, title, 말투 = "요약", 원장값 = null, 유형 = "", 원장글 = null } = {}) {
   const 논문 = config.논문검증 || {};
   const 목표 = 목표글자수 || config.최소글자수;
   const 구체최소 = config.구체성?.["1000자당_최소"] ?? 0;
@@ -717,7 +755,8 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const 반박최소 = 검사켜짐(검사설정, "반박제거") ? config.반박제거?.최소 ?? 0 : 0;
   const 가격 = 검사켜짐(검사설정, "가격금지") ? 가격찾기(text, config) : [];
   // 베끼기는 유형과 무관하다. 파는 사람이든 아니든 남의 문장을 옮기면 네이버가 원본을 위로 올린다.
-  const 겹침 = 겹침찾기(text, ref, config);
+  // 원장글 본보기를 프롬프트에 보여주므로 거기서 옮겨 온 문장도 같이 잡는다.
+  const 겹침 = 겹침찾기(text, [ref, 원장글], config);
   // 문장째 옮긴 것은 절대값이라 글이 짧아도 그대로 잡는다.
   // 겹침률은 비율이라 짧은 초안에서 튄다 — 아래 표본 게이트 안에서만 본다.
   const 베낌 = 겹침.최장 >= (유사.연속불합격 ?? Infinity);

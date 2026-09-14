@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈 } from "./web/rules.js";
+import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 원장글고르기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈 } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
@@ -543,6 +543,53 @@ test("한 문장을 여러 줄로 나눠 쓰면 긴 문장으로 세지 않는�
   assert.ok(한줄.issues.some((s) => s.includes("문장이 길다") || s.includes("긴 문장")));
   assert.equal(나눔.문장길이.긴것.length, 0);
   assert.ok(!나눔.issues.some((s) => s.includes("문장이 길다") || s.includes("긴 문장")));
+});
+
+// ---------- 원장이 쓴 글 보관함 (2026-09-14) ----------
+// 상위글 389편 중 원장 글은 7편뿐이라 따로 모았다. 순위·경향을 보는 자리에는 끼면 안 되고,
+// 말투 본보기와 베끼기 대조에만 쓴다.
+const 원장글 = {
+  keyword: "원장이 쓴 글", 종류: "원장글", date: "2026-09-14", avgChars: 1500, avgImages: 8,
+  posts: [
+    { title: "원장이 압출 대신 하는 순서", url: "https://blog.naver.com/a/1", chars: 1500, images: 8, score: 30,
+      text: "오늘 오신 고객님은 턱 밑 모낭염 때문에 손을 대셨다고 하셨는데요. 저희 샵은 첫 방문에 압출부터 권하지 않습니다." },
+    { title: "여드름 관리 3회차 기록", url: "https://blog.naver.com/a/2", chars: 1400, images: 6, score: 50,
+      text: "여드름 자리를 봐 드렸습니다. 세안 후 방치 시간이 길었던 분이라 순서부터 정리했습니다." },
+  ],
+};
+const 상위글 = { keyword: "원장", date: "2026-09-01", avgChars: 1000, avgImages: 5,
+  posts: [{ title: "원장 추천 피부관리", text: "원장 이야기", chars: 1000, images: 5, url: "https://blog.naver.com/b/1" }] };
+
+test("상위글 고르기는 원장글 보관함을 보지 않는다 — '원장' 키워드가 거기 걸리면 안 된다", () => {
+  assert.equal(pickReference([원장글], "원장"), null);
+  assert.equal(pickReference([원장글, 상위글], "원장"), 상위글);
+  assert.equal(본문에서찾기([원장글], "모낭염", { 최소: 1 }), null);
+  assert.equal(참고레퍼런스([원장글], "모낭염", CONFIG).종류, "없음");
+});
+
+test("원장글 본보기는 키워드가 제목에 있는 글부터, 없으면 점수순", () => {
+  const 고름 = 원장글고르기([원장글, 상위글], "모낭염", { 원장글: { 본보기수: 1 } });
+  assert.equal(고름.length, 1);
+  assert.equal(고름[0].title, "원장이 압출 대신 하는 순서", "본문에 모낭염이 있는 글");
+  const 둘 = 원장글고르기([원장글], "속눈썹", { 원장글: { 본보기수: 2 } });
+  assert.equal(둘[0].score, 50, "키워드가 어디에도 없으면 점수 높은 글부터");
+  assert.deepEqual(원장글고르기([상위글], "모낭염", CONFIG), [], "원장글 보관함이 없으면 빈 배열");
+});
+
+test("제목제외 신호가 있으면 원장 말투라도 원장으로 보지 않는다 — 창업 컨설턴트 글", () => {
+  const 컨설턴트 = { title: "피부관리실 창업 절차 5단계", text: "원장님들, 저희 샵을 운영하며 고객님께 관리해 드린 경험으로 말씀드립니다." };
+  const 원장 = { title: "턱 밑 모낭염 관리 기록", text: "저희 샵을 운영하며 고객님께 관리해 드린 경험으로 말씀드립니다." };
+  assert.notEqual(쓴사람(컨설턴트, CONFIG), "원장");
+  assert.equal(쓴사람(원장, CONFIG), "원장");
+});
+
+test("원장글 본보기에서 옮겨 온 문장도 베낀 것으로 잡는다", () => {
+  const 베낌 = "저희 샵은 첫 방문에 압출부터 권하지 않습니다. 세안 후 방치 시간이 길었던 분이라 순서부터 정리했습니다.";
+  const v = 평가(구체글() + "\n" + 베낌, { keyword: "여드름", config: CONFIG, 말투: "요약", ref: null, 원장글 });
+  assert.ok(v.겹침.잰것, "원장글만 있어도 잰다");
+  assert.ok(v.겹침.최장 >= 8, `겹침 ${v.겹침.최장}어절`);
+  const 없음 = 평가(구체글(), { keyword: "여드름", config: CONFIG, 말투: "요약", ref: null, 원장글 });
+  assert.equal(없음.겹침.최장, 0);
 });
 
 test("문장이 몇 개 없으면 비율 검사를 하지 않는다 — 숫자가 튄다", () => {

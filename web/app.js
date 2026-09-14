@@ -2,7 +2,7 @@
 // 판정 규칙은 서버와 같은 파일을 쓴다 — 두 벌로 두면 반드시 갈라진다 (web/rules.js)
 import {
   countLoose, 요청글자수, 적힌목표, 적힌유형, 분량표시 as 분량문구,
-  참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 평가,
+  참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 평가, 원장글보관함, 원장글인가, 유형정보,
 } from "/rules.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -83,7 +83,7 @@ async function loadRefs() {
     const div = document.createElement("div");
     div.className = "side-item";
     div.innerHTML = `<div class="title">${esc(r.keyword)}</div>
-      <div class="sub">${r.date} · ${r.posts.length}개 글 · 평균 ${r.avgChars}자</div>`;
+      <div class="sub">${r.date} · ${r.posts.length}개 글 · ${원장글인가(r) ? "원장이 쓴 글 · 말투 본보기" : `평균 ${r.avgChars}자`}</div>`;
     div.addEventListener("click", () => {
       document.querySelectorAll("#ref-list .side-item").forEach((el) => el.classList.remove("active"));
       div.classList.add("active");
@@ -320,7 +320,9 @@ function evaluateDraft(body, keyword, 지정목표 = 0, 유형 = "") {
   // 다만 '어느 기준으로 볼 것인가'는 글에 적힌 유형을 따른다 — 남의 정보성 초안을
   // 내 유형으로 재면 금액·예약 반박 같은 엉뚱한 지적이 뜬다.
   const 원장값 = viewingOther() ? null : SHOP;
-  return { ...평가(body, { keyword, config: CONFIG, 목표글자수: 지정목표, ref: refHit, 말투: "요약", 원장값, 유형 }), refHit };
+  // 원장글 본보기에서 옮겨 온 문장도 서버와 똑같이 잡는다 — 본보기를 받는 유형(원장)만
+  const 원장글 = 유형정보(CONFIG, 유형).원장글본보기 ? 원장글보관함(REFS) : null;
+  return { ...평가(body, { keyword, config: CONFIG, 목표글자수: 지정목표, ref: refHit, 말투: "요약", 원장값, 유형, 원장글 }), refHit };
 }
 
 // 실시간 검증

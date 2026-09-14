@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 쓴사람, 쓴사람셈, 긴문장, 본문만, 구체수, 추상어목록, noSpace, stripPhotos } from "../web/rules.js";
+import { 쓴사람, 쓴사람셈, 긴문장, 본문만, 구체수, 추상어목록, noSpace, stripPhotos, 원장글인가 } from "../web/rules.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
@@ -54,6 +54,7 @@ console.log("보관함".padEnd(18), "글수  통과   원장 병원 고객 불�
 for (const f of 파일들) {
   const j = JSON.parse(fs.readFileSync(path.join(ROOT, "references", f), "utf8"));
   if (!Array.isArray(j.posts) || !j.keyword) continue;          // _place 같은 다른 파일은 건너뛴다
+  if (원장글인가(j)) continue;                                   // 원장글 보관함은 순위와 무관하다 — 상위노출 점수로 재면 틀린다
   if (찾는말 && !j.keyword.includes(찾는말)) continue;
   const 셈 = 쓴사람셈(j.posts, CONFIG);
   const 통과 = j.posts.filter((p) => 점수(p).통과).length;
