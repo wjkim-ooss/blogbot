@@ -87,6 +87,14 @@ test("원장이 쓴 글 본보기: 스위치는 원장만 켜져 있고, 프롬�
   assert.ok(!__test.buildUserPrompt("모낭염", "", "", null, 0, { 유형: "원장" }, "", []).includes("원장이 직접 쓴 글"), "본보기가 없으면 블록도 없다");
 });
 
+// 우진(2026-09-14): 네이버 로직(C-Rank·D.I.A.)을 티 나지 않을 만큼만 — 둘 다에게 간다.
+test("네이버 노출 형식 블록이 config 그대로 나간다", () => {
+  for (const [이름, p] of [["원장", 원장], ["정보", 정보]]) {
+    assert.ok(p.includes("[네이버 노출 형식 — 글에 티 나지 않게]"), 이름);
+    for (const 줄 of CONFIG.네이버형식.지시) assert.ok(p.includes(줄), `${이름}: ${줄.slice(0, 20)}`);
+  }
+});
+
 test("모르는 유형은 원장으로 떨어진다", () => {
   assert.equal(시스템프롬프트("없는유형"), 원장);
   assert.equal(시스템프롬프트(undefined), 원장);

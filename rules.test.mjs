@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 원장글고르기, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈 } from "./web/rules.js";
+import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 원장글고르기, 품질점수, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈 } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
@@ -543,6 +543,33 @@ test("한 문장을 여러 줄로 나눠 쓰면 긴 문장으로 세지 않는�
   assert.ok(한줄.issues.some((s) => s.includes("문장이 길다") || s.includes("긴 문장")));
   assert.equal(나눔.문장길이.긴것.length, 0);
   assert.ok(!나눔.issues.some((s) => s.includes("문장이 길다") || s.includes("긴 문장")));
+});
+
+// ---------- 네이버 노출 형식 (2026-09-14) — 첫 문단·소제목 키워드는 권장 ----------
+test("첫 문단과 소제목에 키워드가 없으면 권장으로 짚고, 있으면 조용하다", () => {
+  const 없음 = `제목: 여드름 피부관리\n\n${(짧은줄 + " ").repeat(4)}\n### 관리 순서\n${(짧은줄 + " ").repeat(12)}`;
+  const 있음 = `제목: 여드름 피부관리\n\n여드름 피부관리는 순서가 먼저입니다. ${(짧은줄 + " ").repeat(3)}\n### 여드름 관리 순서\n${(짧은줄 + " ").repeat(12)}`;
+  const a = 재기(없음, { 원장값 }), b = 재기(있음, { 원장값 });
+  assert.ok(a.advice.some((s) => s.includes("첫 문단")) && a.advice.some((s) => s.includes("소제목에")), a.advice.join(" | "));
+  assert.ok(!b.advice.some((s) => s.includes("첫 문단")) && !b.advice.some((s) => s.includes("소제목에")), b.advice.join(" | "));
+  assert.ok(!a.issues.some((s) => s.includes("첫 문단")), "불합격 사유가 아니다");
+});
+
+// ---------- 레퍼런스 품질 점수 (2026-09-14: 내 이야기·공감·걱정 풀기 축 추가) ----------
+test("품질점수: 내 샵 이야기·말 거는 문장·걱정 풀기가 있는 글이 같은 길이의 밋밋한 글보다 높다", () => {
+  const 밋밋 = "피부관리는 꾸준히 받는 것이 중요합니다. 관리는 여러 단계로 나뉩니다. 각 단계는 목적이 다릅니다. 그래서 순서가 중요합니다.";
+  const 살아있음 = "저희 샵에 오신 고객님이 첫 방문에 짜 달라고 하셨는데요. 한 번 받아서 달라질까 걱정하시죠? 회차마다 붉어진 자리를 기록해 드렸습니다. 자극을 줄이니 3회차에 가라앉았습니다.";
+  const a = 품질점수(밋밋, CONFIG), b = 품질점수(살아있음, CONFIG);
+  assert.ok(b.score > a.score, `${b.score} > ${a.score}`);
+  assert.ok(b.내이야기 >= 3 && b.공감 >= 2 && b.걱정풀기 >= 3, JSON.stringify(b));
+  assert.equal(a.내이야기, 0);
+  for (const k of ["score", "concrete", "story", "내이야기", "공감", "걱정풀기", "rebut", "abstract"]) assert.equal(typeof b[k], "number", k);
+});
+
+test("품질점수: 추상어는 감점이고 빈 글은 0점", () => {
+  const v = 품질점수("꼼꼼하게 맞춤형으로 관리해 드립니다.", CONFIG);
+  assert.ok(v.abstract >= 1 && v.score < 0, JSON.stringify(v));
+  assert.equal(품질점수("", CONFIG).score, 0);
 });
 
 // ---------- 원장이 쓴 글 보관함 (2026-09-14) ----------
