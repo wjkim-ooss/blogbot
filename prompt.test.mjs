@@ -53,8 +53,10 @@ test("딱딱하게 만들던 지시는 빠지고, 말 거는 흐름 본보기는
   for (const [이름, p] of [["원장", 원장], ["정보", 정보]]) {
     assert.ok(!p.includes("주어는 빼고 동사로 끝낸다"), 이름);
     assert.ok(!p.includes("공감하는 지점에만"), 이름);
-    assert.ok(!p.includes("15자 안팎"), 이름);
-    assert.ok(p.includes("짧은 문장과 긴 문장을 번갈아"), 이름);
+    // 15자는 목표로 남긴다(우진: 엄격하진 않아도 긴 문장이 티 나면 안 된다). 예외 조항은 뺐다.
+    assert.ok(p.includes("15자 안팎을 목표로 한다. 꼭 맞추지 않아도 되지만"), 이름);
+    assert.ok(!p.includes("그대로 두는 편이 낫다. 소제목"), 이름);
+    assert.ok(p.includes("두 문장으로 나눠라"), 이름);
   }
   const 흐름 = CONFIG.말투.흐름본보기.줄;
   assert.ok(흐름.length >= 5);
