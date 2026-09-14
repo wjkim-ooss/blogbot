@@ -650,7 +650,8 @@ async function loadAdminUsers() {
         <span class="st ${u.status}">${statusLabel(u.status)}</span>
         <span class="drafts ${u.draftCount ? "" : "none"}" title="${u.lastDraftAt ? "마지막 작성 " + 날짜(u.lastDraftAt) : "아직 작성한 초안이 없습니다"}">📝 ${u.draftCount}개${u.lastDraftAt ? ` · ${날짜(u.lastDraftAt)}` : ""}</span>
         <span class="shopst ${u.샵?.채움 ? (u.샵.채움 === u.샵.전체 ? "full" : "part") : "none"}"
-              title="${u.샵?.채움 ? `${u.샵.유형} 유형 · ${u.샵.전체}칸 중 ${u.샵.채움}칸${u.샵.확인일 ? " · 마지막 확인 " + u.샵.확인일 : ""} — 눌러서 내용 보기` : "샵 정보를 채우지 않았습니다 — AI가 숫자를 지어냅니다"}">🏠 ${u.샵?.채움 ?? 0}/${u.샵?.전체 ?? 0}</span>
+              title="${u.샵?.채움 ? `${u.샵.유형} 유형 · ${u.샵.전체}칸 중 ${u.샵.채움}칸${u.샵.확인일 ? " · 마지막 확인 " + u.샵.확인일 : ""}` : "샵 정보를 채우지 않았습니다 — AI가 숫자를 지어냅니다"}">🏠 ${u.샵?.채움 ?? 0}/${u.샵?.전체 ?? 0}</span>
+        <button class="shopview" title="이 회원이 저장한 샵 정보를 읽기 전용으로 봅니다">샵 정보 보기</button>
         <select class="role">
           <option value="level1" ${u.role === "level1" ? "selected" : ""}>원장(1단계)</option>
           <option value="admin" ${u.role === "admin" ? "selected" : ""}>관리자</option>
@@ -663,8 +664,11 @@ async function loadAdminUsers() {
     .join("");
   box.querySelectorAll(".admin-user").forEach((row) => {
     const id = row.dataset.id;
-    // 배지를 누르면 그 회원의 샵 정보를 읽기 전용으로 본다 (대행할 때 값 확인용)
-    row.querySelector(".shopst")?.addEventListener("click", () => 샵열기(id).catch((e) => alert(e.message)));
+    // 그 회원의 샵 정보를 읽기 전용으로 본다 (대행할 때 값 확인용). 고치는 것은 서버가 막는다.
+    const 이메일 = row.querySelector(".em")?.textContent || "";
+    const 보기 = () => 샵열기(id, 이메일).catch((e) => alert(e.message));
+    row.querySelector(".shopst")?.addEventListener("click", 보기);
+    row.querySelector(".shopview")?.addEventListener("click", 보기);
     const patch = async (body) => {
       try {
         await api("/api/admin/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ...body }) });
@@ -737,12 +741,15 @@ $("#auth-pw").addEventListener("keydown", (e) => { if (e.key === "Enter") authAc
 // 서버는 두 유형의 칸을 한 번에 준다. 드롭다운을 바꿀 때마다 다시 물어보면
 // 왕복이 낭비일 뿐 아니라, 치다 만 값이 재조회로 날아간다 — 그리기는 전부 여기서 한다.
 // 회원id를 주면 관리자가 그 회원 것을 읽기 전용으로 본다 (서버가 권한을 판단한다).
-async function 샵열기(회원id) {
+async function 샵열기(회원id, 회원표시 = "") {
   const { shop, 유형, 유형목록, 항목별, readOnly } = await api(
     "/api/shop" + (회원id ? `?user=${encodeURIComponent(회원id)}` : "")
   );
   if (!회원id) SHOP = shop; // 내 것을 열었을 때만 검증 패널이 쓰는 값을 갱신한다
   const 잠금 = !!readOnly;
+  // 남의 것을 볼 때는 누구 것인지 제목에 박는다 — "내 샵 정보"라고 뜨면 관리자가 헷갈린다
+  $("#shop-title").textContent = 잠금 ? `🏠 ${회원표시 || "회원"} 샵 정보 (읽기 전용)` : "🏠 내 샵 정보";
+  $("#shop-desc").classList.toggle("hidden", 잠금);
 
   const 그리기 = (고른유형) => {
     const 칸 = $("#shop-fields");
