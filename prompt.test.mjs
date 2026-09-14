@@ -36,14 +36,31 @@ test("문장 규칙과 말투 배합은 둘 다에게 간다 — 폰으로 읽�
   for (const [이름, p] of [["원장", 원장], ["정보", 정보]]) {
     assert.ok(p.includes("[문장 규칙 — 폰으로 읽는다는 전제]"), 이름);
     assert.ok(p.includes("40자를 넘으면"), 이름);
-    assert.ok(p.includes("[말투 배합]"), 이름);
+    assert.ok(p.includes("[말투 — 상담실에서 고객 앞에 앉아 말하듯]"), 이름);
     assert.ok(p.includes("약속하는 문장은 반드시 ~합니다로 끝낸다"), 이름);
+    assert.ok(p.includes("~어요 / ~해요 / ~네요로 문장을 끝내지 마라"), 이름);
   }
 });
 
 test("공감 어미를 얼마나 섞을지는 유형마다 다르다", () => {
-  assert.ok(원장.includes("12~22%"), "원장은 고객에게 말을 건다");
-  assert.ok(정보.includes("0~10%"), "정보 전달자는 담백해야 한다");
+  assert.ok(원장.includes("15~45%"), "원장은 고객에게 말을 건다");
+  assert.ok(정보.includes("0~12%"), "정보 전달자는 담백해야 한다");
+});
+
+// 2026-09-14: "~입니다. ~합니다. ~기록합니다."가 줄줄이 이어져 안내문처럼 읽혔다.
+// 원인은 지시문 자체였다 — '기본은 ~입니다, 공감 지점에만', '주어 빼고 동사로 끝낸다'.
+test("딱딱하게 만들던 지시는 빠지고, 말 거는 흐름 본보기는 원장에게만 간다", () => {
+  for (const [이름, p] of [["원장", 원장], ["정보", 정보]]) {
+    assert.ok(!p.includes("주어는 빼고 동사로 끝낸다"), 이름);
+    assert.ok(!p.includes("공감하는 지점에만"), 이름);
+    assert.ok(!p.includes("15자 안팎"), 이름);
+    assert.ok(p.includes("짧은 문장과 긴 문장을 번갈아"), 이름);
+  }
+  const 흐름 = CONFIG.말투.흐름본보기.줄;
+  assert.ok(흐름.length >= 5);
+  for (const 줄 of 흐름) assert.ok(원장.includes(줄), `원장 지시문에 본보기 줄이 없다: ${줄}`);
+  assert.ok(!정보.includes(흐름[0]), "정보 전달자에게 '안녕하세요 ○○입니다' 리듬을 주지 않는다");
+  assert.ok(원장.includes("원장이 책임지는") && 정보.includes("글쓴이가 책임지는"), "조사는 받침에 맞춘다");
 });
 
 test("모르는 유형은 원장으로 떨어진다", () => {
