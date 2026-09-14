@@ -659,6 +659,7 @@ async function loadAdminUsers() {
         <label>월 <input class="lim" type="number" min="0" value="${u.monthly_limit}" style="width:56px" /> 회</label>
         ${u.status !== "approved" ? '<button class="approve primary">승인</button>' : '<button class="block">차단</button>'}
         <button class="savebtn">저장</button>
+        ${u.id !== ME?.id && u.role !== "admin" ? '<button class="del" title="로그인 계정과 초안·샵 정보를 모두 지웁니다">삭제</button>' : ""}
       </div>`
     )
     .join("");
@@ -682,6 +683,16 @@ async function loadAdminUsers() {
     row.querySelector(".savebtn").addEventListener("click", () =>
       patch({ role: row.querySelector(".role").value, monthly_limit: Number(row.querySelector(".lim").value) })
     );
+    // 삭제는 되돌릴 수 없다 — 이메일을 보여주고 한 번 더 묻는다
+    row.querySelector(".del")?.addEventListener("click", async () => {
+      if (!confirm(`${이메일} 회원을 삭제합니다.\n\n로그인 계정, 저장된 초안, 샵 정보가 모두 지워지고 되돌릴 수 없습니다.\n정말 지울까요?`)) return;
+      try {
+        await api("/api/admin/users", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+        loadAdminUsers();
+      } catch (e) {
+        alert(e.message);
+      }
+    });
   });
 }
 

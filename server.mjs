@@ -1357,6 +1357,24 @@ const server = http.createServer(async (req, res) => {
         await supaAdmin.from("profiles").update(patch).eq("id", body.id);
         return json(res, 200, { ok: true });
       }
+      // 회원 삭제 — 로그인 계정째 지운다. 프로필·초안·샵 정보는 DB가 따라 지운다(on delete cascade).
+      // 관리자 자신과 다른 관리자는 못 지운다 — 실수로 운영 계정이 날아가지 않게. 관리자를 지우려면 먼저 원장으로 내린다.
+      if (req.method === "DELETE") {
+        const body = await readBody(req);
+        if (!body.id) return json(res, 400, { error: "id 필요" });
+        if (body.id === ctx.userId) return json(res, 400, { error: "자기 계정은 지울 수 없습니다" });
+        const { data: 대상 } = await supaAdmin.from("profiles").select("id, email, role").eq("id", body.id).single();
+        if (!대상) return json(res, 404, { error: "없는 회원입니다" });
+        if (대상.role === "admin") return json(res, 400, { error: "관리자 계정은 지울 수 없습니다. 먼저 등급을 원장으로 바꾼 뒤 지우세요." });
+        const { error } = await supaAdmin.auth.admin.deleteUser(body.id);
+        // 로그인 계정이 이미 없는 경우(프로필만 남은 경우)에는 프로필만 지운다
+        if (error) {
+          const { error: e2 } = await supaAdmin.from("profiles").delete().eq("id", body.id);
+          if (e2) return json(res, 500, { error: `삭제 실패: ${error.message}` });
+        }
+        console.log(`[회원 삭제] ${대상.email} (${body.id}) by ${ctx.profile?.email || "admin"}`);
+        return json(res, 200, { ok: true, email: 대상.email });
+      }
     }
 
     // --- 승인된 사용자만: 레퍼런스·초안·생성 ---

@@ -247,3 +247,5 @@ header { justify-content: flex-start; }
 .shopst.full { background: #e7f7ea; color: #1c8c3c; }
 .shopst.part { background: #fdeecb; color: #a5691a; }
 .shopst.none { background: #fdeceb; color: #d8483b; }
+.admin-user .del { color: #a6382c; border-color: #e5b9b3; }
+.admin-user .del:hover { background: #f8e8e5; }
