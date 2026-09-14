@@ -63,10 +63,23 @@ async function 블로그글목록(blogId, 개수) {
 const 블로그요약 = (posts) => [...Map.groupBy(posts, (p) => p.blogId)].map(([id, ps]) => ({ id, count: ps.length }));
 const 저장 = (posts) => saveReference(이름, safeKw, posts, [], 0, { 종류: "원장글", 블로그: 블로그요약(posts) });
 
+// 블로그는 한 사람이 쓴다. 글 절반 이상이 병원 글로 읽히면 그 블로그는 피부과다 —
+// 원장 말투를 쓴 몇 편이 남아 있어도 통째로 뺀다. (청담 피부과·"논문읽는 조원장"이 이렇게 섞여 들어왔다)
+function 병원블로그(모든글) {
+  const 병원 = new Set();
+  for (const [id, ps] of Map.groupBy(모든글, (p) => p.blogId)) {
+    const 병원수 = ps.filter((p) => 쓴사람(p, CONFIG) === "병원").length;
+    if (병원수 * 2 >= ps.length) 병원.add(id);
+  }
+  return 병원;
+}
+
 function 다시거르기() {
+  const 전부 = loadExisting(safeKw).posts;
+  const 병원 = 병원블로그(전부);
   const 남김 = [], 뺀것 = [];
-  for (const p of loadExisting(safeKw).posts) (남길까(p, p.chars) ? 남김 : 뺀것).push(p);
-  뺀것.forEach((p) => console.log(`제외: ${p.title.slice(0, 50)} (${p.blogId})`));
+  for (const p of 전부) (!병원.has(p.blogId) && 남길까(p, p.chars) ? 남김 : 뺀것).push(p);
+  뺀것.forEach((p) => console.log(`제외${병원.has(p.blogId) ? "(병원 블로그)" : ""}: ${p.title.slice(0, 50)} (${p.blogId})`));
   if (!남김.length) throw new Error("남는 글이 없습니다");
   저장(남김);
 }
@@ -116,7 +129,8 @@ async function 모으기(블로그당, 검색어당) {
   const 대상 = [...새블로그, ...알던블로그].slice(0, O.블로그최대 ?? 12);
   console.log(`\n원장 블로그 새로 ${새블로그.size}개 + 알던 ${알던블로그.size}개 → ${대상.length}개를 통째로 훑기 (블로그당 ${블로그당}편)`);
 
-  // 2) 통째 — 블로그의 최근 글을 받아 원장 글만 남긴다
+  // 2) 통째 — 블로그의 최근 글을 받아 원장 글만 남긴다. 본 글은 전부 기억해 두었다가 블로그 단위로 다시 가른다.
+  const 본글 = []; // 이번에 본 모든 글(남긴 것·뺀 것) — 병원 블로그 판정용
   for (const id of 대상) {
     let 목록 = [];
     try { 목록 = await 블로그글목록(id, 블로그당); } catch (e) { console.log(`  ${id}: 목록 실패 ${e.message}`); }
@@ -124,14 +138,19 @@ async function 모으기(블로그당, 검색어당) {
     for (const url of 목록) {
       if (있는url.has(url)) continue;
       const post = await extractPost(context, url);
-      if (!post.error && 남길까(post)) { 새글.push(정규화(post, { blogId: id })); 있는url.add(url); 남긴++; }
+      if (!post.error) {
+        본글.push({ ...post, blogId: id });
+        if (남길까(post)) { 새글.push(정규화(post, { blogId: id })); 있는url.add(url); 남긴++; }
+      }
       await sleep(post.error ? 800 : 1200 + Math.random() * 800);
     }
     console.log(`  ${id}: 목록 ${목록.length}편 중 원장 글 ${남긴}편`);
   }
   await browser.close();
 
-  const posts = [...기존, ...새글];
+  const 병원 = 병원블로그([...기존, ...새글, ...본글]);
+  if (병원.size) console.log(`병원 블로그로 판정해 통째로 뺌: ${[...병원].join(", ")}`);
+  const posts = [...기존, ...새글].filter((p) => !병원.has(p.blogId));
   if (!posts.length) throw new Error("원장 글을 한 편도 못 찾았습니다");
   저장(posts);
 }
