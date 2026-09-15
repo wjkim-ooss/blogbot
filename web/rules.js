@@ -645,6 +645,8 @@ const 문구 = {
     근거없음: (v) =>
       `효능을 주장한 문장에 논문 근거(PMID)가 없음 — ${v.출처}에서 🟢 확인 후 PMID를 붙이거나, 주장을 빼세요. ` +
       `해당 문장: "${자르기(v.claims[0], 60)}"`,
+    가짜PMID: (v) =>
+      `지어낸 PMID: ${v.가짜PMID.join(", ")} — 자리표시 숫자다. 실제 논문 번호가 없으면 PMID를 쓰지 말고 그 주장을 빼거나 "자료로는 ~라고 알려져 있다"로 낮춰라.`,
     압축: (v) =>
       `압축된 명사구를 펴라: ${v.압축설명} — 수식어를 겹치지 말고 '누가·어디부터 어디까지·몇 분'을 문장으로 풀어 써라. ` +
       `${v.압축본보기} 값을 모르면 지어내지 말고 "[원장확인: ${v.압축채울것}]"로 비워 둬라.`,
@@ -705,6 +707,7 @@ const 문구 = {
     의료법: (v) => `의료법 주의 ${v.medicalFound.length}개: ${v.medicalFound.join(", ")}`,
     과장: (v) => `과장 표현 ${v.overclaimFound.length}개: ${v.overclaimFound.join(", ")}`,
     근거없음: (v) => `효능을 주장한 문장에 논문 근거(PMID) 없음 — "${자르기(v.claims[0], 40)}"`,
+    가짜PMID: (v) => `지어낸 PMID ${v.가짜PMID.join(", ")} — 자리표시 숫자입니다. 실제 번호가 없으면 빼세요`,
     압축: (v) =>
       `뭉뚱그린 말 ${v.압축.length}개: ${v.압축.map((x) => `"${x.말}"`).join(", ")} — 채울 것: ${v.압축채울것}` +
       (v.압축본보기 ? ` (${v.압축본보기})` : ""),
@@ -775,6 +778,9 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const overclaimFound = (논문.과장표현 || []).filter((w) => text.includes(w));
   const pmidRe = new RegExp(논문.PMID정규식 || "PMID\\s*\\d{5,8}", "g");
   const pmids = [...new Set((text.match(pmidRe) || []).map((s) => s.replace(/\s+/g, " ").trim()))];
+  // 12345678·11111111처럼 자리표시로 채운 번호는 근거가 아니라 지어낸 것이다 — 2026-09-15 아줄렌 초안에 실제로 나왔다
+  const 자리표시 = (n) => /^(\d)\1+$/.test(n) || "1234567890".includes(n) || "0987654321".includes(n);
+  const 가짜PMID = [...new Set(pmids.map((s) => (s.match(/\d+/) || [""])[0]).filter((n) => n.length >= 4 && 자리표시(n)))];
   // 1,000자당 몇 개인가 — 글이 길수록 더 많이 요구하는 게 맞다
   const 구체밀도 = chars ? Number(((구체 / chars) * 1000).toFixed(1)) : 0;
   const 문장들 = 문장나누기(text); // 아래 검사들이 같은 쪼갬을 돌려쓴다
@@ -857,6 +863,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
     문장상한: config.문장길이?.상한 ?? 0, 문장허용,
     공감본보기: config.말투?.본보기 || "", 약속본보기: config.말투?.약속본보기 || { 나쁨: "", 좋음: "" },
     부드러움허용: config.말투?.부드러움허용 ?? 100, // 없으면 안 걸린다
+    첫문단문장수, 가짜PMID,
     반박최소, 반박걱정: (config.반박제거?.걱정 || []).map((x) => x.걱정 ?? x), 반박심는법: (config.반박제거?.심는법 || []).join(" "),
     가격대신: config.가격금지?.대신 || "",
     겹침, 약속, 태그, 태그범위: config.마무리?.해시태그?.개수 || null,
@@ -878,6 +885,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   if (medicalFound.length) issues.push(말.의료법(v));
   if (overclaimFound.length) issues.push(말.과장(v));
   if (needsEvidence && !pmids.length) issues.push(말.근거없음(v));
+  if (가짜PMID.length) issues.push(말.가짜PMID(v));
   // 남의 문장을 문장째로 옮긴 것은 불합격이다. 상위글끼리 재어 보니 서로 베끼지 않은 글이
   // 이만큼 이어지는 일은 0.25%뿐이었고, 그 0.25%는 전부 실제 복붙이었다.
   if (베낌) issues.push(말.베낀문장(v));
@@ -922,7 +930,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
     abstractFound, abstractByKind, medicalFound, overclaimFound, pmids, claims, needsEvidence,
     구체, 구체밀도, 구체최소, 구체권장, 정도부사, 정도부사횟수, 압축, 채움, 출처없음,
     // 아래 넷은 화면에 따로 칸을 두지 않는다(전부 권장이라 advice 줄로 나간다) — 시험이 읽는 자리다
-    문장길이: 문장길이값, 말투: 말투값, 반박, 가격, 겹침, 약속, 태그,
+    문장길이: 문장길이값, 말투: 말투값, 반박, 가격, 겹침, 약속, 태그, 가짜PMID,
     targetChars: 목표, targetPhotos: 목표사진, 지정목표: 목표글자수,
     issues, advice, pass: issues.length === 0,
   };
