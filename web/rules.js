@@ -970,7 +970,9 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   }
   if (본보기베낌.length) advice.push(말.본보기베낌(v));
   if (당부문단.length > (config.당부?.허용 ?? Infinity)) advice.push(말.당부반복(v));
-  if (문장길이값.전체 >= 표본최소 && 짧은비율 > (config.문장길이?.짧은비율허용 ?? 100)) advice.push(말.짧은문장(v));
+  // 하한 밑 토막이 많거나, 전부 하한 언저리(평균이 하한+3 이하)로 고른 길이면 뚝뚝 끊긴 글이다
+  const 다짧다 = 문장길이값.평균 <= (config.문장길이?.하한 ?? 0) + 3 && 문장길이값.비율 < 5;
+  if (문장길이값.전체 >= 표본최소 && (짧은비율 > (config.문장길이?.짧은비율허용 ?? 100) || 다짧다)) advice.push(말.짧은문장(v));
   if (지어낸경험.length) advice.push(말.지어낸경험(v));
   if (구체권장 && 구체밀도 >= 구체최소 && 구체밀도 < 구체권장) advice.push(말.구체성권장(v));
 
