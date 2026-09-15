@@ -1021,7 +1021,10 @@ function 말투지시(v) {
   const 흐름 = (M.흐름본보기?.줄 || []).map((x) => `  ${x}`).join("\n");
   const G = M.고침본보기 || {};
   return [
-    `내용은 손대지 말고 말투만 다듬어라. 지금 말을 거는 문장이 ${v.말투.비율}%(${v.말투.공감}/${v.말투.전체})라 안내문처럼 읽힌다. ${v.말투.최소}~${v.말투.최대}%로.`,
+    `내용은 손대지 말고 말투만 다듬어라. 지금 말을 거는 문장이 ${v.말투.비율}%(${v.말투.공감}/${v.말투.전체})다. ${v.말투.최소}~${v.말투.최대}%로.`,
+    v.말투.연속단정 > v.말투.연속허용
+      ? `- ~입니다 계열 문장이 ${v.말투.연속단정}개 연달아 이어진다 ("${v.말투.연속자리.slice(0, 40)}"부터). ${v.말투.연속허용}개를 넘기지 마라 — 그 줄 가운데 한 문장을 말 거는 문장으로 바꿔 끊어라. 글 전체에서 그런 줄마다.`
+      : "",
     "- 바꿀 것: 문장 끝(어미)과 문장의 리듬뿐이다. 소제목·숫자·사진 자리·해시태그·제목·글자수는 그대로 둔다. 문장을 지우거나 새로 넣지 마라.",
     "- 장면을 묘사한 다음 문장은 ~시죠?로, 이유를 꺼내는 문장은 ~인데요로, 오해를 바로잡는 문장은 ~거든요로, 예를 보여주는 문장은 ~어떤가요?로.",
     "- 설명·근거·약속은 ~입니다 / ~합니다 그대로 둔다. ~어요 / ~해요 / ~네요는 쓰지 마라.",
@@ -1163,8 +1166,12 @@ async function handleGenerate(res, body, ctx) {
 
     // 말투 다듬기 — 내용이 자리를 잡은 뒤에 어미와 리듬만 한 번 더.
     // 검증에서 더 나빠지거나(불합격이 늘거나 통과가 깨지면) 말투가 안 늘면 버리고 직전 것을 쓴다.
-    if (CONFIG.말투?.다듬기?.켜짐 && validation.말투 && validation.말투.비율 < validation.말투.최소 && validation.chars >= 100) {
-      send({ type: "status", message: `말투 다듬는 중: 말 거는 문장 ${validation.말투.비율}% → ${validation.말투.최소}% 이상으로` });
+    const 말투부족 = (m) => m && (m.비율 < m.최소 || m.연속단정 > m.연속허용);
+    if (CONFIG.말투?.다듬기?.켜짐 && 말투부족(validation.말투) && validation.chars >= 100) {
+      const m = validation.말투;
+      send({ type: "status", message: m.비율 < m.최소
+        ? `말투 다듬는 중: 말 거는 문장 ${m.비율}% → ${m.최소}% 이상으로`
+        : `말투 다듬는 중: ~입니다 문장이 ${m.연속단정}개 연달아 이어진 자리를 끊습니다` });
       send({ type: "reset" });
       const 본문 = `제목: ${parsed.title}\n\n${parsed.body}`;
       messages.splice(1); // 지시문 + 제일 좋았던 글 + 다듬기 지시만
@@ -1172,9 +1179,10 @@ async function handleGenerate(res, body, ctx) {
       try {
         const 다듬은 = await streamOnce(client, messages, send, 글쓴이유형, 기록);
         const 이번 = check(다듬은);
+        const 나아진말투 = 이번.validation.말투.비율 > validation.말투.비율 || 이번.validation.말투.연속단정 < validation.말투.연속단정;
         const 살림 = 이번.validation.pass === validation.pass
           && 이번.validation.issues.length <= validation.issues.length
-          && 이번.validation.말투.비율 > validation.말투.비율
+          && 나아진말투
           && 이번.validation.chars >= validation.chars * 0.9;
         if (살림) { best = { ...이번, 모델: 기록.모델 }; ({ parsed, validation } = best); }
         else send({ type: "status", message: `말투 다듬기 결과가 더 나빠서 직전 글을 저장합니다 (말 거는 문장 ${이번.validation.말투.비율}%, 불합격 ${이번.validation.issues.length}개)` });
