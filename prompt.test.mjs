@@ -35,7 +35,7 @@ test("가격 금지도 파는 사람에게만 간다", () => {
 test("문장 규칙과 말투 배합은 둘 다에게 간다 — 폰으로 읽는 것은 같다", () => {
   for (const [이름, p] of [["원장", 원장], ["정보", 정보]]) {
     assert.ok(p.includes("[문장 규칙 — 폰으로 읽는다는 전제]"), 이름);
-    assert.ok(p.includes("40자를 넘으면"), 이름);
+    assert.ok(p.includes(`${CONFIG.문장길이.하한}~${CONFIG.문장길이.상한}자다`), 이름);
     assert.ok(p.includes("[말투 — 상담실에서 고객 앞에 앉아 말하듯]"), 이름);
     assert.ok(p.includes("약속하는 문장은 반드시 ~합니다로 끝낸다"), 이름);
     assert.ok(p.includes("~어요 / ~해요 / ~네요로 문장을 끝내지 마라"), 이름);
@@ -53,10 +53,10 @@ test("딱딱하게 만들던 지시는 빠지고, 말 거는 흐름 본보기는
   for (const [이름, p] of [["원장", 원장], ["정보", 정보]]) {
     assert.ok(!p.includes("주어는 빼고 동사로 끝낸다"), 이름);
     assert.ok(!p.includes("공감하는 지점에만"), 이름);
-    // 15자는 목표로 남긴다(우진: 엄격하진 않아도 긴 문장이 티 나면 안 된다). 예외 조항은 뺐다.
-    assert.ok(p.includes("15자 안팎을 목표로 한다. 꼭 맞추지 않아도 되지만"), 이름);
+    // 2026-09-15 우진: 문장당 10~20자를 꼭 지켜라. 점·반점으로 끊거나 두 줄로 써도 된다. 예외 조항은 없다.
+    assert.ok(p.includes("공백 빼고 10~20자다"), 이름);
     assert.ok(!p.includes("그대로 두는 편이 낫다. 소제목"), 이름);
-    assert.ok(p.includes("두 문장으로 나눠라"), 이름);
+    assert.ok(p.includes("마침표나 쉼표로 끊어라"), 이름);
   }
   const 흐름 = CONFIG.말투.흐름본보기.줄;
   assert.ok(흐름.length >= 5);
