@@ -558,7 +558,7 @@ test("문단 끝 당부가 허용을 넘게 되풀이되면 짚고, 하한에 �
   assert.ok(a.advice.some((s) => s.includes("당부")), a.advice.join(" | "));
   assert.ok(!b.advice.some((s) => s.includes("당부")), b.advice.join(" | "));
   const 뚝뚝 = 재기(`제목: 여드름 피부관리\n\n${"색을 봅니다. 그냥 삽니다. 함량이 적습니다. ".repeat(6)}`, { 원장값 });
-  assert.ok(뚝뚝.짧은비율 > 40 && 뚝뚝.advice.some((s) => s.includes("뚝뚝")), `${뚝뚝.짧은비율}% | ${뚝뚝.advice.join(" | ")}`);
+  assert.ok(뚝뚝.문장길이.짧은비율 > CONFIG.문장길이.짧은비율허용 && 뚝뚝.advice.some((s) => s.includes("뚝뚝")), `${뚝뚝.문장길이.짧은비율}% | ${뚝뚝.advice.join(" | ")}`);
   // 11자짜리만 14줄이면 그것도 고른 길이라 뚝뚝이다 — 10자와 20자가 섞여야 조용하다
   const 섞임 = "제품이 나빠서가 아닙니다. 세안 후 방치하는 시간이 길어지면 피지가 굳습니다. ".repeat(7);
   assert.ok(!재기(`제목: 여드름 피부관리\n\n${섞임}`, { 원장값 }).advice.some((s) => s.includes("뚝뚝")), "짧은 문장과 긴 문장이 섞이면 조용하다");
@@ -733,6 +733,16 @@ test("말 거는 어미 하나가 상한을 넘겨 되풀이되면 짚는다", (
   assert.ok(a.말투.반복어미.some((x) => x.어미 === "거든요" && x.횟수 === 9), JSON.stringify(a.말투.반복어미));
   assert.ok(a.advice.some((s) => s.includes("되풀이")), a.advice.join(" | "));
   assert.ok(!b.advice.some((s) => s.includes("되풀이")), b.advice.join(" | "));
+});
+
+// 본보기 목록은 지시문에서 베낀 문구라, 지시문이 바뀌면 조용히 낡는다 — 출처가 없으면 여기서 걸린다.
+test("본보기문구는 전부 설정이나 지시문에 실제로 있는 말이다", () => {
+  const 설정 = JSON.stringify(CONFIG);
+  const 지시문 = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "server.mjs"), "utf8");
+  for (const p of CONFIG.본보기문구.목록) {
+    assert.ok(설정.includes(p) || 지시문.includes(p), `출처 없는 본보기문구: "${p}"`);
+    assert.ok(p.length >= 9, `너무 짧아 오탐이 난다: "${p}"`);
+  }
 });
 
 test("지시문의 본보기 문장을 그대로 옮기면 짚는다", () => {
