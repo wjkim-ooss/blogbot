@@ -31,8 +31,10 @@ let 기록 = [];
 try { 기록 = JSON.parse(await fs.readFile(기록파일, "utf8")); } catch { 기록 = []; }
 
 // 키워드 하나에 그 키워드를 노리는 샵들을 묶는다
+// blogId 가 아직 없는 샵은 건너뛴다 — 키워드는 미리 적어 두고 주소만 받으면 바로 돌게 한다.
+const 건너뛴샵 = (샵들 || []).filter((s) => !s.blogId).map((s) => s.이름);
 const 묶음 = new Map();
-for (const s of 샵들 || []) for (const k of s.키워드 || []) {
+for (const s of (샵들 || []).filter((x) => x.blogId)) for (const k of s.키워드 || []) {
   if (!묶음.has(k)) 묶음.set(k, []);
   묶음.get(k).push(s);
 }
@@ -89,7 +91,7 @@ for (const [i, keyword] of 할것.entries()) {
 }
 
 await fs.writeFile(기록파일, JSON.stringify(기록, null, 2) + "\n");
-const summary = { 잰키워드: 할것.length, 기록: 결과.length, 막힘, 남은키워드: 묶음.size - 할것.length };
+const summary = { 잰키워드: 할것.length, 기록: 결과.length, 막힘, 남은키워드: 묶음.size - 할것.length, 건너뛴샵 };
 run.note(summary);
 await run.save({ ...summary, 결과 });
 await finishSpace(task, { projectDir: PROJECT, flow: "rank" });
