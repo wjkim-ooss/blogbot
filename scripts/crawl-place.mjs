@@ -83,7 +83,7 @@ for (const [업종, q] of 검색어) {
 }
 
 결과.sort((a, b2) => b2.점수 - a.점수);
-const out = path.join(ROOT, "references", `_place_${new Date().toISOString().slice(0, 10)}.json`);
+const out = path.join(ROOT, "places", `${new Date().toISOString().slice(0, 10)}_업체.json`);
 fs.writeFileSync(out, JSON.stringify(결과, null, 1));
 console.log(`\n총 ${결과.length}곳 수집 → ${out}`);
 await page.close(); await b.close();

@@ -117,19 +117,37 @@ function 키워드찾개(keyword) {
 const 키워드가중치 = (p, 나온다) => (나온다(p.title) ? 2 : 0) + (나온다(p.text) ? 1 : 0);
 const 가중치순 = (a, b) => b.가중치 - a.가중치 || (b.p.score ?? 0) - (a.p.score ?? 0);
 
+// 모을 때 업종이 섞이면 많은 쪽만 남긴다. "마곡 피부관리"를 치는데 네일·헤어 상위글 제목이
+// 섞여 들어가면 AI는 그것을 이 키워드의 경향으로 읽는다 — 한 글에 한 주제인 것과 같은 이유다.
+// 제목에 키워드가 든 글(가중치 2)이 그 키워드의 중심이라, 그것이 많은 업종이 이긴다.
+// 표시가 없는 보관함이 섞여 있거나, 가르면 최소에 못 미치게 되면 가르지 않는다 —
+// 업종을 맞추려다 참고할 글이 없어지는 쪽이 더 나쁘다.
+function 한업종만(후보, 최소) {
+  const 표 = new Map();
+  for (const c of 후보) {
+    if (!c.업종) return 후보;
+    const v = 표.get(c.업종) || { 중심: 0, 전체: 0 };
+    if (c.가중치 >= 2) v.중심 += 1;
+    v.전체 += 1;
+    표.set(c.업종, v);
+  }
+  if (표.size < 2) return 후보;
+  const 이긴업종 = [...표].sort((a, b) => b[1].중심 - a[1].중심 || b[1].전체 - a[1].전체)[0][0];
+  const 남은것 = 후보.filter((c) => c.업종 === 이긴업종);
+  return 남은것.length >= 최소 ? 남은것 : 후보;
+}
+
 export function 본문에서찾기(list, keyword, { 최소 = 3, 최대 = 20 } = {}) {
   const 찾개 = 키워드찾개(keyword);
   if (!찾개) return null;
   const { 원말, 나온다 } = 찾개;
 
   const 후보 = [];
-  const 출처 = new Set();
   for (const r of 상위글만(list)) {
     for (const p of r.posts || []) {
       const 가중치 = 키워드가중치(p, 나온다);
       if (!가중치) continue;
-      후보.push({ p, 가중치 });
-      출처.add(r.keyword);
+      후보.push({ p, 가중치, 업종: r.업종 || "", 보관함: r.keyword });
     }
   }
   // 몇 개 안 되면 '상위글의 경향'이라 부를 수 없다 — 차라리 기본 레퍼런스가 낫다
@@ -137,7 +155,9 @@ export function 본문에서찾기(list, keyword, { 최소 = 3, 최대 = 20 } = 
 
   // 추릴 때는 짝만 들고 다니고, 남는 것만 글로 만든다 (한 글자 치는 동안 175개를 통째로 복사하지 않게)
   후보.sort(가중치순);
-  const posts = 후보.slice(0, 최대).map(({ p }) => p);
+  const 고른것 = 한업종만(후보, 최소).slice(0, 최대);
+  const posts = 고른것.map(({ p }) => p);
+  const 출처 = new Set(고른것.map((c) => c.보관함));
   const 평균 = (뽑기) => Math.round(posts.reduce((s, p) => s + (뽑기(p) || 0), 0) / posts.length);
   return {
     keyword: 원말,

@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = path.join(ROOT, "..", "강의자료", "플레이스사례");
 fs.mkdirSync(OUT, { recursive: true });
-const 목록 = JSON.parse(fs.readFileSync(path.join(ROOT, "references", "_pick.json"), "utf8"));
+const 목록 = JSON.parse(fs.readFileSync(path.join(ROOT, "places", "고른업체.json"), "utf8"));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // 상호·연락처·주소·SNS를 덮는다. 지우지 않고 덮는다 — 길이가 바뀌면 화면이 달라 보인다.

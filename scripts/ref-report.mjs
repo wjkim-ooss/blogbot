@@ -53,7 +53,7 @@ let 합 = { 전체: 0, 통과: 0, 원장: 0, 병원: 0, 고객: 0, 불명: 0 };
 console.log("보관함".padEnd(18), "글수  통과   원장 병원 고객 불명");
 for (const f of 파일들) {
   const j = JSON.parse(fs.readFileSync(path.join(ROOT, "references", f), "utf8"));
-  if (!Array.isArray(j.posts) || !j.keyword) continue;          // _place 같은 다른 파일은 건너뛴다
+  if (!Array.isArray(j.posts) || !j.keyword) continue;          // 보관함이 아닌 파일은 건너뛴다     
   if (원장글인가(j)) continue;                                   // 원장글 보관함은 순위와 무관하다 — 상위노출 점수로 재면 틀린다
   if (찾는말 && !j.keyword.includes(찾는말)) continue;
   const 셈 = 쓴사람셈(j.posts, CONFIG);
