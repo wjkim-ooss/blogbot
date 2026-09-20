@@ -9,6 +9,7 @@ import { chromium } from "playwright-core";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import { 품질점수 } from "../web/rules.js";
+import { 화면긁기 } from "./naver-links.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -61,20 +62,8 @@ async function collectTopUrls(page, keyword, { 스크롤 = 0, 개수 = 40 } = {}
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
   await page.waitForTimeout(2000);
   for (let i = 0; i < 스크롤; i++) { await page.mouse.wheel(0, 4000); await page.waitForTimeout(1200); }
-  const links = await page.evaluate(() => {
-    const seen = new Set();
-    const out = [];
-    for (const a of document.querySelectorAll("a[href*='blog.naver.com']")) {
-      const m = a.href.match(/blog\.naver\.com\/([\w.-]+)\/(\d+)/);
-      if (!m) continue;
-      const clean = `https://blog.naver.com/${m[1]}/${m[2]}`;
-      if (seen.has(clean)) continue;
-      seen.add(clean);
-      out.push(clean);
-    }
-    return out;
-  });
-  return links.slice(0, 개수); // 검색 결과 상위 다수를 확보해두고, 중복 필터는 호출부에서
+  const { links } = await page.evaluate(화면긁기);
+  return links.slice(0, 개수).map((l) => l.url); // 상위 다수를 확보해두고, 중복 필터는 호출부에서
 }
 
 // 수집한 글을 저장 형태로 — 이 모양을 rules.js·ref-report·편집기가 읽는다. 두 크롤러가 같은 것을 쓴다.
@@ -206,9 +195,17 @@ async function main() {
   const count = Number(process.argv[3] || 7);
   const mode = (process.argv[4] || "new").toLowerCase();
   const pool = Number(process.argv[5] || 0); // 후보 수(>count면 품질 점수로 상위 count개만 채택)
+  // 업종을 안 적으면 그 보관함이 걸리는 키워드에서 rules.js 의 업종 가르기가 통째로 꺼진다.
+  // 그래서 기본값을 본업(피부)으로 두고, 다른 업종이면 여섯 번째 인자로 준다.
+  const 업종 = process.argv[6] || (CONFIG.업종?.갈래 || ["피부"])[0];
   const append = mode === "append";
   if (!keyword) {
-    console.error('사용법: node scripts/crawl.mjs "키워드" [수집개수] [new|append|refilter] [후보수]');
+    console.error('사용법: node scripts/crawl.mjs "키워드" [수집개수] [new|append|refilter] [후보수] [업종]');
+    console.error(`업종: ${(CONFIG.업종?.갈래 || []).join(" · ")} (기본 ${업종})`);
+    process.exit(1);
+  }
+  if (!(CONFIG.업종?.갈래 || []).includes(업종)) {
+    console.error(`모르는 업종 "${업종}" — config.업종.갈래: ${(CONFIG.업종?.갈래 || []).join(" · ")}`);
     process.exit(1);
   }
   const safeKw = keyword.replace(/[\/\s]+/g, "-");
@@ -219,7 +216,7 @@ async function main() {
     const drop = posts.filter(belowMin);
     drop.forEach((p) => console.log(dropLine(p)));
     if (!drop.length) return console.log("걸러낼 글이 없습니다.");
-    saveReference(keyword, safeKw, posts.filter((p) => !belowMin(p)));
+    saveReference(keyword, safeKw, posts.filter((p) => !belowMin(p)), [], 0, { 업종 });
     return;
   }
 
@@ -268,7 +265,7 @@ async function main() {
   }
   const posts = [...(existing.posts || []), ...newOk];
 
-  saveReference(keyword, safeKw, posts, fetched.filter((p) => p.error), append ? existing.posts?.length || 0 : 0);
+  saveReference(keyword, safeKw, posts, fetched.filter((p) => p.error), append ? existing.posts?.length || 0 : 0, { 업종 });
 }
 
 // 다른 스크립트(crawl-owner.mjs)가 크롬 띄우기·본문 추출·점수를 돌려쓴다.

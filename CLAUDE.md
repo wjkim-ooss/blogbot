@@ -15,10 +15,18 @@
 | 크롤러 | `scripts/crawl.mjs`(키워드 상위글), `scripts/crawl-owner.mjs`(원장이 쓴 글) |
 | 보관함 점검·점수 다시 매기기 | `scripts/ref-report.mjs`, `scripts/rescore.mjs` |
 | 순위 추적 | `scripts/ego/rank-all.mjs`(브라우저로 잰다), `scripts/rank-report.mjs`(표로 본다) |
+| 대행 샵 목록·순위 기록 자리 | `scripts/샵.mjs` — `.추적.json` 을 읽는 곳은 여기 하나다 |
+| 네이버 검색결과 링크 뽑기 | `scripts/naver-links.mjs` — 크롤러·순위·블로그찾기가 같이 쓴다 |
 | 발행 글 가져오기·재채점 | `scripts/recent-posts.mjs`(RSS 목록), `scripts/ego/verify-post.mjs`(`{"blogId":"…"}` 로도 된다) |
 
 규칙을 두 벌로 두지 않는다. 서버와 화면이 같은 판정을 따로 적으면 반드시 갈라진다 —
 이 저장소에서 이미 몇 번 났다. 새 검사는 `rules.js`의 `평가()` 안에 넣고 `config.json`에서 값을 읽는다.
+발행 글 검증(`scripts/ego/verify-post.mjs`)도 같은 `평가()`를 부른다. 발행된 글에는 `[사진: …]`
+자리표시 대신 진짜 이미지가 있어서 그 수만 `사진수`로 넘긴다 — 열어 둔 입구는 그것 하나다.
+
+보관함을 새로 수집하면 **업종을 같이 적는다**(`node scripts/crawl.mjs "강남 왁싱" 7 new 0 왁싱`).
+안 적으면 그 보관함이 걸리는 키워드에서 업종 가르기가 조용히 꺼진다. `node scripts/ref-report.mjs`
+가 빠진 것·모르는 값을 짚는다.
 
 ## 일하는 방식
 

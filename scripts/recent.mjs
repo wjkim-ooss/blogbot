@@ -1,10 +1,10 @@
 // 블로그가 최근에 올린 글 목록. 브라우저를 쓰지 않는다 — 네이버가 내주는 RSS를 읽는다.
 // 본문은 RSS에서 잘려 오므로 점수를 매길 때는 scripts/ego/verify-post.mjs 로 글을 직접 열어야 한다.
 // 여기서 주는 것은 "어느 글을 볼지"까지다.
-const 값 = (조각, 키) => {
-  const m = 조각.match(new RegExp(`<${키}>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?</${키}>`));
-  return m ? m[1].trim() : "";
-};
+// 뽑을 칸은 셋뿐이라 정규식을 미리 굳혀 둔다
+const 칸 = Object.fromEntries(["title", "link", "pubDate"].map((키) =>
+  [키, new RegExp(`<${키}>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?</${키}>`)]));
+const 값 = (조각, 키) => (조각.match(칸[키]) || ["", ""])[1].trim();
 
 export async function 최근글(blogId, 개수 = 10) {
   const res = await fetch(`https://rss.blog.naver.com/${encodeURIComponent(blogId)}.xml`, {
@@ -16,6 +16,5 @@ export async function 최근글(blogId, 개수 = 10) {
     title: 값(조각, "title"),
     url: 값(조각, "link").split("?")[0],
     발행: 값(조각, "pubDate"),
-    미리보기: 값(조각, "description").replace(/\s+/g, " ").slice(0, 200),
   }));
 }

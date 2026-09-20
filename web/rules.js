@@ -114,27 +114,20 @@ function 키워드찾개(keyword) {
   return { 원말, 나온다 };
 }
 // 제목에 있으면 2점, 본문에만 있으면 1점 — 제목에 걸린 글이 그 키워드의 중심 글이다.
-const 키워드가중치 = (p, 나온다) => (나온다(p.title) ? 2 : 0) + (나온다(p.text) ? 1 : 0);
+// 배점을 고치면 '중심인가'를 가르는 문턱도 따라와야 한다. 그래서 상수 하나에서 둘 다 나온다.
+const 제목점 = 2;
+const 키워드가중치 = (p, 나온다) => (나온다(p.title) ? 제목점 : 0) + (나온다(p.text) ? 1 : 0);
 const 가중치순 = (a, b) => b.가중치 - a.가중치 || (b.p.score ?? 0) - (a.p.score ?? 0);
 
-// 모을 때 업종이 섞이면 많은 쪽만 남긴다. "마곡 피부관리"를 치는데 네일·헤어 상위글 제목이
-// 섞여 들어가면 AI는 그것을 이 키워드의 경향으로 읽는다 — 한 글에 한 주제인 것과 같은 이유다.
-// 제목에 키워드가 든 글(가중치 2)이 그 키워드의 중심이라, 그것이 많은 업종이 이긴다.
-// 표시가 없는 보관함이 섞여 있거나, 가르면 최소에 못 미치게 되면 가르지 않는다 —
-// 업종을 맞추려다 참고할 글이 없어지는 쪽이 더 나쁘다.
-function 한업종만(후보, 최소) {
-  const 표 = new Map();
-  for (const c of 후보) {
-    if (!c.업종) return 후보;
-    const v = 표.get(c.업종) || { 중심: 0, 전체: 0 };
-    if (c.가중치 >= 2) v.중심 += 1;
-    v.전체 += 1;
-    표.set(c.업종, v);
-  }
-  if (표.size < 2) return 후보;
-  const 이긴업종 = [...표].sort((a, b) => b[1].중심 - a[1].중심 || b[1].전체 - a[1].전체)[0][0];
-  const 남은것 = 후보.filter((c) => c.업종 === 이긴업종);
-  return 남은것.length >= 최소 ? 남은것 : 후보;
+// 이 키워드가 어느 업종의 말인지는 미리 알 수 없다 — 보관함 이름이 딱 맞을 때는
+// pickReference 가 먼저 잡아가고, 여기까지 온 것은 그 이름이 없는 키워드다.
+// 그래서 걸린 글들에게 묻는다. 제목에 키워드가 든 글이 그 키워드의 중심이라 그쪽이 많은 업종이 이긴다.
+// 가르고 나서 최소에 못 미치면 가르지 않는다 — 업종을 맞추려다 참고할 글이 없어지는 쪽이 더 나쁘다.
+// null = 가르지 않는다.
+function 고른업종(업종셈, 최소) {
+  if (업종셈.size < 2) return null;
+  const [이긴것, 값] = [...업종셈].sort((a, b) => b[1].중심 - a[1].중심 || b[1].전체 - a[1].전체)[0];
+  return 값.전체 >= 최소 ? 이긴것 : null;
 }
 
 export function 본문에서찾기(list, keyword, { 최소 = 3, 최대 = 20 } = {}) {
@@ -142,12 +135,22 @@ export function 본문에서찾기(list, keyword, { 최소 = 3, 최대 = 20 } = 
   if (!찾개) return null;
   const { 원말, 나온다 } = 찾개;
 
+  // 업종이 섞이면 많은 쪽만 남긴다. "마곡 피부관리"를 치는데 네일·헤어 상위글 제목이 섞여
+  // 들어가면 AI는 그것을 이 키워드의 경향으로 읽는다 — 한 글에 한 주제인 것과 같은 이유다.
+  // 셈은 후보를 담는 이 루프에서 같이 한다. 키 입력마다 도는 자리라 한 바퀴 더 돌지 않는다.
   const 후보 = [];
+  const 업종셈 = new Map();
+  let 업종없음 = false;
   for (const r of 상위글만(list)) {
     for (const p of r.posts || []) {
       const 가중치 = 키워드가중치(p, 나온다);
       if (!가중치) continue;
-      후보.push({ p, 가중치, 업종: r.업종 || "", 보관함: r.keyword });
+      후보.push({ p, 가중치, r });
+      if (!r.업종) { 업종없음 = true; continue; }   // 표시 없는 보관함이 걸리면 판정을 지어내지 않는다
+      const 셈 = 업종셈.get(r.업종) || { 중심: 0, 전체: 0 };
+      if (가중치 >= 제목점) 셈.중심 += 1;
+      셈.전체 += 1;
+      업종셈.set(r.업종, 셈);
     }
   }
   // 몇 개 안 되면 '상위글의 경향'이라 부를 수 없다 — 차라리 기본 레퍼런스가 낫다
@@ -155,9 +158,15 @@ export function 본문에서찾기(list, keyword, { 최소 = 3, 최대 = 20 } = 
 
   // 추릴 때는 짝만 들고 다니고, 남는 것만 글로 만든다 (한 글자 치는 동안 175개를 통째로 복사하지 않게)
   후보.sort(가중치순);
-  const 고른것 = 한업종만(후보, 최소).slice(0, 최대);
-  const posts = 고른것.map(({ p }) => p);
-  const 출처 = new Set(고른것.map((c) => c.보관함));
+  const 이긴업종 = 업종없음 ? null : 고른업종(업종셈, 최소);
+  const posts = [];
+  const 출처 = new Set();
+  for (const c of 후보) {
+    if (이긴업종 && c.r.업종 !== 이긴업종) continue;
+    posts.push(c.p);
+    출처.add(c.r.keyword);           // 고른 글이 어느 보관함에서 왔나 — 화면과 프롬프트가 밝힌다
+    if (posts.length === 최대) break;
+  }
   const 평균 = (뽑기) => Math.round(posts.reduce((s, p) => s + (뽑기(p) || 0), 0) / posts.length);
   return {
     keyword: 원말,
@@ -822,7 +831,7 @@ const 자르기 = (s, n) => `${(s || "").slice(0, n)}${(s || "").length > n ? "�
 //   title       따로 파싱해 둔 제목. 없으면 본문에서 뽑는다.
 //   말투        "지시" | "요약"
 //   유형        이 글을 누구 기준으로 볼 것인가 (초안 머리말에 적힌 값). 없으면 원장값의 유형.
-export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = null, title, 말투 = "요약", 원장값 = null, 유형 = "", 원장글 = null } = {}) {
+export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = null, title, 말투 = "요약", 원장값 = null, 유형 = "", 원장글 = null, 사진수 = null } = {}) {
   const 논문 = config.논문검증 || {};
   const 목표 = 목표글자수 || config.최소글자수;
   const 구체최소 = config.구체성?.["1000자당_최소"] ?? 0;
@@ -834,7 +843,9 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const 목표사진 = targetPhotosFor(ref, config, 목표);
 
   const chars = noSpace(stripPhotos(text));
-  const photos = ((text || "").match(/\[사진:/g) || []).length;
+  // 초안은 사진 자리를 [사진: …] 로 적지만 발행된 글에는 진짜 이미지가 들어 있다.
+  // 그때는 세어 온 수를 넘긴다 — 판정을 두 벌로 두지 않으려고 입구만 하나 열어 둔다.
+  const photos = 사진수 ?? ((text || "").match(/\[사진:/g) || []).length;
   // 어느 갈래에 걸렸는지까지 안다 — "왜 걸렸는지"를 말해 주려고
   const 분류 = 추상어분류(config);
   const abstractByKind = Object.fromEntries(

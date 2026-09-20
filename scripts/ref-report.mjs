@@ -49,13 +49,17 @@ function 점수(post) {
 const 찾는말 = (process.argv[2] || "").trim();
 const 파일들 = fs.readdirSync(path.join(ROOT, "references")).filter((f) => f.endsWith(".json")).sort();
 let 합 = { 전체: 0, 통과: 0, 원장: 0, 병원: 0, 고객: 0, 불명: 0 };
+const 업종문제 = [];
 
 console.log("보관함".padEnd(18), "글수  통과   원장 병원 고객 불명");
 for (const f of 파일들) {
   const j = JSON.parse(fs.readFileSync(path.join(ROOT, "references", f), "utf8"));
-  if (!Array.isArray(j.posts) || !j.keyword) continue;          // 보관함이 아닌 파일은 건너뛴다     
+  if (!Array.isArray(j.posts) || !j.keyword) continue;          // 보관함이 아닌 파일은 건너뛴다
   if (원장글인가(j)) continue;                                   // 원장글 보관함은 순위와 무관하다 — 상위노출 점수로 재면 틀린다
   if (찾는말 && !j.keyword.includes(찾는말)) continue;
+  // 업종 표시가 없으면 그 보관함이 걸리는 키워드에서 업종 가르기가 통째로 꺼진다 — 조용히 꺼지지 않게 짚는다
+  if (!j.업종) 업종문제.push(`${j.keyword}: 업종 표시 없음`);
+  else if (!(CONFIG.업종?.갈래 || []).includes(j.업종)) 업종문제.push(`${j.keyword}: 모르는 업종 "${j.업종}"`);
   const 셈 = 쓴사람셈(j.posts, CONFIG);
   const 통과 = j.posts.filter((p) => 점수(p).통과).length;
   console.log(
@@ -74,3 +78,8 @@ for (const f of 파일들) {
 console.log("─".repeat(58));
 console.log("합계".padEnd(18), String(합.전체).padStart(3), String(합.통과).padStart(5),
   String(합.원장).padStart(6), String(합.병원).padStart(4), String(합.고객).padStart(4), String(합.불명).padStart(4));
+if (업종문제.length) {
+  console.log("\n업종 표시를 봐야 할 보관함:");
+  for (const m of 업종문제) console.log("  ·", m);
+  console.log(`  (config.업종.갈래: ${(CONFIG.업종?.갈래 || []).join(" · ")})`);
+}
