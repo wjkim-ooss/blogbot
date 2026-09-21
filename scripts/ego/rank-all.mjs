@@ -37,17 +37,22 @@ for (const s of 잴것) for (const k of s.키워드 || []) {
 // 오래 안 잰 것부터. 한 번도 안 잰 것이 가장 먼저다. (기록은 시간순으로 쌓이므로 나중 것이 최신)
 const 마지막 = new Map();
 for (const r of 기록) 마지막.set(r.keyword, r.at);
-const 순서 = [...묶음.keys()].sort((a, b) => ((마지막.get(a) ?? "") < (마지막.get(b) ?? "") ? -1 : 1));
 // 오늘 이미 잰 것은 건너뛴다. 예약 작업이 하루에 여러 번 돌기 때문에, 안 걸러 두면 5개를
-// 재고 또 같은 5개를 재게 된다. 오늘 것을 다시 재려면 {"다시":true}.
+// 재고 또 같은 5개를 재게 된다. 한 건만 지정했거나 {"다시":true} 면 오늘 것도 다시 잰다.
 const 오늘 = new Date().toISOString().slice(0, 10);
-const 오늘안잰것 = 한건 || args.다시 ? 순서 : 순서.filter((k) => (마지막.get(k) ?? "") < 오늘);
+const 오늘것도다시 = Boolean(한건 || args.다시);
+const 오늘안잰것 = [...묶음.keys()]
+  .sort((a, b) => ((마지막.get(a) ?? "") < (마지막.get(b) ?? "") ? -1 : 1))
+  .filter((k) => 오늘것도다시 || (마지막.get(k) ?? "") < 오늘);
 const 할것 = 오늘안잰것.slice(0, Number(args.최대));
 const 남은키워드 = 오늘안잰것.length - 할것.length;
 
+// 어느 쪽으로 끝나든 같은 모양으로 알린다 — 예약 작업은 `남은키워드` 한 칸만 보고 더 돌지를 정한다.
+const 요약 = (잰키워드 = 0, 기록수 = 0, 막힘 = false) => ({ 잰키워드, 기록: 기록수, 막힘, 남은키워드, 건너뛴샵: 건너뛴것 });
+
 // 잴 것이 없으면 브라우저를 열지 않는다 — 여는 것만으로도 네이버에 한 번 닿는다.
 if (!할것.length) {
-  report({ status: "ok", message: "오늘 잴 것이 없습니다. 추적 키워드를 오늘 다 쟀습니다.", 잰키워드: 0, 남은키워드: 0 });
+  report({ status: "ok", message: "오늘 잴 것이 없습니다. 추적 키워드를 오늘 다 쟀습니다.", summary: 요약() });
   process.exit(0);
 }
 
@@ -93,7 +98,7 @@ for (const [i, keyword] of 할것.entries()) {
 }
 
 if (결과.length) await fs.writeFile(순위기록파일, JSON.stringify(기록, null, 2) + "\n");
-const summary = { 잰키워드: 할것.length, 기록: 결과.length, 막힘, 남은키워드, 건너뛴샵: 건너뛴것 };
+const summary = 요약(할것.length, 결과.length, 막힘);
 run.note(summary);
 await run.save({ ...summary, 결과 });
 await finishSpace(task, { projectDir: PROJECT, flow: "rank" });

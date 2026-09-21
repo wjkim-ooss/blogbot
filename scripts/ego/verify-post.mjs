@@ -46,32 +46,25 @@ if (!keyword) {
   }
 }
 
-// 베끼기 대조에는 초안 때와 같은 레퍼런스를 쓴다 — 키워드를 안 주면 대조할 것이 없다.
-// 글마다 키워드가 다를 수 있으니 키워드별로 한 번만 고른다.
-let 보관함 = null;
-const 레퍼런스캐시 = new Map();
-async function 레퍼런스(kw) {
-  if (!kw) return null;
-  if (레퍼런스캐시.has(kw)) return 레퍼런스캐시.get(kw);
-  if (!보관함) {
-    const dir = `${PROJECT}/references`;
-    보관함 = [];
-    for (const f of (await fs.readdir(dir)).filter((x) => x.endsWith(".json") && !x.startsWith("_"))) {
-      보관함.push(JSON.parse(await fs.readFile(`${dir}/${f}`, "utf8")));
-    }
-  }
-  const ref = 참고레퍼런스(보관함, kw, CONFIG).ref;
-  레퍼런스캐시.set(kw, ref);
-  return ref;
-}
+// 베끼기 대조에는 초안 때와 **같은** 레퍼런스를 쓴다 — 키워드를 안 주면 대조할 것이 없다.
+// 보관함을 읽는 곳은 scripts/보관함.mjs 하나다(서버도 그것을 부른다). 여기서 따로 읽으면
+// 같은 키워드의 옛 수집분이 섞여, 초안이 본 글과 다른 글에 대고 베끼기를 재게 된다.
+const { 보관함읽기 } = await import(`${PROJECT}/scripts/보관함.mjs`);
+const 레퍼런스 = (kw) => (kw ? 참고레퍼런스(보관함읽기(), kw, CONFIG).ref : null);
+
+// 본문이 어디 있나 — 세 곳(기다리기·자람 보기·본문 뽑기)이 같은 것을 봐야 한다.
+// 한 곳만 고치면 '자람 보기'가 0을 재고 그냥 지나가, 아래 글자수 흔들림이 소리 없이 돌아온다.
+const 본문칸 = ".se-main-container, #postViewArea";
 
 // 본문 길이가 두 번 연속 같아질 때까지 기다린다. 끝까지 자라지 않아도 그 자리에서 진행한다 —
 // 못 기다린 것보다 매번 다른 값을 내는 쪽이 나쁘다.
-async function 그만자랄때까지(page, { 횟수 = 6, 간격 = 400 } = {}) {
-  const 길이 = () => page.evaluate(() => {
-    const c = document.querySelector(".se-main-container") || document.querySelector("#postViewArea");
-    return c ? c.innerText.length + c.querySelectorAll("img").length : 0;
-  });
+// 자람만 보면 되므로 textContent 로 센다 — innerText 는 잴 때마다 화면 배치를 다시 계산한다.
+const 간격 = 150, 횟수 = 16;   // 이미 다 자란 글은 150ms 에 지나가고, 늦어도 2.4초에 멈춘다
+async function 그만자랄때까지(page) {
+  const 길이 = () => page.evaluate((sel) => {
+    const c = document.querySelector(sel);
+    return c ? c.textContent.length + c.getElementsByTagName("img").length : 0;
+  }, 본문칸);
   let 앞 = await 길이();
   for (let i = 0; i < 횟수; i++) {
     await page.waitForTimeout(간격);
@@ -96,14 +89,14 @@ for (const [i, url] of urls.entries()) {
   try {
     await page.goto(toPostView(url));
     // load 는 글의 모든 이미지를 기다린다. 본문 컨테이너가 진짜 준비 신호다.
-    await page.waitForSelector(".se-main-container, #postViewArea", { state: "attached", timeout: 12000 });
+    await page.waitForSelector(본문칸, { state: "attached", timeout: 12000 });
     // 컨테이너가 붙은 뒤에도 사진·인용 블록이 더 들어온다. 같은 글을 두 번 재면 글자수가
     // 10~20자 달랐다 — 재는 값이 흔들리면 기준을 손볼 수가 없다. 안 늘어날 때까지 기다린다.
     await 그만자랄때까지(page);
 
     // 막힘 검사와 본문 추출을 한 번에 한다. 네이버 글은 본문이 길어서 두 번 실어 나를 이유가 없다.
-    const { body, data } = await page.evaluate(() => {
-      const c = document.querySelector(".se-main-container") || document.querySelector("#postViewArea");
+    const { body, data } = await page.evaluate((sel) => {
+      const c = document.querySelector(sel);
       const body = document.body.innerText.slice(0, 2000);
       if (!c) return { body, data: null };
       const title = (
@@ -115,7 +108,7 @@ for (const [i, url] of urls.entries()) {
         body,
         data: { title, text: c.innerText.replace(/\n{3,}/g, "\n\n").trim(), images: c.querySelectorAll("img").length },
       };
-    });
+    }, 본문칸);
 
     if (isRateLimited(body)) {
       run.note({ t: "rate-limited", url });
@@ -134,7 +127,7 @@ for (const [i, url] of urls.entries()) {
     // 글자수는 초안과 같게 제목까지 센다(서버도 `제목\n본문`으로 잰다).
     const kw = keyword || 키워드고르기(url, data.title);
     const v = 평가(`${data.title}\n${data.text}`, {
-      keyword: kw, config: CONFIG, ref: await 레퍼런스(kw), title: data.title, 말투: "요약", 사진수: data.images,
+      keyword: kw, config: CONFIG, ref: 레퍼런스(kw), title: data.title, 말투: "요약", 사진수: data.images,
     });
 
     results.push({
@@ -144,7 +137,7 @@ for (const [i, url] of urls.entries()) {
       글자수: v.chars,
       사진: data.images,
       키워드: kw || "(못 찾아 키워드 검사 안 함)",
-      ...(kw ? { 키워드횟수: v.kwCount } : {}),
+      키워드횟수: kw ? v.kwCount : null,   // 줄마다 칸이 달라지면 두 실행을 견줄 수가 없다
       고칠것: v.issues,
       권장: v.advice,
       품질점수: 품질점수(data.text, CONFIG),

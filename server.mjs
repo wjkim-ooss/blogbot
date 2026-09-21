@@ -6,12 +6,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveDraftView } from "./permissions.mjs";
+// 보관함 읽기는 한 곳(scripts/보관함.mjs)에서 한다 — 발행검증과 같은 목록을 봐야 한다.
+import { 보관함읽기 } from "./scripts/보관함.mjs";
 // 초안 판정 규칙은 브라우저와 한 파일을 함께 쓴다 (web/rules.js). 두 벌로 두면 반드시 갈라진다.
 import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 압축찾기, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형, 원장글보관함, 원장글고르기, 문장길이범위 } from "./web/rules.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
-const REF_DIR = path.join(ROOT, "references");
 const DRAFT_DIR = path.join(ROOT, "drafts");
 const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
 const PORT = Number(process.env.PORT) || 4039;
@@ -98,36 +99,15 @@ const validateDraft = (text, keyword, minChars = CONFIG.최소글자수, title =
   평가(text, { keyword, config: CONFIG, 목표글자수: minChars, ref, title, 말투: "지시", 원장값, 유형, 원장글 });
 
 // ---------- 레퍼런스 ----------
-// 파일명 앞 10자리 날짜로 오래된 순 정렬한 뒤, 키워드는 파일 '내용'으로 판별한다.
-// (파일명의 한글은 업로드 경로에 따라 자모 분리형이 될 수 있어 키로 쓰지 않는다)
-// 한 번 읽어 두고 폴더가 바뀔 때만 다시 읽는다.
-// 레퍼런스는 지금도 4MB이고 크롤링할수록 커지는데, 초안을 만들 때마다
-// 통째로 JSON.parse 하면 그동안 서버가 통으로 멈춘다(Node는 한 줄로 돈다).
-let 레퍼런스캐시 = null;
-function loadReferences() {
-  if (!fs.existsSync(REF_DIR)) return [];
-  const 표식 = `${fs.statSync(REF_DIR).mtimeMs}`;
-  if (레퍼런스캐시?.표식 === 표식) return 레퍼런스캐시.목록;
-
-  const newest = new Map(); // 키워드 → 레퍼런스 (뒤에서 덮어쓰므로 최신 수집분이 남음)
-  for (const f of fs.readdirSync(REF_DIR).filter((f) => f.endsWith(".json")).sort()) {
-    try {
-      const r = { file: f, ...JSON.parse(fs.readFileSync(path.join(REF_DIR, f), "utf8")) };
-      if (r.keyword) newest.set(r.keyword.normalize("NFC"), r);
-    } catch { /* 깨진 파일은 건너뜀 */ }
-  }
-  const 목록 = [...newest.values()].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  레퍼런스캐시 = { 표식, 목록 };
-  return 목록;
-}
-
+// 보관함을 읽는 코드는 scripts/보관함.mjs 하나다 — 발행검증(scripts/ego/verify-post.mjs)도
+// 같은 것을 부른다. 두 벌로 두면 초안이 보고 쓴 레퍼런스와 검증이 대조하는 레퍼런스가 갈라진다.
 // 어떤 레퍼런스를 참고할지 고르는 규칙은 web/rules.js pickReference에 있다.
 
 // 생성용: 파일명이 아니라 파일 안의 keyword로 찾는다.
 // (파일명에 한글이 들어가는데, 업로드 경로에 따라 자모 분리형으로 바뀔 수 있어 이름 비교는 조용히 실패한다)
 // 어느 레퍼런스를 참고할지 고르는 규칙은 web/rules.js 참고레퍼런스에 있다.
 // 대부분의 호출부는 고른 결과만 쓰고, 무엇을 보고 쓰는지 알려야 하는 곳만 종류까지 받는다.
-const 레퍼런스고르기 = (keyword) => 참고레퍼런스(loadReferences(), keyword, CONFIG);
+const 레퍼런스고르기 = (keyword) => 참고레퍼런스(보관함읽기(), keyword, CONFIG);
 const findReference = (keyword) => 레퍼런스고르기(keyword).ref;
 
 // 레퍼런스 크롤링은 웹에서 하지 않는다 — 채팅(Claude)에서 scripts/crawl.mjs로 수집한다.
@@ -1126,7 +1106,7 @@ async function handleGenerate(res, body, ctx) {
     const 사례 = (body.사례 || "").trim().slice(0, 1000);
     // 원장이 쓴 글 보관함 — 원장 유형에만 본보기로 보여주고, 그때만 베끼기 대조에도 넣는다(안 본 글과 대조할 이유가 없다).
     // 보관함은 여기서 한 번만 읽는다 — check()는 고쳐 쓰기마다 돈다.
-    const 원장글 = 유형정보(글쓴이유형).원장글본보기 ? 원장글보관함(loadReferences()) : null;
+    const 원장글 = 유형정보(글쓴이유형).원장글본보기 ? 원장글보관함(보관함읽기()) : null;
     const 원장본보기 = 원장글 ? 원장글고르기([원장글], keyword, CONFIG) : [];
     if (원장본보기.length) send({ type: "status", message: `원장이 직접 쓴 글 ${원장본보기.length}편을 말투 본보기로 같이 보여줍니다` });
     const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례, 원장본보기) }];
@@ -1435,7 +1415,7 @@ const server = http.createServer(async (req, res) => {
       if (!ctx.approved) return json(res, 403, { error: "승인 대기 중입니다. 관리자 승인 후 이용할 수 있어요." });
     }
 
-    if (p === "/api/references") return json(res, 200, loadReferences());
+    if (p === "/api/references") return json(res, 200, 보관함읽기());
 
     // 초안을 누구 것으로 볼지 (규칙은 permissions.mjs, 시험은 permissions.test.mjs)
     const { viewing, readOnly, denied } = resolveDraftView(ctx, url.searchParams.get("user"));

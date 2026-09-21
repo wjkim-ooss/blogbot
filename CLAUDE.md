@@ -17,6 +17,7 @@
 | 순위 추적 | `scripts/ego/rank-all.mjs`(브라우저로 잰다), `scripts/rank-report.mjs`(표로 본다) |
 | 대행 샵 목록·순위 기록 자리 | `scripts/샵.mjs` — `.추적.json` 을 읽는 곳은 여기 하나다. 글 제목에서 키워드 고르기(`제목으로키워드`)도 여기 |
 | 네이버 검색결과 링크 뽑기 | `scripts/naver-links.mjs` — 크롤러·순위·블로그찾기가 같이 쓴다 |
+| 레퍼런스 보관함 읽기 | `scripts/보관함.mjs` — 초안을 쓰는 서버와 발행검증이 **같은 목록**을 본다 |
 | 발행 글 가져오기·재채점 | `scripts/recent-posts.mjs`(RSS 목록), `scripts/ego/verify-post.mjs`(`{"blogId":"…"}` 로도 된다) |
 
 규칙을 두 벌로 두지 않는다. 서버와 화면이 같은 판정을 따로 적으면 반드시 갈라진다 —
