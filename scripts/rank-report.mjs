@@ -28,7 +28,11 @@ for (const r of 기록) {
   표.get(줄).set(날, r);
 }
 const 날순 = [...날들].sort().slice(-8);   // 최근 8회분만 — 옆으로 길어지면 못 읽는다
-const 줄순 = [...표.keys()].sort();
+// 안 재는 옛 키워드는 접어 둔다. 샵 하나를 빼면 그 줄이 열 줄 넘게 남아 지금 보는 것을 덮는다.
+const 전부보기 = process.argv.includes("전부");
+const 모든줄 = [...표.keys()].sort();
+const 줄순 = 전부보기 ? 모든줄 : 모든줄.filter((k) => !k.endsWith("(추적 끔)"));
+const 접은줄 = 모든줄.length - 줄순.length;
 
 const 보이기 = (r) => (!r ? "·" : r.순위 == null ? `>${r.검사수}` : String(r.순위));
 // 한글은 터미널에서 두 칸을 먹는다 — 글자 수로 맞추면 표가 어긋난다.
@@ -43,6 +47,8 @@ for (const 줄 of 줄순) {
   const 칸 = 표.get(줄);
   console.log(맞추기(줄), 날순.map((d) => 보이기(칸.get(d)).padStart(6)).join(""));
 }
+
+if (접은줄) console.log(`\n안 재는 옛 키워드 ${접은줄}줄은 접었습니다 — 보려면 node scripts/rank-report.mjs 전부`);
 
 const 잡힌것 = 기록.filter((r) => r.순위 != null);
 console.log(`\n30위 안에 든 기록 ${잡힌것.length}/${기록.length}건`);
