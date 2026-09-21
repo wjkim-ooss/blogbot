@@ -37,9 +37,12 @@ for (const s of 잴것) for (const k of s.키워드 || []) {
 // 오래 안 잰 것부터. 한 번도 안 잰 것이 가장 먼저다. (기록은 시간순으로 쌓이므로 나중 것이 최신)
 const 마지막 = new Map();
 for (const r of 기록) 마지막.set(r.keyword, r.at);
-const 할것 = [...묶음.keys()]
-  .sort((a, b) => ((마지막.get(a) ?? "") < (마지막.get(b) ?? "") ? -1 : 1))
-  .slice(0, Number(args.최대));
+const 순서 = [...묶음.keys()].sort((a, b) => ((마지막.get(a) ?? "") < (마지막.get(b) ?? "") ? -1 : 1));
+const 할것 = 순서.slice(0, Number(args.최대));
+// '남은'은 오늘 아직 안 잰 것이다. 전체에서 이번 몫만 뺐더니 두 번 돌려도 같은 수가 나왔고,
+// 예약 작업이 그 수를 보고 "한 번 더"를 정하기 때문에 진행이 안 되는 것처럼 보였다.
+const 오늘 = new Date().toISOString().slice(0, 10);
+const 남은키워드 = 순서.filter((k) => !할것.includes(k) && (마지막.get(k) ?? "") < 오늘).length;
 
 const { task, resumed, page } = await openSpace({ projectDir: PROJECT, flow: "rank", name: `순위 ${할것.length}개` });
 const run = await startRun(PROJECT, "rank");
@@ -83,7 +86,7 @@ for (const [i, keyword] of 할것.entries()) {
 }
 
 if (결과.length) await fs.writeFile(순위기록파일, JSON.stringify(기록, null, 2) + "\n");
-const summary = { 잰키워드: 할것.length, 기록: 결과.length, 막힘, 남은키워드: 묶음.size - 할것.length, 건너뛴샵: 건너뛴것 };
+const summary = { 잰키워드: 할것.length, 기록: 결과.length, 막힘, 남은키워드, 건너뛴샵: 건너뛴것 };
 run.note(summary);
 await run.save({ ...summary, 결과 });
 await finishSpace(task, { projectDir: PROJECT, flow: "rank" });
