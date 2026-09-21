@@ -10,7 +10,11 @@ if (!fs.existsSync(파일)) { console.log(`${파일} 이 없습니다. 아직 �
 const 기록 = JSON.parse(fs.readFileSync(파일, "utf8"));
 if (!기록.length) { console.log("기록이 비어 있습니다."); process.exit(0); }
 
-const { 이름 } = 샵들();   // 추적 파일이 없어도 아이디로 보여 준다
+const { 이름, 잴것 } = 샵들();   // 추적 파일이 없어도 아이디로 보여 준다
+// 지금 추적하는 샵+키워드 짝. 추적을 뗀 키워드도 기록에는 남는데, 그 줄의 오늘 칸이 비어 있으면
+// 재기를 놓친 것처럼 보인다 — 끈 것과 못 잰 것을 표에서 갈라 준다.
+const 추적중 = new Set();
+for (const s2 of 잴것) for (const k of s2.키워드 || []) 추적중.add(`${s2.blogId}\u0000${k}`);
 
 // 줄(샵+키워드) → 날짜 → 기록. 같은 날 두 번 재면 나중 것만 남는다.
 const 표 = new Map();
@@ -18,7 +22,8 @@ const 날들 = new Set();
 for (const r of 기록) {
   const 날 = r.at.slice(0, 10);
   날들.add(날);
-  const 줄 = `${이름[r.blogId] || r.blogId} · ${r.keyword}`;
+  const 껐다 = !추적중.has(`${r.blogId}\u0000${r.keyword}`);
+  const 줄 = `${이름[r.blogId] || r.blogId} · ${r.keyword}${껐다 ? " (추적 끔)" : ""}`;
   if (!표.has(줄)) 표.set(줄, new Map());
   표.get(줄).set(날, r);
 }
@@ -32,7 +37,7 @@ const 폭 = Math.max(20, ...줄순.map((k) => 칸수(k) + 2));   // 어느 줄�
 const 맞추기 = (s) => s + " ".repeat(폭 - 칸수(s));
 
 console.log(`순위 기록 ${기록.length}건 · ${날순[0]} ~ ${날순.at(-1)}`);
-console.log("(숫자 = 블로그탭 순위, >30 = 상위 30위 밖, · = 그날 안 잼)\n");
+console.log("(숫자 = 블로그탭 순위, >30 = 상위 30위 밖, · = 그날 안 잼, (추적 끔) = 이제 안 재는 키워드)\n");
 console.log(맞추기("샵 · 키워드"), 날순.map((d) => d.slice(5).padStart(6)).join(""));
 for (const 줄 of 줄순) {
   const 칸 = 표.get(줄);

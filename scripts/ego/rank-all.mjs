@@ -38,11 +38,18 @@ for (const s of 잴것) for (const k of s.키워드 || []) {
 const 마지막 = new Map();
 for (const r of 기록) 마지막.set(r.keyword, r.at);
 const 순서 = [...묶음.keys()].sort((a, b) => ((마지막.get(a) ?? "") < (마지막.get(b) ?? "") ? -1 : 1));
-const 할것 = 순서.slice(0, Number(args.최대));
-// '남은'은 오늘 아직 안 잰 것이다. 전체에서 이번 몫만 뺐더니 두 번 돌려도 같은 수가 나왔고,
-// 예약 작업이 그 수를 보고 "한 번 더"를 정하기 때문에 진행이 안 되는 것처럼 보였다.
+// 오늘 이미 잰 것은 건너뛴다. 예약 작업이 하루에 여러 번 돌기 때문에, 안 걸러 두면 5개를
+// 재고 또 같은 5개를 재게 된다. 오늘 것을 다시 재려면 {"다시":true}.
 const 오늘 = new Date().toISOString().slice(0, 10);
-const 남은키워드 = 순서.filter((k) => !할것.includes(k) && (마지막.get(k) ?? "") < 오늘).length;
+const 오늘안잰것 = 한건 || args.다시 ? 순서 : 순서.filter((k) => (마지막.get(k) ?? "") < 오늘);
+const 할것 = 오늘안잰것.slice(0, Number(args.최대));
+const 남은키워드 = 오늘안잰것.length - 할것.length;
+
+// 잴 것이 없으면 브라우저를 열지 않는다 — 여는 것만으로도 네이버에 한 번 닿는다.
+if (!할것.length) {
+  report({ status: "ok", message: "오늘 잴 것이 없습니다. 추적 키워드를 오늘 다 쟀습니다.", 잰키워드: 0, 남은키워드: 0 });
+  process.exit(0);
+}
 
 const { task, resumed, page } = await openSpace({ projectDir: PROJECT, flow: "rank", name: `순위 ${할것.length}개` });
 const run = await startRun(PROJECT, "rank");
