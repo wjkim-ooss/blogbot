@@ -29,21 +29,21 @@ const fs = await import("node:fs/promises");
 const { 평가, 품질점수, 참고레퍼런스 } = await import(`${PROJECT}/web/rules.js`);
 const CONFIG = JSON.parse(await fs.readFile(`${PROJECT}/config.json`, "utf8"));
 
-// 키워드를 안 주면 추적 목록에서 찾는다. 안 주고 돌리는 쪽이 오히려 흔하다(예약 작업은
+// 키워드를 안 주면 글 제목에서 고른다. 안 주고 돌리는 쪽이 오히려 흔하다(예약 작업은
 // {"blogId":…} 로만 부른다) — 그때 키워드 검사가 조용히 꺼지고 "키워드 0회"로 찍혔다.
-// 제목에 든 추적 키워드 중 가장 긴 것을 고른다. 없으면 null — 검사를 껐다고 밝힌다.
-const 추적키워드 = new Map();
-try {
-  const { 샵들 } = await import(`${PROJECT}/scripts/샵.mjs`);
-  for (const s of 샵들().잴것) 추적키워드.set(s.blogId, [...(s.키워드 || [])].sort((a, b) => b.length - a.length));
-} catch { /* 추적 목록이 없어도 url+keyword 로는 돈다 */ }
-
-const 붙여서 = (t) => (t || "").replace(/\s+/g, "");
-function 키워드고르기(url, title) {
-  if (keyword) return keyword;
-  const blogId = url.match(/blog\.naver\.com\/([\w.-]+)/)?.[1];
-  const 제목 = 붙여서(title);
-  return (추적키워드.get(blogId) || []).find((k) => 제목.includes(붙여서(k))) ?? "";
+// 고르는 규칙은 scripts/샵.mjs 의 제목으로키워드 하나다. 못 고르면 "" — 검사를 껐다고 밝힌다.
+// 키워드를 받았으면 추적 목록을 읽지도 않는다.
+let 키워드고르기 = () => "";
+if (!keyword) {
+  try {
+    const { 샵들, 제목으로키워드 } = await import(`${PROJECT}/scripts/샵.mjs`);
+    const 추적키워드 = new Map(샵들().잴것.map((s) => [s.blogId, s.키워드 || []]));
+    키워드고르기 = (url, title) =>
+      제목으로키워드(추적키워드.get(url.match(/blog\.naver\.com\/([\w.-]+)/)?.[1]), title);
+  } catch (e) {
+    // 삼키지 않는다 — 조용히 꺼진 검사가 바로 이 파일이 고치려던 문제다.
+    console.error(`추적 목록을 못 읽어 키워드를 고르지 못합니다: ${e.message}`);
+  }
 }
 
 // 베끼기 대조에는 초안 때와 같은 레퍼런스를 쓴다 — 키워드를 안 주면 대조할 것이 없다.
@@ -132,7 +132,7 @@ for (const [i, url] of urls.entries()) {
 
     // 발행된 글에는 [사진: …] 자리표시 대신 진짜 이미지가 있다. 그 수만 넘기고 판정은 평가()가 한다.
     // 글자수는 초안과 같게 제목까지 센다(서버도 `제목\n본문`으로 잰다).
-    const kw = 키워드고르기(url, data.title);
+    const kw = keyword || 키워드고르기(url, data.title);
     const v = 평가(`${data.title}\n${data.text}`, {
       keyword: kw, config: CONFIG, ref: await 레퍼런스(kw), title: data.title, 말투: "요약", 사진수: data.images,
     });

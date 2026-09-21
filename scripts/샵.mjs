@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { despace } from "../web/rules.js";
 
 export const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const 파일 = path.join(ROOT, ".추적.json");
@@ -26,6 +27,17 @@ export function 샵들({ 필수 = false } = {}) {
     이름: Object.fromEntries(전부.filter((s) => s.blogId).map((s) => [s.blogId, s.이름])),
     없음: false,
   };
+}
+
+// 글 제목에 든 추적 키워드를 고른다 — 발행 글을 잴 때 "이 글은 어느 키워드 글인가"에 답한다.
+// 겹치면 긴 것이 이긴다: "마곡 좁쌀여드름"이 "마곡 여드름"보다 그 글의 주제에 가깝다.
+// 비교는 양쪽 공백을 지우고 한다(네이버가 띄어쓰기를 무시하는 것과 같은 규칙 — web/rules.js 의 despace).
+// 맥을 거치면 한글이 자모 분리형(NFD)으로 오기도 해서 양쪽 다 NFC 로 맞춘다.
+export function 제목으로키워드(키워드들, title) {
+  const 제목 = despace((title || "").normalize("NFC"));
+  return [...(키워드들 || [])]
+    .sort((a, b) => b.length - a.length)
+    .find((k) => 제목.includes(despace(String(k).normalize("NFC")))) ?? "";
 }
 
 export const 순위기록파일 = path.join(ROOT, "rank", "순위기록.json");

@@ -15,7 +15,7 @@
 | 크롤러 | `scripts/crawl.mjs`(키워드 상위글), `scripts/crawl-owner.mjs`(원장이 쓴 글) |
 | 보관함 점검·점수 다시 매기기 | `scripts/ref-report.mjs`, `scripts/rescore.mjs` |
 | 순위 추적 | `scripts/ego/rank-all.mjs`(브라우저로 잰다), `scripts/rank-report.mjs`(표로 본다) |
-| 대행 샵 목록·순위 기록 자리 | `scripts/샵.mjs` — `.추적.json` 을 읽는 곳은 여기 하나다 |
+| 대행 샵 목록·순위 기록 자리 | `scripts/샵.mjs` — `.추적.json` 을 읽는 곳은 여기 하나다. 글 제목에서 키워드 고르기(`제목으로키워드`)도 여기 |
 | 네이버 검색결과 링크 뽑기 | `scripts/naver-links.mjs` — 크롤러·순위·블로그찾기가 같이 쓴다 |
 | 발행 글 가져오기·재채점 | `scripts/recent-posts.mjs`(RSS 목록), `scripts/ego/verify-post.mjs`(`{"blogId":"…"}` 로도 된다) |
 

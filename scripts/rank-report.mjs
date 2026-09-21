@@ -22,30 +22,30 @@ const 날들 = new Set();
 for (const r of 기록) {
   const 날 = r.at.slice(0, 10);
   날들.add(날);
-  const 껐다 = !추적중.has(`${r.blogId}\u0000${r.keyword}`);
-  const 줄 = `${이름[r.blogId] || r.blogId} · ${r.keyword}${껐다 ? " (추적 끔)" : ""}`;
-  if (!표.has(줄)) 표.set(줄, new Map());
-  표.get(줄).set(날, r);
+  const 줄 = `${이름[r.blogId] || r.blogId} · ${r.keyword}`;
+  if (!표.has(줄)) 표.set(줄, { 꺼짐: !추적중.has(`${r.blogId}\u0000${r.keyword}`), 칸: new Map() });
+  표.get(줄).칸.set(날, r);
 }
 const 날순 = [...날들].sort().slice(-8);   // 최근 8회분만 — 옆으로 길어지면 못 읽는다
 // 안 재는 옛 키워드는 접어 둔다. 샵 하나를 빼면 그 줄이 열 줄 넘게 남아 지금 보는 것을 덮는다.
 const 전부보기 = process.argv.includes("전부");
 const 모든줄 = [...표.keys()].sort();
-const 줄순 = 전부보기 ? 모든줄 : 모든줄.filter((k) => !k.endsWith("(추적 끔)"));
+const 줄순 = 전부보기 ? 모든줄 : 모든줄.filter((k) => !표.get(k).꺼짐);
 const 접은줄 = 모든줄.length - 줄순.length;
+const 이름표 = (줄) => 줄 + (표.get(줄).꺼짐 ? " (추적 끔)" : "");
 
 const 보이기 = (r) => (!r ? "·" : r.순위 == null ? `>${r.검사수}` : String(r.순위));
 // 한글은 터미널에서 두 칸을 먹는다 — 글자 수로 맞추면 표가 어긋난다.
 const 칸수 = (s) => [...s].reduce((n, c) => n + (/[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]/.test(c) ? 2 : 1), 0);
-const 폭 = Math.max(20, ...줄순.map((k) => 칸수(k) + 2));   // 어느 줄보다도 두 칸 넓다
+const 폭 = Math.max(20, ...줄순.map((k) => 칸수(이름표(k)) + 2));   // 어느 줄보다도 두 칸 넓다
 const 맞추기 = (s) => s + " ".repeat(폭 - 칸수(s));
 
 console.log(`순위 기록 ${기록.length}건 · ${날순[0]} ~ ${날순.at(-1)}`);
 console.log("(숫자 = 블로그탭 순위, >30 = 상위 30위 밖, · = 그날 안 잼, (추적 끔) = 이제 안 재는 키워드)\n");
 console.log(맞추기("샵 · 키워드"), 날순.map((d) => d.slice(5).padStart(6)).join(""));
 for (const 줄 of 줄순) {
-  const 칸 = 표.get(줄);
-  console.log(맞추기(줄), 날순.map((d) => 보이기(칸.get(d)).padStart(6)).join(""));
+  const { 칸 } = 표.get(줄);
+  console.log(맞추기(이름표(줄)), 날순.map((d) => 보이기(칸.get(d)).padStart(6)).join(""));
 }
 
 if (접은줄) console.log(`\n안 재는 옛 키워드 ${접은줄}줄은 접었습니다 — 보려면 node scripts/rank-report.mjs 전부`);
