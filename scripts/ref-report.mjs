@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { 쓴사람, 쓴사람셈, 긴문장, 본문만, 구체수, 추상어목록, noSpace, stripPhotos, 원장글인가 } from "../web/rules.js";
+import { 보관함파일들 } from "./보관함.mjs";   // 보관함 파일을 훑는 곳은 한 곳이다
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
@@ -47,14 +48,11 @@ function 점수(post) {
 }
 
 const 찾는말 = (process.argv[2] || "").trim();
-const 파일들 = fs.readdirSync(path.join(ROOT, "references")).filter((f) => f.endsWith(".json")).sort();
 let 합 = { 전체: 0, 통과: 0, 원장: 0, 병원: 0, 고객: 0, 불명: 0 };
 const 업종문제 = [];
 
 console.log("보관함".padEnd(18), "글수  통과   원장 병원 고객 불명");
-for (const f of 파일들) {
-  const j = JSON.parse(fs.readFileSync(path.join(ROOT, "references", f), "utf8"));
-  if (!Array.isArray(j.posts) || !j.keyword) continue;          // 보관함이 아닌 파일은 건너뛴다
+for (const { 보관함: j } of 보관함파일들()) {
   if (원장글인가(j)) continue;                                   // 원장글 보관함은 순위와 무관하다 — 상위노출 점수로 재면 틀린다
   if (찾는말 && !j.keyword.includes(찾는말)) continue;
   // 업종 표시가 없으면 그 보관함이 걸리는 키워드에서 업종 가르기가 통째로 꺼진다 — 조용히 꺼지지 않게 짚는다

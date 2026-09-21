@@ -5,7 +5,7 @@
 // 거기 있는 글은 전부 이미 올라간 글이라, 안 올라간 글과 견줄 수가 없다(2026-09-20 측정).
 // 우리 글이 몇 주에 걸쳐 몇 등을 하는지가 우리 기준이 맞는지 보는 유일한 자리다.
 import fs from "node:fs";
-import { 샵들, 순위기록파일 as 파일 } from "./샵.mjs";
+import { 샵들, 순위기록파일 as 파일, 한국날 } from "./샵.mjs";
 if (!fs.existsSync(파일)) { console.log(`${파일} 이 없습니다. 아직 순위를 잰 적이 없습니다.`); process.exit(0); }
 const 기록 = JSON.parse(fs.readFileSync(파일, "utf8"));
 if (!기록.length) { console.log("기록이 비어 있습니다."); process.exit(0); }
@@ -20,7 +20,7 @@ for (const s2 of 잴것) for (const k of s2.키워드 || []) 추적중.add(`${s2
 const 표 = new Map();
 const 날들 = new Set();
 for (const r of 기록) {
-  const 날 = r.at.slice(0, 10);
+  const 날 = 한국날(r.at);   // 잰 시각은 세계 표준시로 적힌다 — 표의 칸은 한국 날짜로 가른다
   날들.add(날);
   const 줄 = `${이름[r.blogId] || r.blogId} · ${r.keyword}`;
   if (!표.has(줄)) 표.set(줄, { 꺼짐: !추적중.has(`${r.blogId}\u0000${r.keyword}`), 칸: new Map() });

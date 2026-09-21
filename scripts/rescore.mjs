@@ -6,22 +6,19 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { 품질점수, 원장글인가 } from "../web/rules.js";
+import { 보관함파일들 } from "./보관함.mjs";   // 보관함 파일을 훑는 곳은 한 곳이다
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
-const REF_DIR = path.join(ROOT, "references");
 const 찾는말 = (process.argv[2] || "").trim();
 const 평균 = (arr) => (arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0);
 
 console.log("보관함".padEnd(22), "글수  없던점수  전평균 → 새평균");
-for (const f of fs.readdirSync(REF_DIR).filter((f) => f.endsWith(".json") && !f.startsWith("_")).sort()) {
-  const file = path.join(REF_DIR, f);
-  const j = JSON.parse(fs.readFileSync(file, "utf8"));
-  if (!Array.isArray(j.posts) || !j.keyword) continue;
+for (const { 경로: file, 보관함: j } of 보관함파일들()) {
   if (찾는말 && !j.keyword.includes(찾는말)) continue;
   const 없던 = j.posts.filter((p) => typeof p.score !== "number").length;
   const 전 = 평균(j.posts.filter((p) => typeof p.score === "number").map((p) => p.score));
   j.posts = j.posts.map((p) => ({ ...p, ...품질점수(p.text, CONFIG) }));
-  fs.writeFileSync(file, JSON.stringify(j, null, 2));
+  fs.writeFileSync(file, JSON.stringify(j, null, 2) + "\n");   // 끝 줄바꿈까지 원래대로 — 없으면 돌릴 때마다 23개 파일이 '바뀜'으로 뜬다
   console.log(`${j.keyword.padEnd(22)} ${String(j.posts.length).padStart(3)} ${String(없던).padStart(9)} ${String(전).padStart(8)} → ${평균(j.posts.map((p) => p.score))}${원장글인가(j) ? "  (원장 글)" : ""}`);
 }

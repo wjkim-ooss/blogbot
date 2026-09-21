@@ -340,7 +340,7 @@ function runValidation() {
           title, titleHasKw, titleHasNum, titleLen,
           abstractFound, abstractByKind, medicalFound, overclaimFound, pmids, needsEvidence,
           구체, 구체밀도, 구체최소, 구체권장, 정도부사, 정도부사횟수,
-          issues, advice } = evaluateDraft(body, keyword, 적힌목표(raw), 적힌유형(raw));
+          꺼진검사, issues, advice } = evaluateDraft(body, keyword, 적힌목표(raw), 적힌유형(raw));
   const kwCls = kwLack ? "v-bad" : kwOver ? "v-warn" : "v-ok";
   const kwNote = kwLack ? " 부족" : kwOver ? " 과다" : "";
   const kwRows = keyword
@@ -356,11 +356,17 @@ function runValidation() {
     : issues.length
     ? `<div class="v-verdict bad"><b>고칠 점 ${issues.length}개</b>${issues.map((s) => `<div>· ${esc(s)}</div>`).join("")}</div>`
     : `<div class="v-verdict ok"><b>✅ 기준 통과 — 그대로 올리셔도 됩니다</b></div>`;
+  // 안 돈 검사가 있으면 '통과'를 그대로 믿게 두지 않는다 — 키워드 칸이 비면 검사 넷이 꺼진다.
+  const 꺼짐 = 꺼진검사?.length
+    ? `<div class="v-verdict tip"><b>⚠️ 키워드 칸이 비어 있어 검사 ${꺼진검사.length}개는 돌지 않았습니다</b>` +
+      `<div>· 안 돈 검사: ${꺼진검사.map(esc).join(" · ")}</div>` +
+      `<div>위 키워드 칸을 채우면 같이 재 드립니다.</div></div>`
+    : "";
   const tips = advice.length
     ? `<div class="v-verdict tip"><b>더 좋게 하려면 (선택)</b>${advice.map((s) => `<div>· ${esc(s)}</div>`).join("")}</div>`
     : "";
   panel.innerHTML = `
-    ${verdict}${tips}
+    ${verdict}${꺼짐}${tips}
     <h4>3대 기준 검증</h4>
     <div class="v-item"><span>글자수 (공백제외)</span><span class="${ok(chars >= targetChars)}">${chars.toLocaleString()}자</span></div>
     <div class="v-item"><span>목표 기준</span><span class="muted">${분량표시(지정목표)}</span></div>

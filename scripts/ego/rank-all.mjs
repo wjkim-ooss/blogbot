@@ -17,7 +17,7 @@ const args = getArgs({ 최대: 5, scrolls: 2, top: 30 });
 const PROJECT = args._project;
 const fs = await import("node:fs/promises");
 const { 화면긁기 } = await import(`${PROJECT}/scripts/naver-links.mjs`);
-const { 샵들, 순위기록파일 } = await import(`${PROJECT}/scripts/샵.mjs`);
+const { 샵들, 순위기록파일, 한국날 } = await import(`${PROJECT}/scripts/샵.mjs`);
 
 // 인자로 한 건만 줄 수도 있다. 그때도 기록·판정은 아래 한 곳을 그대로 지난다.
 const 한건 = args.keyword && (args.blogId || args.postUrl);
@@ -39,11 +39,11 @@ const 마지막 = new Map();
 for (const r of 기록) 마지막.set(r.keyword, r.at);
 // 오늘 이미 잰 것은 건너뛴다. 예약 작업이 하루에 여러 번 돌기 때문에, 안 걸러 두면 5개를
 // 재고 또 같은 5개를 재게 된다. 한 건만 지정했거나 {"다시":true} 면 오늘 것도 다시 잰다.
-const 오늘 = new Date().toISOString().slice(0, 10);
+const 오늘 = 한국날();   // 한국 날짜로 가른다 — 세계 표준시로 가르면 아침에 도는 예약이 어긋난다
 const 오늘것도다시 = Boolean(한건 || args.다시);
 const 오늘안잰것 = [...묶음.keys()]
   .sort((a, b) => ((마지막.get(a) ?? "") < (마지막.get(b) ?? "") ? -1 : 1))
-  .filter((k) => 오늘것도다시 || (마지막.get(k) ?? "") < 오늘);
+  .filter((k) => 오늘것도다시 || 한국날(마지막.get(k) ?? 0) < 오늘);
 const 할것 = 오늘안잰것.slice(0, Number(args.최대));
 const 남은키워드 = 오늘안잰것.length - 할것.length;
 

@@ -17,6 +17,7 @@ import { chromium } from "playwright-core";
 import fs from "node:fs";
 import path from "node:path";
 import { 쓴사람, 원장글인가 } from "../web/rules.js";
+import { 보관함파일들 } from "./보관함.mjs";   // 보관함 파일을 훑는 곳은 한 곳이다
 import { ensureChrome, collectTopUrls, extractPost, loadExisting, saveReference, 정규화, charCountNoSpace, sleep, CDP_URL, REF_DIR, CONFIG } from "./crawl.mjs";
 
 const O = CONFIG.원장글;
@@ -38,9 +39,7 @@ const 남길까 = (post, chars = charCountNoSpace(post.text)) =>
 // 블로그마다 한 편만 보면 되므로 같은 블로그의 나머지 글은 분류하지 않는다(분류가 제일 비싸다).
 function 씨앗블로그() {
   const ids = new Set();
-  if (!fs.existsSync(REF_DIR)) return ids;
-  for (const f of fs.readdirSync(REF_DIR).filter((f) => f.endsWith(".json") && !f.startsWith("_"))) {
-    let j; try { j = JSON.parse(fs.readFileSync(path.join(REF_DIR, f), "utf8")); } catch { continue; }
+  for (const { 보관함: j } of 보관함파일들()) {
     if (원장글인가(j)) continue;
     for (const p of j.posts || []) {
       const id = 블로그아이디(p.url || "");

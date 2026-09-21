@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, pickReference, 참고레퍼런스, 본문에서찾기, 원장글고르기, 품질점수, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈 } from "./web/rules.js";
+import { 평가, noSpace, pickReference, 참고레퍼런스, 본문에서찾기, 원장글고르기, 품질점수, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈 } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
@@ -41,6 +41,50 @@ test("말투만 다르고 통과/불통과와 지적 개수는 같다", () => {
     assert.equal(서버.chars, 화면.chars);
     assert.equal(서버.kwCount, 화면.kwCount);
   }
+});
+
+// 같은 글이 두 모양으로 들어온다: 서버·발행검증은 `제목\n본문` + title 인자,
+// 편집기는 초안 파일 그대로 "제목: …" 줄째. 둘이 갈리면 초안 머리에 적힌 글자수와
+// 옆 화면 숫자가 다르고(3자), 제목이 본문 문장으로 세어져 긴 문장·첫 문단 검사가 어긋난다.
+test("제목을 어떤 모양으로 넘기든 같은 글은 같게 잰다", () => {
+  const 제목 = "여드름 피부관리, 리셉션부터 관리사까지 8년차 원장이 보는 기준";
+  const 몸 = 본문(1400).split("\n").slice(2).join("\n");
+  const 서버 = 재기(`${제목}\n${몸}`, { title: 제목 });
+  const 편집기 = 재기(`제목: ${제목}\n\n${몸}`);
+
+  assert.equal(서버.chars, 편집기.chars, "글자수가 갈리면 초안 머리의 숫자와 화면이 어긋난다");
+  assert.equal(서버.pass, 편집기.pass);
+  assert.deepEqual(서버.issues, 편집기.issues, "제목 줄 모양 때문에 지적이 갈리면 안 된다");
+  assert.deepEqual(서버.advice, 편집기.advice);
+
+  // 제목은 글자수에 든다 — 다만 "제목:" 이라는 표는 글이 아니라서 빠진다.
+  const 제목없이 = 재기(몸);
+  assert.equal(서버.chars - 제목없이.chars, noSpace(제목), "제목 글자만큼만 늘어야 한다");
+});
+
+test("제목 줄은 본문 문장으로 세지 않는다 — 어느 모양으로 들어와도", () => {
+  // 제목은 길 수밖에 없다(소제목도 마찬가지). 본문 문장으로 세면 '긴 문장' 비율이 부풀고,
+  // 첫 문단 키워드 검사가 제목을 보고 조용히 통과한다.
+  const 제목 = "여드름 피부관리 잘하는 곳을 찾으신다면 이 글을 끝까지 보세요";
+  const 몸 = `${(짧은줄 + " ").repeat(4)}\n### 관리 순서\n${(짧은줄 + " ").repeat(12)}`;
+  for (const [이름, v] of [
+    ["서버 방식", 재기(`${제목}\n${몸}`, { keyword: "여드름 피부관리", title: 제목, 원장값 })],
+    ["편집기 방식", 재기(`제목: ${제목}\n\n${몸}`, { keyword: "여드름 피부관리",원장값 })],
+  ]) {
+    assert.ok(v.advice.some((s) => s.includes("첫 문단")), `${이름}: 첫 문단에 키워드가 없으면 짚어야 한다`);
+  }
+});
+
+// 키워드가 없으면 키워드 검사 넷이 통째로 빠진다. 그런데 걸린 게 없으니 pass 가 true 가 되어
+// "기준 통과"로 보인다 — 검사가 꺼진 것을 통과로 읽는 자리다. 판정이 스스로 밝히게 한다.
+test("키워드 없이 재면 어떤 검사가 안 돌았는지 밝힌다", () => {
+  const 없이 = 재기(본문(1400), { keyword: "" });
+  assert.equal(없이.꺼진검사.length, 4, JSON.stringify(없이.꺼진검사));
+  assert.ok(없이.꺼진검사.includes("키워드 횟수"));
+  assert.equal(없이.kwLack, false, "검사가 꺼졌으니 '부족'으로도 찍히지 않는다 — 그래서 밝혀야 한다");
+
+  const 주고 = 재기(본문(1400));
+  assert.deepEqual(주고.꺼진검사, [], "키워드를 주면 빈 목록이다 — 칸이 있다 없다 하지 않는다");
 });
 
 test("사진 목표는 레퍼런스를 따라간다 — 서버·화면 같은 값", () => {

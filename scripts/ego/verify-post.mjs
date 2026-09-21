@@ -136,8 +136,9 @@ for (const [i, url] of urls.entries()) {
       title: data.title,
       글자수: v.chars,
       사진: data.images,
-      키워드: kw || "(못 찾아 키워드 검사 안 함)",
+      키워드: kw || "(제목에서 못 찾음)",
       키워드횟수: kw ? v.kwCount : null,   // 줄마다 칸이 달라지면 두 실행을 견줄 수가 없다
+      꺼진검사: v.꺼진검사,                 // 안 돈 검사가 무엇인지는 rules.js 가 정한다 — 여기서 다시 적지 않는다
       고칠것: v.issues,
       권장: v.advice,
       품질점수: 품질점수(data.text, CONFIG),

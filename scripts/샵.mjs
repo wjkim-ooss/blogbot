@@ -41,3 +41,12 @@ export function 제목으로키워드(키워드들, title) {
 }
 
 export const 순위기록파일 = path.join(ROOT, "rank", "순위기록.json");
+
+// 기록의 `at` 은 세계 표준시다. "오늘 이미 쟀나"를 그 날짜로 물으면, 한국 시각 아침 9시 전에
+// 도는 예약은 어제 오후에 잰 것을 오늘 잰 것으로 보고 건너뛴다(반대로 밤에 잰 것은 내일 것이 된다).
+// 하루를 가르는 자리는 여기 하나다 — 순위 재기와 순위 표가 같은 '하루'를 써야 표가 맞는다.
+export function 한국날(때 = Date.now()) {
+  const t = new Date(때).getTime();
+  if (Number.isNaN(t)) return "";
+  return new Date(t + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
