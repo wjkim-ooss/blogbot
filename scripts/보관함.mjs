@@ -19,12 +19,12 @@ export function 보관함읽기() {
   const 표식 = `${fs.statSync(REF_DIR).mtimeMs}`;
   if (캐시?.표식 === 표식) return 캐시.목록;
 
+  // 폴더를 훑는 자리는 아래 보관함파일들() 하나다. 여기서 또 readdir 하면
+  // '무엇이 보관함 파일인가'(`_` 로 시작하면 아님, posts 가 배열이어야 함)가 다시 두 벌이 된다 —
+  // 직전 커밋이 세 스크립트에서 모아 온 바로 그 규칙이다.
   const newest = new Map(); // 키워드 → 레퍼런스 (뒤에서 덮어쓰므로 최신 수집분이 남음)
-  for (const f of fs.readdirSync(REF_DIR).filter((f) => f.endsWith(".json")).sort()) {
-    try {
-      const r = { file: f, ...JSON.parse(fs.readFileSync(path.join(REF_DIR, f), "utf8")) };
-      if (r.keyword) newest.set(r.keyword.normalize("NFC"), r);
-    } catch { /* 깨진 파일은 건너뜀 */ }
+  for (const { 이름, 보관함 } of 보관함파일들()) {
+    newest.set(보관함.keyword.normalize("NFC"), { file: 이름, ...보관함 });
   }
   const 목록 = [...newest.values()].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   캐시 = { 표식, 목록 };
