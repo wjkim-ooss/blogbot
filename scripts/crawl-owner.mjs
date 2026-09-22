@@ -14,11 +14,9 @@
 //       node scripts/crawl-owner.mjs refilter        (다시 긁지 않고 지금 규칙으로 모아 둔 것만 거른다)
 //       SHOW=1 을 붙이면 크롬 창이 보인다.
 import { chromium } from "playwright-core";
-import fs from "node:fs";
-import path from "node:path";
 import { 쓴사람, 원장글인가 } from "../web/rules.js";
 import { 보관함파일들 } from "./보관함.mjs";   // 보관함 파일을 훑는 곳은 한 곳이다
-import { ensureChrome, collectTopUrls, extractPost, loadExisting, saveReference, 정규화, charCountNoSpace, sleep, CDP_URL, REF_DIR, CONFIG } from "./crawl.mjs";
+import { ensureChrome, collectTopUrls, extractPost, loadExisting, saveReference, 정규화, charCountNoSpace, sleep, CDP_URL, CONFIG } from "./crawl.mjs";
 
 const O = CONFIG.원장글;
 if (!O) throw new Error("config.json에 원장글 블록이 없습니다");
