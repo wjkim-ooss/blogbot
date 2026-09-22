@@ -35,11 +35,11 @@ export function 보관함읽기() {
 // 그쪽은 '판정에 쓸 한 벌'이라 키워드마다 최신 것 하나만 남기지만, 이쪽은 같은 키워드가 두 벌이면
 // 둘 다 내놓는다. 점검은 그 두 벌이 있다는 것 자체가 짚을 거리고, 재채점은 둘 다 고쳐야 한다.
 // `_` 로 시작하는 파일은 보관함이 아니다 — 세 스크립트가 이 규칙을 제각각 적어 이미 갈려 있었다.
-export function 보관함파일들(dir = REF_DIR) {
-  if (!fs.existsSync(dir)) return [];
+export function 보관함파일들() {
+  if (!fs.existsSync(REF_DIR)) return [];
   const 것들 = [];
-  for (const 이름 of fs.readdirSync(dir).filter((f) => f.endsWith(".json") && !f.startsWith("_")).sort()) {
-    const 경로 = path.join(dir, 이름);
+  for (const 이름 of fs.readdirSync(REF_DIR).filter((f) => f.endsWith(".json") && !f.startsWith("_")).sort()) {
+    const 경로 = path.join(REF_DIR, 이름);
     let 보관함;
     try { 보관함 = JSON.parse(fs.readFileSync(경로, "utf8")); } catch { continue; } // 깨진 파일 하나가 점검 전체를 멈추지 않게
     if (!Array.isArray(보관함.posts) || !보관함.keyword) continue;                    // 보관함이 아닌 파일은 건너뛴다
