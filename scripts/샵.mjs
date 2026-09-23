@@ -50,3 +50,14 @@ export function 한국날(때 = Date.now()) {
   if (Number.isNaN(t)) return "";
   return new Date(t + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
+
+// "이번 주에 이미 쟀나"를 가르는 자리. 순위는 한 주에 한 번 재는 것이 목표다 — 하루 기준으로
+// 물으면 화요일 예약이 월요일에 이미 잰 것을 또 잰다(2026-09-22에 그렇게 10개를 다시 쟀다).
+// 한 주는 월요일에 시작한다. 돌려주는 값은 그 주 월요일의 한국 날짜라, 문자열끼리 견주면 주 순서가 나온다.
+export function 한국주(때 = Date.now()) {
+  const 날 = 한국날(때);
+  if (!날) return "";
+  const d = new Date(`${날}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));   // 월=0 … 일=6
+  return d.toISOString().slice(0, 10);
+}
