@@ -16,7 +16,7 @@ const { humanWait, isRateLimited } = await import(`${KIT}/browser.mjs`);
 const args = getArgs({ 최대: 5, scrolls: 2, top: 30 });
 const PROJECT = args._project;
 const fs = await import("node:fs/promises");
-const { 화면긁기 } = await import(`${PROJECT}/scripts/naver-links.mjs`);
+const { 상위링크: 네이버상위링크 } = await import(`${PROJECT}/scripts/naver-links.mjs`);
 const { 샵들, 순위기록파일, 한국주 } = await import(`${PROJECT}/scripts/샵.mjs`);
 
 // 인자로 한 건만 줄 수도 있다. 그때도 기록·판정은 아래 한 곳을 그대로 지난다.
@@ -62,24 +62,8 @@ const run = await startRun(PROJECT, "rank");
 
 const TOP = Number(args.top);
 
-// 한 키워드의 상위 링크. 막히면 null — 우회하지 않고 그 자리에서 멈춘다.
-async function 상위링크(keyword) {
-  await page.goto(`https://search.naver.com/search.naver?ssc=tab.blog.all&query=${encodeURIComponent(keyword)}`);
-  await page.waitForLoadState("load");
-  await humanWait();
-  let 모은것 = [];
-  for (let s = 0; s <= Number(args.scrolls); s += 1) {
-    if (s > 0) {
-      await page.mouse.wheel(0, 4000, { label: "검색결과 더 보기" });
-      await humanWait();
-    }
-    const scan = await page.evaluate(화면긁기);
-    if (isRateLimited(scan.body)) return null;
-    모은것 = scan.links;
-    if (모은것.length >= TOP) break;
-  }
-  return 모은것.slice(0, TOP);
-}
+// 한 키워드의 상위 링크. 막히면 null. 본체는 naver-links.mjs — 아카데미 원장님 글 순위와 같이 쓴다.
+const 상위링크 = (keyword) => 네이버상위링크(page, keyword, { top: TOP, scrolls: Number(args.scrolls), humanWait, isRateLimited });
 
 const 결과 = [];
 let 막힘 = false;
