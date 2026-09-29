@@ -39,7 +39,7 @@ function 씨앗블로그() {
   const ids = new Set();
   for (const { 보관함: j } of 보관함파일들()) {
     if (원장글인가(j)) continue;
-    for (const p of j.posts || []) {
+    for (const p of j.posts) {   // 보관함파일들() 이 posts 가 배열인 것만 내준다
       const id = 블로그아이디(p.url || "");
       if (id && !ids.has(id) && 쓴사람(p, CONFIG) === "원장") ids.add(id);
     }

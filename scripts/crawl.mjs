@@ -13,10 +13,11 @@ import { 화면긁기 } from "./naver-links.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { REF_DIR } from "./보관함.mjs";   // 보관함 폴더 자리는 거기 하나다
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CDP_URL = "http://127.0.0.1:9222";
 const CHROME_BIN = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const REF_DIR = path.join(ROOT, "references");
 const PROFILE_DIR = path.join(ROOT, ".chrome-profile"); // 사용중인 크롬과 충돌하지 않도록 전용 프로필 사용
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -269,7 +270,7 @@ async function main() {
 }
 
 // 다른 스크립트(crawl-owner.mjs)가 크롬 띄우기·본문 추출·점수를 돌려쓴다.
-export { ensureChrome, collectTopUrls, extractPost, loadExisting, saveReference, 정규화, charCountNoSpace, sleep, CDP_URL, REF_DIR, CONFIG };
+export { ensureChrome, collectTopUrls, extractPost, loadExisting, saveReference, 정규화, charCountNoSpace, sleep, CDP_URL, CONFIG };
 
 // 직접 실행할 때만 돈다 — import 되면 함수만 내준다.
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -841,8 +841,9 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   // 제목을 붙였다 떼었다 하는 자리를 부르는 쪽마다 두지 않는다. 여기 한 곳이다.
   text = text || "";
   if (title && !/^제목:/.test(text)) {
-    const [첫줄, ...나머지] = text.split("\n");
-    if (첫줄.trim() && 첫줄.trim() === String(title).trim()) text = `제목: ${첫줄.trim()}\n${나머지.join("\n")}`;
+    const 끝 = text.indexOf("\n");                       // 본문을 쪼갰다 붙이지 않는다 — 앞에 표만 단다
+    const 첫줄 = (끝 < 0 ? text : text.slice(0, 끝)).trim();
+    if (첫줄 && 첫줄 === String(title).trim()) text = `제목: ${첫줄}${끝 < 0 ? "" : text.slice(끝)}`;
   }
   const 논문 = config.논문검증 || {};
   const 목표 = 목표글자수 || config.최소글자수;
@@ -858,7 +859,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const chars = noSpace(stripPhotos(text.replace(/^제목:[ \t]*/, "")));
   // 초안은 사진 자리를 [사진: …] 로 적지만 발행된 글에는 진짜 이미지가 들어 있다.
   // 그때는 세어 온 수를 넘긴다 — 판정을 두 벌로 두지 않으려고 입구만 하나 열어 둔다.
-  const photos = 사진수 ?? ((text || "").match(/\[사진:/g) || []).length;
+  const photos = 사진수 ?? (text.match(/\[사진:/g) || []).length;   // text 는 위에서 빈 문자열로 맞춰 뒀다
   // 어느 갈래에 걸렸는지까지 안다 — "왜 걸렸는지"를 말해 주려고
   const 분류 = 추상어분류(config);
   const abstractByKind = Object.fromEntries(
