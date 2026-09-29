@@ -13,10 +13,18 @@ import { fileURLToPath } from "node:url";
 
 export const REF_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "references");
 
+// 폴더의 mtime 만 보면 안 된다. 파일 '내용'을 제자리에서 고치는 것은 폴더 시각을 안 바꾼다 —
+// rescore.mjs 가 바로 그렇게 덮어쓴다(2026-09-29 실측). 그러면 돌고 있는 서버는 다시 켤 때까지
+// 옛 점수를 계속 쓴다. 파일 이름·크기·시각을 다 묶어 표식으로 삼는다(23개 stat, 눈에 안 띈다).
+function 표식만들기() {
+  const 것들 = fs.readdirSync(REF_DIR).filter((f) => f.endsWith(".json") && !f.startsWith("_")).sort();
+  return 것들.map((f) => { const s = fs.statSync(path.join(REF_DIR, f)); return `${f}:${s.mtimeMs}:${s.size}`; }).join("|");
+}
+
 let 캐시 = null;
 export function 보관함읽기() {
   if (!fs.existsSync(REF_DIR)) return [];
-  const 표식 = `${fs.statSync(REF_DIR).mtimeMs}`;
+  const 표식 = 표식만들기();
   if (캐시?.표식 === 표식) return 캐시.목록;
 
   // 폴더를 훑는 자리는 아래 보관함파일들() 하나다. 여기서 또 readdir 하면
