@@ -92,6 +92,28 @@ test("키워드 없이 재면 어떤 검사가 안 돌았는지 밝힌다", () =
   assert.deepEqual(주고.꺼진검사, [], "키워드를 주면 빈 목록이다 — 칸이 있다 없다 하지 않는다");
 });
 
+// pass 하나로는 '다 재서 통과'와 '몇 개는 못 재서 걸린 게 없음'이 같아 보인다.
+// 발행검증이 그 pass 를 그대로 "pass" 로 적어, 키워드 검사 넷이 안 돈 글도 통과로 찍혔다.
+test("판정은 세 갈래다 — 통과·부분통과·불합격", () => {
+  const 다잼 = 재기(본문(1400));
+  assert.equal(다잼.판정, "통과");
+  assert.equal(다잼.pass, true);
+
+  const 못잼 = 재기(본문(1400), { keyword: "" });
+  assert.equal(못잼.판정, "부분통과", "검사가 꺼졌으면 통과라고 말하지 않는다");
+  assert.equal(못잼.pass, true, "pass 자체는 그대로다 — 서버의 다시쓰기 되먹임이 이 값을 본다");
+
+  const 걸림 = 재기(줄글(긴줄, 20), { keyword: "" });
+  assert.ok(걸림.issues.length, "긴 문장은 불합격 사유다");
+  assert.equal(걸림.판정, "불합격", "걸린 것이 있으면 못 잰 검사가 있어도 불합격이 먼저다");
+});
+
+test("안 돈 검사 이름은 손으로 적지 않는다 — 꺼지는 조건에서 만든다", () => {
+  const 없이 = 재기(본문(1400), { keyword: "" });
+  assert.deepEqual(없이.꺼진검사, ["키워드 횟수", "제목 키워드", "첫 문단 키워드", "소제목 키워드"]);
+  assert.equal(없이.판정 === "통과", false, "꺼진 검사가 있으면 통과가 아니다");
+});
+
 test("사진 목표는 레퍼런스를 따라간다 — 서버·화면 같은 값", () => {
   const ref = { keyword: "여드름 피부관리", avgImages: 37 };
   assert.equal(targetPhotosFor(null, CONFIG), CONFIG.권장이미지최소);

@@ -132,7 +132,7 @@ for (const [i, url] of urls.entries()) {
 
     results.push({
       url,
-      status: v.pass ? "pass" : "fail",
+      status: { 통과: "pass", 부분통과: "부분통과", 불합격: "fail" }[v.판정],   // 판정은 rules.js 가 낸다
       title: data.title,
       글자수: v.chars,
       사진: data.images,
@@ -149,7 +149,9 @@ for (const [i, url] of urls.entries()) {
 }
 
 run.note({ results });
-const summary = { checked: results.length, failed: results.filter((r) => r.status !== "pass").length };
+// '부분통과'를 실패로 세지 않는다 — 걸린 것이 아니라 못 잰 것이다. 대신 몇 편인지 따로 알린다.
+const 셈 = (s) => results.filter((r) => r.status === s).length;
+const summary = { checked: results.length, failed: 셈("fail"), 부분통과: 셈("부분통과"), error: 셈("error") };
 await run.save(summary);
 await finishSpace(task, { projectDir: PROJECT, flow: "verify" });
 report({ status: "ok", resumed, runDir: run.dir, results, summary });

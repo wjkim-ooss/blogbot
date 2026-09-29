@@ -340,7 +340,7 @@ function runValidation() {
           title, titleHasKw, titleHasNum, titleLen,
           abstractFound, abstractByKind, medicalFound, overclaimFound, pmids, needsEvidence,
           구체, 구체밀도, 구체최소, 구체권장, 정도부사, 정도부사횟수,
-          꺼진검사, issues, advice } = evaluateDraft(body, keyword, 적힌목표(raw), 적힌유형(raw));
+          꺼진검사, 판정, issues, advice } = evaluateDraft(body, keyword, 적힌목표(raw), 적힌유형(raw));
   const kwCls = kwLack ? "v-bad" : kwOver ? "v-warn" : "v-ok";
   const kwNote = kwLack ? " 부족" : kwOver ? " 과다" : "";
   const kwRows = keyword
@@ -355,6 +355,8 @@ function runValidation() {
     ? `<div class="v-verdict tip"><b>✏️ 아직 작성 전입니다</b><div>안내 문구를 지우고 본문을 채우세요. 쓰는 동안 아래 항목이 실시간으로 채점됩니다.</div></div>`
     : issues.length
     ? `<div class="v-verdict bad"><b>고칠 점 ${issues.length}개</b>${issues.map((s) => `<div>· ${esc(s)}</div>`).join("")}</div>`
+    : 판정 === "부분통과"
+    ? `<div class="v-verdict tip"><b>◐ 걸린 것은 없지만 다 재지는 못했습니다</b><div>아래 안 돈 검사를 보세요 — '통과'와 다릅니다.</div></div>`
     : `<div class="v-verdict ok"><b>✅ 기준 통과 — 그대로 올리셔도 됩니다</b></div>`;
   // 안 돈 검사가 있으면 '통과'를 그대로 믿게 두지 않는다 — 키워드 칸이 비면 검사 넷이 꺼진다.
   const 꺼짐 = 꺼진검사?.length
