@@ -946,9 +946,12 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
 
   // 판정 기준은 키워드 '전체'가 몇 번 나왔나 — 네이버가 실제로 매칭하는 단위가 그것이다.
   // 단어별 횟수는 어디가 모자란지 보여주는 참고값일 뿐 합격·불합격을 가르지 않는다.
-  const kwCount = countLoose(text, keyword);
+  // 키워드 횟수는 **본문만** 센다 — 우진 2026-09-30 "본문에 키워드는 3회". 제목 줄까지 세면
+  // AI에게 "제목 1회 + 본문 3회"를 시켜 놓고 4회로 세어 '과다'를 띄웠다(상한 7회일 땐 안 보였다).
+  const 키워드본문 = text.replace(/^제목:.*$/m, "").replace(/^제목후보:.*$/gm, "");
+  const kwCount = countLoose(키워드본문, keyword);
   const tokens = (keyword || "").trim().split(/\s+/).filter(Boolean);
-  const kwParts = tokens.map((w) => ({ word: w, count: countLoose(text, w) }));
+  const kwParts = tokens.map((w) => ({ word: w, count: countLoose(키워드본문, w) }));
   const kwLack = !!keyword && kwCount < config.키워드횟수.min;
   const kwOver = !!keyword && kwCount > config.키워드횟수.max;
 

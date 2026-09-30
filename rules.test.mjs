@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, noSpace, pickReference, 참고레퍼런스, 본문에서찾기, 원장글고르기, 품질점수, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈 } from "./web/rules.js";
+import { 평가, noSpace, claimSentences, pickReference, 참고레퍼런스, 본문에서찾기, 원장글고르기, 품질점수, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈 } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
@@ -1086,4 +1086,33 @@ test("정체성·반박표 칸은 원장 유형에만 있고, 프롬프트가 �
   assert.ok(!CONFIG.원장정보항목.some((x) => x.유형 === "정보" && ["정체성", "반박표"].includes(x.key)));
   assert.ok(CONFIG.글쓴이유형.원장.본문칸.some((s) => s.includes("정체성 한 문장")), "본문칸 3이 배치를 말해야 한다");
   for (const x of CONFIG.원장정보항목) assert.ok(!/\d-\d/.test(x.이름), `칸 이름에 강의 번호가 샌다: ${x.이름}`);
+});
+
+// ---------- 2026-09-30: 멀쩡한 문장을 걸던 자리들 ----------
+// 우진: "초안이 다 발행되고, 고칠점이 너무 많이 떠." 상위글 389편에 대 보니 멀쩡한 문장이 걸리고 있었다.
+
+test("키워드는 본문만 센다 — 제목 1회 + 본문 3회를 4회로 세지 않는다", () => {
+  const 본 = "여드름 관리는 세안부터 봅니다. ".repeat(3) + "관리 순서를 잡습니다. ".repeat(60);
+  const v = 재기(`제목: 여드름 관리 이야기\n\n${본}`, { keyword: "여드름 관리", title: "여드름 관리 이야기" });
+  assert.equal(v.kwCount, 3);
+  assert.ok(!v.advice.some((a) => a.includes("과다")), "본문 3회는 과다가 아니다");
+});
+
+test("증상을 말하는 문장은 효능 주장이 아니다 — 논문 근거를 요구하지 않는다", () => {
+  for (const s of ["턱에 여드름이 자꾸 올라오시죠?", "각질이 잘 올라오는 부위입니다.", "여드름 관리는 노폐물 배농이 중요합니다.", "여드름 고민이 많으셔서 좋아요."]) {
+    assert.deepEqual(claimSentences(s, CONFIG), [], s);
+  }
+});
+
+test("효능을 주장하는 문장은 그대로 잡는다", () => {
+  for (const s of ["이 앰플은 여드름 진정 효과가 있습니다.", "모공이 2배 줄어듭니다.", "탄력이 올라갑니다.", "여드름이 좋아집니다.", "색소를 억제합니다."]) {
+    assert.ok(claimSentences(s, CONFIG).length, s);
+  }
+});
+
+test("'100% 예약제'는 과장이 아니고 '만족도 100%'는 과장이다", () => {
+  const 과장 = (t) => 재기(`제목: 샵 이야기\n\n${t}`).overclaimFound;
+  assert.deepEqual(과장("저희는 100% 예약제로 운영합니다. 원장이 직접 100% 관리합니다."), []);
+  assert.ok(과장("고객 만족도 100%입니다.").length);
+  assert.ok(과장("100% 효과를 봅니다.").length);
 });

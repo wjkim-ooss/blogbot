@@ -16,8 +16,10 @@ const WEB = path.join(ROOT, "web");
 const DRAFT_DIR = path.join(ROOT, "drafts");
 const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
 // 키워드 횟수를 사람 말로. min 과 max 가 같으면 "3~3회"가 아니라 "정확히 3회"라고 해야 알아듣는다.
+// "정확히 3회"라고만 하면 AI가 세다 틀려 2회로 떨어지기 쉽다 — 2회는 불합격이다.
+// 모자라지 않게 한 번의 여유를 준다. 넘친 한 번은 권장(과다)으로만 짚히고 다시 쓰게 하지 않는다.
 const 횟수말 = CONFIG.키워드횟수.min === CONFIG.키워드횟수.max
-  ? `정확히 ${CONFIG.키워드횟수.min}회`
+  ? `${CONFIG.키워드횟수.min}회 (모자라면 안 된다 — 세다 헷갈리면 ${CONFIG.키워드횟수.min + 1}회까지는 괜찮다)`
   : `${CONFIG.키워드횟수.min}~${CONFIG.키워드횟수.max}회`;
 const PORT = Number(process.env.PORT) || 4039;
 // 유료 엔진(ANTHROPIC_API_KEY가 있을 때만). Fable 5.1 = Opus 위 최상위 등급, 값은 Opus의 두 배.
