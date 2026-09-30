@@ -1122,3 +1122,13 @@ test("머리말의 목표글자수 0 은 '정하지 않음'이다 — 편집기�
   assert.equal(적힌목표(머리(0)), 0, "사람 문장의 '목표 1,450자'를 끌어오지 않는다");
   assert.equal(적힌목표(머리(1800)), 1800);
 });
+
+// 2026-09-30 우진: "재생은 괜찮아. 회복도 괜찮아. 대신 회복은 주의정도만 줘."
+test("재생·회복은 고칠 점이 아니다 — 회복은 권장(주의)으로만 짚는다", () => {
+  const v = 재기("제목: 여드름\n\n재생크림으로 마무리합니다. 피부 장벽이 회복되는 데 2주쯤 걸립니다.");
+  assert.ok(!v.overclaimFound.includes("재생"), "재생은 과장이 아니다");
+  assert.ok(!v.medicalFound.length, JSON.stringify(v.medicalFound));
+  assert.ok(!v.걸린기준.includes("근거없음"), "회복만으로 논문 근거를 묻지 않는다");
+  assert.ok(v.advice.some((a) => a.includes("회복")), "회복은 주의로 짚는다");
+  assert.ok(재기("제목: 여드름\n\n여드름 치료를 합니다.").medicalFound.includes("치료"), "치료는 그대로 막는다");
+});

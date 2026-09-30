@@ -717,6 +717,7 @@ const 문구 = {
       `1,000자당 ${v.구체최소}개 이상으로 올려라 — 기간·횟수·인원·금액·분 단위를 실제 값으로 적어라.`,
     구체성권장: (v) => `숫자를 1,000자당 ${v.구체권장}개까지 늘리면 더 좋다 (지금 ${v.구체밀도}개)`,
     의료법: (v) => `의료법 주의 표현: ${v.medicalFound.join(", ")}`,
+    주의표현: (v) => `조심할 말: ${v.주의낱말.join(", ")} — 써도 되지만 병원 말처럼 들릴 수 있다. 관리 전후 달라진 모습(붉은 기·당김 같은 것)으로 풀어 쓰면 더 믿음이 간다`,
     과장: (v) => `과장 표현(논문 근거 없이 단정 금지): ${v.overclaimFound.join(", ")}`,
     근거없음: (v) =>
       `효능을 주장한 문장에 논문 근거(PMID)가 없음 — ${v.출처}에서 🟢 확인 후 PMID를 붙이거나, 주장을 빼세요. ` +
@@ -795,6 +796,7 @@ const 문구 = {
     구체성: (v) => `숫자가 ${v.구체}개뿐 — 1,000자당 ${v.구체최소}개 이상 (지금 ${v.구체밀도}개)`,
     구체성권장: (v) => `숫자 ${v.구체}개(1,000자당 ${v.구체밀도}개) → ${v.구체권장}개까지 올리면 상위글과 확실히 갈립니다`,
     의료법: (v) => `의료법 주의 ${v.medicalFound.length}개: ${v.medicalFound.join(", ")}`,
+    주의표현: (v) => `조심할 말: ${v.주의낱말.join(", ")} — 써도 되지만 병원 말처럼 들릴 수 있어요. 관리 전후 달라진 모습으로 풀면 더 믿음이 가요`,
     과장: (v) => `과장 표현 ${v.overclaimFound.length}개: ${v.overclaimFound.join(", ")}`,
     근거없음: (v) => `효능을 주장한 문장에 논문 근거(PMID) 없음 — "${자르기(v.claims[0], 40)}"`,
     가짜PMID: (v) => `지어낸 PMID ${v.가짜PMID.join(", ")} — 자리표시 숫자입니다. 실제 번호가 없으면 빼세요`,
@@ -886,6 +888,8 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   // 구체성 = 단위 붙은 숫자가 1,000자당 몇 개인가
   const 구체 = 구체수(text);
   const medicalFound = config.의료법금지어.filter((w) => text.includes(w));
+  // 써도 되지만 조심할 말(config.주의표현) — 권장으로만 짚는다. 고칠 점으로 걸면 AI가 그 말을 지우려고 다시 쓴다.
+  const 주의낱말 = (config.주의표현?.낱말 || []).filter((w) => text.includes(w));
   const overclaimFound = (논문.과장표현 || []).filter((w) => text.includes(w));
   const pmidRe = new RegExp(논문.PMID정규식 || "PMID\\s*\\d{5,8}", "g");
   const pmids = [...new Set((text.match(pmidRe) || []).map((s) => s.replace(/\s+/g, " ").trim()))];
@@ -985,6 +989,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const 태그 = 해시태그수(text);
 
   const v = {
+    주의낱말,
     keyword, chars, photos, kwCount, 목표글자수: 목표, targetPhotos: 목표사진, claims,
     abstractFound, medicalFound, overclaimFound,
     최소횟수: config.키워드횟수.min, 최대횟수: config.키워드횟수.max,
@@ -1083,6 +1088,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   // 과다는 권장이다. 불합격으로 걸면 AI가 내용을 버리고 횟수만 맞춘다 — 2026-09-30에 상한을
   // 3회로 좁히면서 같이 내렸다(그 전엔 7회 상한에 불합격이었다).
   if (kwOver && !kwLack) advice.push(말.키워드과다(v));
+  if (주의낱말.length) advice.push(말.주의표현(v));
 
   return {
     chars, photos, kwCount, kwParts, tokens, kwLack, kwOver,
@@ -1096,6 +1102,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
     // pass 하나로는 두 가지가 같아 보인다: '다 재서 통과'와 '몇 개는 못 재서 걸린 게 없음'.
     // 세 갈래로 나눠 한 곳에서 낸다 — 부르는 쪽이 저마다 해석하면 그게 규칙 두 벌이다.
     판정: issues.length ? "불합격" : 꺼진검사.length ? "부분통과" : "통과",
+    주의낱말,
     issues, advice, 걸린기준, pass: issues.length === 0,
   };
 }
