@@ -380,7 +380,7 @@ function runValidation() {
          <div class="v-item"><span>숫자 포함</span><span class="${titleHasNum ? "v-ok" : "muted"}">${titleHasNum ? "포함" : "없음 (권장)"}</span></div>
          <div class="v-sub">${titleLen}자 · 권장 25자 내외 — ${esc(title)}</div>`
       : ""}
-    <h4>키워드 배치 (본문 ${CONFIG.키워드횟수.min}~${CONFIG.키워드횟수.max}회)</h4>
+    <h4>키워드 배치 (본문 ${CONFIG.키워드횟수.min === CONFIG.키워드횟수.max ? CONFIG.키워드횟수.min : `${CONFIG.키워드횟수.min}~${CONFIG.키워드횟수.max}`}회)</h4>
     ${kwRows || '<span class="muted">위 입력칸에 키워드를 넣으세요</span>'}
     ${kwLack && tokens.length > 1
       ? '<div class="v-sub">이 키워드는 파일명에서 자동으로 뽑은 값입니다. 실제로 노리는 검색어와 다르면 위 <b>검증용 키워드</b> 칸에서 고치세요.</div>'

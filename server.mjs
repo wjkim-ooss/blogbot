@@ -190,7 +190,7 @@ function 초벌뽑기(글들) {
 // 인증 ON(배포): Supabase drafts 테이블(user_id별). OFF(로컬): 파일(DRAFT_DIR 루트).
 const validName = (name) => !!name && !name.includes("/") && !name.includes("..") && name.endsWith(".md");
 
-function buildDraftContent(keyword, title, body, v, 후보 = "", 유형 = 기본유형, 모델 = MODEL) {
+function buildDraftContent(keyword, title, body, v, 후보 = "", 유형 = 기본유형, 모델 = MODEL, 지정 = 0) {
   const ok = (cond) => (cond ? "✅" : "⚠️");
   const header = [
     `# ${title}`,
@@ -199,7 +199,9 @@ function buildDraftContent(keyword, title, body, v, 후보 = "", 유형 = 기본
     `- 기계 검증: 글자수 ${ok(v.chars >= v.targetChars)} (목표 ${v.targetChars.toLocaleString()}자) · 키워드 ${v.kwCount}회 ${ok(v.kwCount >= CONFIG.키워드횟수.min && v.kwCount <= CONFIG.키워드횟수.max)} (${v.kwParts.map((k) => `${k.word} ${k.count}`).join(" / ")}) · 추상어 ${ok(!v.abstractFound.length)}${v.abstractFound.length ? ` (${v.abstractFound.join(", ")})` : ""} · 의료법 ${ok(!v.medicalFound.length)}${v.medicalFound.length ? ` (${v.medicalFound.join(", ")})` : ""}`,
     // 편집기가 이 글을 다시 판정할 때 쓰는 값. 사람 문장에서 정규식으로 캐내지 않도록
     // 기계가 읽을 자리를 따로 둔다 (문구를 다듬어도 판정이 조용히 틀어지지 않게).
-    `- 목표글자수: ${v.targetChars}`,
+    // 0 = 원장이 글자수를 정하지 않았다 → 편집기가 권장 범위로 본다. 예전엔 기본값(1,450)을 적어서
+    // 안 정한 초안까지 편집기에 "1,450자 (직접 지정)"으로 떴다(2026-09-30).
+    `- 목표글자수: ${지정 || 0}`,
     // 이 글을 누구 기준으로 볼 것인가. 판정은 글에 붙어야 한다 —
     // 관리자가 남의 초안을 열어봐도 그 글의 기준으로 재도록.
     `- 글쓴이유형: ${유형}`,
@@ -290,9 +292,9 @@ const supaStore = {
 // 저장 백엔드는 시작 시 한 번 결정 (인증 ON=Supabase, OFF=로컬 파일)
 const store = AUTH_ON ? supaStore : fileStore;
 
-async function draftCreate(ctx, keyword, title, body, v, 후보 = "", 유형 = 기본유형, 모델 = MODEL) {
+async function draftCreate(ctx, keyword, title, body, v, 후보 = "", 유형 = 기본유형, 모델 = MODEL, 지정 = 0) {
   const base = draftBaseName(keyword);
-  return store.create(ctx.userId, base, buildDraftContent(keyword, title, body, v, 후보, 유형, 모델));
+  return store.create(ctx.userId, base, buildDraftContent(keyword, title, body, v, 후보, 유형, 모델, 지정));
 }
 
 // 손으로 쓰기 시작할 빈 초안. AI 생성이 막혀 있어도(크레딧·키 문제) 글은 쓸 수 있어야 한다.
@@ -304,7 +306,7 @@ function blankDraft(keyword, ref, 목표글자수, 유형 = 기본유형) {
     `# ${keyword}`,
     "",
     `- 키워드: ${keyword} / 목표: 공백제외 ${target}자 이상 · 사진 ${photos}곳 이상`,
-    `- 목표글자수: ${목표글자수 || CONFIG.최소글자수}`,
+    `- 목표글자수: ${목표글자수 || 0}`,   // 0 = 정하지 않음 (buildDraftContent 와 같다)
     `- 글쓴이유형: ${유형}`,
     ref
       ? `- 참고 레퍼런스: "${ref.keyword}" ${ref.posts.length}개${ref.출처?.length ? ` (${ref.출처.map((k) => `"${k}"`).join("·")} 보관함에서 모음)` : ""} (상위글 평균 ${ref.avgChars.toLocaleString()}자·${ref.avgImages}장)`
@@ -1218,7 +1220,7 @@ async function handleGenerate(res, body, ctx) {
         : `일부 기준이 남았습니다: ${validation.issues.join(" / ")} — 편집기에서 직접 고쳐 주세요`,
     });
 
-    const file = await draftCreate(ctx, keyword, parsed.title, parsed.body, validation, parsed.후보, 글쓴이유형, best.모델);
+    const file = await draftCreate(ctx, keyword, parsed.title, parsed.body, validation, parsed.후보, 글쓴이유형, best.모델, 지정);
     차감함 = false; // 글이 나왔으니 정상 사용
     send({ type: "done", file, validation, quota });
   } catch (e) {
