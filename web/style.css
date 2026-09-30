@@ -249,3 +249,30 @@ header { justify-content: flex-start; }
 .shopst.none { background: #fdeceb; color: #d8483b; }
 .admin-user .del { color: #a6382c; border-color: #e5b9b3; }
 .admin-user .del:hover { background: #f8e8e5; }
+
+/* 대화 수정 */
+.chat-box { margin-top: 14px; }
+.chat-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.chat-guide { font-size: 12px; line-height: 1.6; margin: 4px 0 10px; }
+.chat-log { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.chat-log:empty { display: none; }
+.chat-m { padding: 8px 11px; border-radius: 10px; font-size: 13px; line-height: 1.6; max-width: 85%; word-break: keep-all; }
+.chat-m.user { align-self: flex-end; background: #eef3ff; }
+.chat-m.assistant { align-self: flex-start; background: #f5f6f8; }
+.chat-q { font-size: 11px; color: #6b7280; border-left: 2px solid #c9d2e3; padding-left: 6px; margin-bottom: 4px; }
+.chat-applied { font-size: 11px; color: #2e7d4f; margin-left: 4px; }
+.chat-proposal { border: 1px solid #dfe3ea; border-radius: 10px; padding: 10px; margin-bottom: 10px; }
+.chat-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 13px; line-height: 1.6; }
+.chat-diff .old div { background: #fdeceb; padding: 8px; border-radius: 8px; white-space: pre-wrap; }
+.chat-diff .new div { background: #e8f6ee; padding: 8px; border-radius: 8px; white-space: pre-wrap; }
+.chat-diff b { display: block; font-size: 12px; margin-bottom: 4px; color: #4b5563; }
+.chat-act { margin-top: 10px; display: flex; gap: 8px; }
+.chat-sel { font-size: 12px; background: #fff8e6; border-radius: 8px; padding: 6px 10px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.chat-sel button { padding: 2px 8px; }
+.chat-input { display: flex; gap: 8px; align-items: flex-end; }
+.chat-input textarea { flex: 1; resize: vertical; font: inherit; padding: 8px; border: 1px solid #d5dae3; border-radius: 8px; }
+.chats-tools { margin-bottom: 10px; }
+.admin-chat { border-bottom: 1px solid #eef0f4; padding: 8px 0; }
+.admin-chat summary { cursor: pointer; font-size: 13px; }
+.admin-chat .chat-m { margin-top: 6px; max-width: 100%; }
+@media (max-width: 720px) { .chat-diff { grid-template-columns: 1fr; } .chat-m { max-width: 100%; } }

@@ -772,7 +772,9 @@ async function streamClaude(client, messages, send, 유형 = "원장", 기록 = 
 // Gemini는 SDK 없이 REST로 부른다 (의존성을 늘리지 않으려고).
 // 붐비면 잠깐 쉬었다 다시, 그래도 안 되면 다음 모델로 넘어간다.
 // 원장 입장에서 "나중에 다시 해보세요"는 사실상 못 쓰는 것이나 마찬가지라서.
-async function streamGemini(messages, send, 유형 = "원장", 기록 = {}, 시스템 = 시스템프롬프트(유형)) {
+// 최소: 이보다 짧으면 "글이 거의 안 나왔다"로 보고 다른 설정으로 다시 부른다. 초안(1,500자)엔 100자가 맞지만
+// 대화 답은 원래 짧다 — 대화 수정은 1을 넘긴다. 안 그러면 짧은 답마다 세 번씩 부른다(2026-09-30 가짜 서버로 확인).
+async function streamGemini(messages, send, 유형 = "원장", 기록 = {}, 시스템 = 시스템프롬프트(유형), 최소 = 100) {
   const models = await geminiModels();
   const contents = messages.map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -814,7 +816,7 @@ async function streamGemini(messages, send, 유형 = "원장", 기록 = {}, 시�
 
         if (r.ok) {
           const 결과 = await 읽기(r, send);
-          if (noSpace(결과.out) >= 100) { 기록.모델 = `Gemini ${model}`; return 결과.out; }
+          if (noSpace(결과.out) >= 최소) { 기록.모델 = `Gemini ${model}`; return 결과.out; }
           // 200인데 글이 없다 = 이 설정이 이 모델에 안 맞는 것. 다음 후보로.
           마지막오류 = Object.assign(new Error(`글이 거의 나오지 않았습니다 — ${결과.이유}`), { status: 502, engine: "gemini" });
           break;
@@ -965,8 +967,8 @@ async function 읽기(res, send) {
 }
 
 // 기록.모델에 실제로 글을 쓴 모델 이름이 남는다 (초안 머리말에 찍는다)
-const streamOnce = (client, messages, send, 유형, 기록, 시스템) =>
-  client ? streamClaude(client, messages, send, 유형, 기록, 시스템) : streamGemini(messages, send, 유형, 기록, 시스템);
+const streamOnce = (client, messages, send, 유형, 기록, 시스템, 최소) =>
+  client ? streamClaude(client, messages, send, 유형, 기록, 시스템) : streamGemini(messages, send, 유형, 기록, 시스템, 최소);
 
 // 통과할 때까지 고쳐 쓰는 최대 횟수. 넘기면 미달인 채로 저장하고 무엇이 남았는지 알린다.
 const MAX_FIX_ROUNDS = 3;
@@ -1467,7 +1469,7 @@ async function handleChat(res, body, ctx, name) {
   let 답 = "", 새글 = null, 깨진 = [];
   try {
     for (let 차례 = 0; 차례 <= (CONFIG.대화수정?.다시시키기 ?? 2); 차례++) {
-      const 원답 = await streamOnce(client, messages, () => {}, 유형, {}, 시스템);
+      const 원답 = await streamOnce(client, messages, () => {}, 유형, {}, 시스템, 1);   // 대화 답은 짧아도 된다
       const 풀림 = 대화답풀기(원답);
       답 = 풀림.답 || 답;   // 다시 시킨 차례에 답이 비면 처음 답을 쓴다
       새글 = 풀림.바꾼부분 != null && 선택 ? 끼워넣기(원문, 선택, 풀림.바꾼부분)

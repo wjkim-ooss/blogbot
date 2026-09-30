@@ -27,7 +27,7 @@ function showTab(name) {
   btn.classList.add("active");
   $(`#tab-${name}`).classList.add("active");
   if (name === "insights") renderInsights();
-  if (name === "admin") loadAdminUsers();
+  if (name === "admin") { loadAdminUsers(); loadAdminChats(); }
 }
 
 document.querySelectorAll(".tab-btn").forEach((btn) => {
@@ -209,6 +209,7 @@ function clearEditor() {
   $("#editor").value = "";
   $("#draft-keyword").value = "";
   runValidation();
+  대화불러오기(null);
 }
 
 // 열람 전용 여부를 화면에 반영 (관리자가 남의 초안을 볼 때)
@@ -306,6 +307,7 @@ async function openDraft(name, el) {
   $("#editor").value = content;
   $("#draft-keyword").value = keywordOf(name);
   runValidation();
+  대화불러오기(name);
 }
 
 // 초안 하나를 채점한다. 규칙은 서버와 같은 파일(rules.js)이 갖고 있고,
@@ -406,6 +408,159 @@ $("#editor").addEventListener("input", () => {
 $("#draft-keyword").addEventListener("input", () => {
   clearTimeout(vTimer);
   vTimer = setTimeout(runValidation, 300);
+});
+
+// ---------- 대화 수정 ----------
+// 원장님이 말로 부탁하면 AI가 고친다. 드래그한 부분이 있으면 그 자리만 고친다.
+// 고친 글은 먼저 '지금 / 바꾼 뒤'로 보여 주고, '적용'을 눌러야 편집기에 들어간다(2026-09-30 우진).
+// 기준을 지키는 일·다른 기준이 깨졌나 보는 일은 서버가 한다 — 화면은 보여 주고 받기만 한다.
+let 선택 = null;       // { start, end, text } — 편집기에서 드래그한 자리
+let 제안 = null;       // { 원문, 새글, 대화id } — '적용'을 기다리는 고친 글
+let 대화목록 = [];
+let 대화최대값 = null;
+
+function 선택읽기() {
+  const ed = $("#editor");
+  const start = ed.selectionStart, end = ed.selectionEnd;
+  const text = ed.value.slice(start, end);
+  선택 = end > start && text.trim() ? { start, end, text } : null;
+  선택그리기();
+}
+function 선택그리기() {
+  const box = $("#chat-sel");
+  if (!선택) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+  const 보기 = 선택.text.trim().replace(/\s+/g, " ");
+  box.innerHTML = `<span>드래그한 부분: “${esc(보기.length > 60 ? 보기.slice(0, 60) + "…" : 보기)}”</span><button id="chat-sel-clear" title="드래그 풀기">✕</button>`;
+  box.classList.remove("hidden");
+  $("#chat-sel-clear").onclick = () => { 선택 = null; 선택그리기(); };
+}
+["mouseup", "keyup", "select"].forEach((ev) => $("#editor").addEventListener(ev, 선택읽기));
+
+const 한말 = (m) =>
+  `<div class="chat-m ${m.role}">` +
+  (m.role === "user" && m.selection ? `<div class="chat-q">“${esc(m.selection.trim().slice(0, 80))}${m.selection.trim().length > 80 ? "…" : ""}”</div>` : "") +
+  esc(m.content || "").replace(/\n/g, "<br>") +
+  (m.role === "assistant" && m.applied ? '<span class="chat-applied">✓ 적용함</span>' : "") +
+  "</div>";
+
+function 대화그리기() {
+  $("#chat-log").innerHTML = 대화목록.map(한말).join("");
+  $("#chat-log").scrollTop = 1e9;
+}
+function 남은그리기(남은) {
+  $("#chat-left").textContent = 남은 == null ? "" : `이 초안에서 ${남은}/${대화최대값}번 남음`;
+  const 끝 = 남은 === 0;
+  $("#chat-msg").disabled = 끝;
+  $("#chat-send").disabled = 끝;
+  $("#chat-msg").placeholder = 끝 ? "이 초안의 대화 수정을 모두 쓰셨어요. 편집기에서 직접 고쳐 주세요." : "어떻게 바꿀지 말씀해 주세요";
+}
+
+async function 대화불러오기(name) {
+  제안 = null; 제안그리기();
+  선택 = null; 선택그리기();
+  대화목록 = [];
+  $("#chat-box").classList.toggle("hidden", !name);
+  if (!name) return;
+  // 남의 초안을 열람할 때는 대화만 읽는다(보내는 칸·안내는 숨긴다)
+  $(".chat-input").classList.toggle("hidden", viewingOther());
+  $(".chat-guide").classList.toggle("hidden", viewingOther());
+  try {
+    const r = await api(draftsUrl(`/api/drafts/${encodeURIComponent(name)}/chat`));
+    if (currentDraft !== name) return;   // 그사이 다른 초안을 열었다
+    대화목록 = r.대화 || [];
+    대화최대값 = r.최대;
+    대화그리기();
+    남은그리기(r.남은);
+    if (!r.준비됨) {
+      $("#chat-left").textContent = "곧 열립니다";
+      $("#chat-send").disabled = true;
+    }
+  } catch {
+    대화그리기();
+  }
+}
+
+// 원문과 고친 글이 갈리는 곳을 뽑는다 — 앞뒤로 같은 부분을 잘라 낸 뒤, 줄 통째로 넓힌다.
+// 갈리는 글자만 보여 주면 문장 뒤에 덧붙인 경우 '지금' 칸이 "(없음)"이 되어 무엇이 바뀌었는지 모른다.
+function 바뀐곳(전, 후) {
+  let 앞 = 0;
+  while (앞 < 전.length && 앞 < 후.length && 전[앞] === 후[앞]) 앞++;
+  let 뒤 = 0;
+  while (뒤 < 전.length - 앞 && 뒤 < 후.length - 앞 && 전[전.length - 1 - 뒤] === 후[후.length - 1 - 뒤]) 뒤++;
+  앞 = 전.lastIndexOf("\n", 앞 - 1) + 1;                 // 그 줄의 처음까지 (앞부분은 둘이 같다)
+  const 줄끝 = 전.indexOf("\n", 전.length - 뒤);         // 그 줄의 끝까지 (뒷부분도 둘이 같다)
+  뒤 = 줄끝 >= 0 ? 전.length - 줄끝 : 0;
+  return { 뺀: 전.slice(앞, 전.length - 뒤), 넣은: 후.slice(앞, 후.length - 뒤) };
+}
+
+function 제안그리기() {
+  const box = $("#chat-proposal");
+  if (!제안) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+  const { 뺀, 넣은 } = 바뀐곳(제안.원문, 제안.새글);
+  box.innerHTML =
+    `<div class="chat-diff">` +
+    `<div class="old"><b>지금</b><div>${esc(뺀.trim() || "(없음)")}</div></div>` +
+    `<div class="new"><b>바꾼 뒤</b><div>${esc(넣은.trim() || "(지움)")}</div></div>` +
+    `</div><div class="chat-act"><button id="chat-apply" class="primary">✅ 적용</button><button id="chat-skip">안 할래요</button></div>`;
+  box.classList.remove("hidden");
+  $("#chat-apply").onclick = 적용하기;
+  $("#chat-skip").onclick = () => { 제안 = null; 제안그리기(); };
+}
+
+async function 적용하기() {
+  if (!제안) return;
+  // 제안을 받은 뒤 편집기를 고쳤으면 그 제안은 옛 글 기준이다 — 덮어쓰면 고친 것이 사라진다
+  if ($("#editor").value !== 제안.원문) {
+    제안 = null; 제안그리기();
+    return alert("그사이 글을 고치셔서 이 제안은 맞지 않아요. 다시 부탁해 주세요.");
+  }
+  const id = 제안.대화id;
+  $("#editor").value = 제안.새글;
+  제안 = null; 제안그리기();
+  선택 = null; 선택그리기();
+  runValidation();
+  $("#save-btn").click();   // 적용한 글은 바로 저장한다 — 잊고 나가면 사라진다
+  if (id) {
+    api(`/api/drafts/${encodeURIComponent(currentDraft)}/chat/${id}/${encodeURIComponent("적용")}`, { method: "POST" }).catch(() => {});
+    const 그말 = 대화목록.find((m) => m.id === id);
+    if (그말) { 그말.applied = true; 대화그리기(); }
+  }
+}
+
+async function 보내기() {
+  const msg = $("#chat-msg").value.trim();
+  if (!msg || !currentDraft || viewingOther() || $("#chat-send").disabled) return;
+  const 원문 = $("#editor").value;
+  const 보낸선택 = 선택;
+  제안 = null; 제안그리기();
+  $("#chat-send").disabled = true;
+  $("#chat-msg").value = "";
+  대화목록.push({ role: "user", content: msg, selection: 보낸선택?.text || null });
+  대화목록.push({ role: "assistant", content: "고치는 중이에요… (20~40초쯤 걸려요)" });
+  대화그리기();
+  try {
+    const r = await api(`/api/drafts/${encodeURIComponent(currentDraft)}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: msg, content: 원문, keyword: $("#draft-keyword").value, selection: 보낸선택 }),
+    });
+    대화목록.pop();
+    대화목록.push({ id: r.대화id, role: "assistant", content: r.답, applied: r.새글 ? false : null });
+    대화그리기();
+    if (r.새글) { 제안 = { 원문, 새글: r.새글, 대화id: r.대화id }; 제안그리기(); }
+    남은그리기(r.남은);
+  } catch (e) {
+    대화목록.splice(-2);   // 실패한 부탁은 세지 않는다 — 올려 둔 말도 걷는다
+    대화그리기();
+    $("#chat-msg").value = msg;
+    alert(e.message);
+  } finally {
+    if (!$("#chat-msg").disabled) $("#chat-send").disabled = false;
+  }
+}
+$("#chat-send").addEventListener("click", 보내기);
+$("#chat-msg").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); 보내기(); }
 });
 
 // 저장 / 복사
@@ -641,6 +796,41 @@ const 날짜 = (iso) => {
   return isNaN(d) ? "" : `${d.getMonth() + 1}/${d.getDate()}`;
 };
 
+// 원장님들이 AI와 나눈 대화 — 우진님만 본다. 초안마다 한 묶음으로 접어 둔다.
+let 관리대화 = null;
+async function loadAdminChats() {
+  const box = $("#admin-chats");
+  box.innerHTML = '<p class="muted">불러오는 중…</p>';
+  try {
+    관리대화 = await api("/api/admin/chats");
+  } catch (e) {
+    관리대화 = null;
+    return (box.innerHTML = `<p class="muted">${esc(e.message)}</p>`);
+  }
+  if (!관리대화.length) return (box.innerHTML = '<p class="muted">아직 대화가 없습니다.</p>');
+  const 묶음 = new Map();
+  for (const r of [...관리대화].reverse()) {   // 오래된 것부터 쌓아 대화 순서를 살린다
+    const k = `${r.email}\u0000${r.draft_name}`;
+    if (!묶음.has(k)) 묶음.set(k, []);
+    묶음.get(k).push(r);
+  }
+  box.innerHTML = [...묶음.entries()].reverse().map(([k, 말들]) => {
+    const [email, name] = k.split("\u0000");
+    const 부탁 = 말들.filter((m) => m.role === "user").length;
+    const 적용 = 말들.filter((m) => m.applied).length;
+    return `<details class="admin-chat"><summary><b>${esc(email)}</b> · ${esc(name.replace(/\.md$/, ""))} · 부탁 ${부탁}번 · 적용 ${적용}번 · ${날짜(말들.at(-1).created_at)}</summary>${말들.map(한말).join("")}</details>`;
+  }).join("");
+}
+$("#chats-reload").addEventListener("click", loadAdminChats);
+$("#chats-download").addEventListener("click", () => {
+  if (!관리대화?.length) return alert("내려받을 대화가 아직 없습니다");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(관리대화, null, 2)], { type: "application/json" }));
+  a.download = `블로그봇-원장대화-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
 async function loadAdminUsers() {
   const box = $("#admin-users");
   box.innerHTML = '<p class="muted">불러오는 중…</p>';
@@ -664,7 +854,7 @@ async function loadAdminUsers() {
           <option value="level1" ${u.role === "level1" ? "selected" : ""}>원장(1단계)</option>
           <option value="admin" ${u.role === "admin" ? "selected" : ""}>관리자</option>
         </select>
-        <label>월 <input class="lim" type="number" min="0" value="${u.monthly_limit}" style="width:56px" /> 회</label>
+        ${CONFIG.초안월한도?.켜짐 ? `<label>월 <input class="lim" type="number" min="0" value="${u.monthly_limit}" style="width:56px" /> 회</label>` : ""}
         ${u.status !== "approved" ? '<button class="approve primary">승인</button>' : '<button class="block">차단</button>'}
         <button class="savebtn">저장</button>
         ${u.id !== ME?.id && u.role !== "admin" ? '<button class="del" title="로그인 계정과 초안·샵 정보를 모두 지웁니다">삭제</button>' : ""}
@@ -689,7 +879,7 @@ async function loadAdminUsers() {
     row.querySelector(".approve")?.addEventListener("click", () => patch({ status: "approved" }));
     row.querySelector(".block")?.addEventListener("click", () => patch({ status: "blocked" }));
     row.querySelector(".savebtn").addEventListener("click", () =>
-      patch({ role: row.querySelector(".role").value, monthly_limit: Number(row.querySelector(".lim").value) })
+      patch({ role: row.querySelector(".role").value, ...(row.querySelector(".lim") ? { monthly_limit: Number(row.querySelector(".lim").value) } : {}) })
     );
     // 삭제는 되돌릴 수 없다 — 이메일을 보여주고 한 번 더 묻는다
     row.querySelector(".del")?.addEventListener("click", async () => {
