@@ -47,7 +47,7 @@ const api = async (url, opts = {}) => {
   if (authToken) headers["Authorization"] = "Bearer " + authToken;
   const res = await fetch(url, { ...opts, headers });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || res.statusText);
+  if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status });
   return data;
 };
 const targetPhotosOf = (ref, 목표글자수) => targetPhotosFor(ref, CONFIG, 목표글자수);
@@ -428,6 +428,7 @@ function 선택읽기() {
 }
 function 선택그리기() {
   const box = $("#chat-sel");
+  $("#chat-jump").classList.toggle("hidden", !선택 || viewingOther() || $("#chat-box").classList.contains("hidden"));
   if (!선택) { box.classList.add("hidden"); box.innerHTML = ""; return; }
   const 보기 = 선택.text.trim().replace(/\s+/g, " ");
   box.innerHTML = `<span>드래그한 부분: “${esc(보기.length > 60 ? 보기.slice(0, 60) + "…" : 보기)}”</span><button id="chat-sel-clear" title="드래그 풀기">✕</button>`;
@@ -435,8 +436,38 @@ function 선택그리기() {
   $("#chat-sel-clear").onclick = () => { 선택 = null; 선택그리기(); };
 }
 ["mouseup", "keyup", "select"].forEach((ev) => $("#editor").addEventListener(ev, 선택읽기));
+$("#chat-jump").addEventListener("click", () => {
+  $("#chat-box").scrollIntoView({ behavior: "smooth", block: "end" });
+  setTimeout(() => $("#chat-msg").focus({ preventScroll: true }), 400);
+});
 
-const 한말 = (m) =>
+// 기다리는 동안 — 20~40초는 길다. 이모티콘이 통통 튀고 하는 말이 바뀐다(2026-09-30 우진).
+// 우리 기준 이름은 여기서도 꺼내지 않는다 — 원장님이 보시는 말이다.
+const 기다림말 = [
+  ["✍️", "문장을 다듬고 있어요"],
+  ["🔍", "고객님 눈으로 다시 읽어 보는 중"],
+  ["🌿", "더 자연스러운 표현을 찾는 중"],
+  ["💭", "앞뒤 흐름을 맞추는 중"],
+  ["✨", "거의 다 됐어요"],
+];
+let 기다림타이머 = null;
+function 기다림시작() {
+  let i = 0;
+  clearInterval(기다림타이머);
+  기다림타이머 = setInterval(() => {
+    const el = document.querySelector(".chat-wait");
+    if (!el) return clearInterval(기다림타이머);
+    i = Math.min(i + 1, 기다림말.length - 1);   // 마지막 말("거의 다 됐어요")에서 멈춘다
+    const 글 = el.querySelector(".chat-wtext");
+    글.style.opacity = 0;
+    setTimeout(() => { el.querySelector(".chat-emo").textContent = 기다림말[i][0]; 글.textContent = 기다림말[i][1]; 글.style.opacity = 1; }, 300);
+  }, 4000);
+}
+const 기다림끝 = () => clearInterval(기다림타이머);
+
+const 한말 = (m) => m.기다림
+  ? `<div class="chat-m assistant chat-wait"><span class="chat-emo">${기다림말[0][0]}</span><span class="chat-wtext">${기다림말[0][1]}</span><span class="chat-dots"><i></i><i></i><i></i></span></div>`
+  :
   `<div class="chat-m ${m.role}">` +
   (m.role === "user" && m.selection ? `<div class="chat-q">“${esc(m.selection.trim().slice(0, 80))}${m.selection.trim().length > 80 ? "…" : ""}”</div>` : "") +
   esc(m.content || "").replace(/\n/g, "<br>") +
@@ -456,6 +487,7 @@ function 남은그리기(남은) {
 }
 
 async function 대화불러오기(name) {
+  기다림끝();
   제안 = null; 제안그리기();
   선택 = null; 선택그리기();
   대화목록 = [];
@@ -503,6 +535,7 @@ function 제안그리기() {
     `<div class="new"><b>바꾼 뒤</b><div>${esc(넣은.trim() || "(지움)")}</div></div>` +
     `</div><div class="chat-act"><button id="chat-apply" class="primary">✅ 적용</button><button id="chat-skip">안 할래요</button></div>`;
   box.classList.remove("hidden");
+  box.scrollIntoView({ behavior: "smooth", block: "nearest" });   // 뜨자마자 보이게 — 아래에 숨어 있으면 못 본다
   $("#chat-apply").onclick = 적용하기;
   $("#chat-skip").onclick = () => { 제안 = null; 제안그리기(); };
 }
@@ -532,29 +565,35 @@ async function 보내기() {
   if (!msg || !currentDraft || viewingOther() || $("#chat-send").disabled) return;
   const 원문 = $("#editor").value;
   const 보낸선택 = 선택;
+  const 보낸초안 = currentDraft;   // 기다리는 동안 다른 초안을 열 수 있다 — 결과는 이 초안 것이다
   제안 = null; 제안그리기();
   $("#chat-send").disabled = true;
   $("#chat-msg").value = "";
   대화목록.push({ role: "user", content: msg, selection: 보낸선택?.text || null });
-  대화목록.push({ role: "assistant", content: "고치는 중이에요… (20~40초쯤 걸려요)" });
+  대화목록.push({ role: "assistant", 기다림: true });
   대화그리기();
+  기다림시작();
   try {
-    const r = await api(`/api/drafts/${encodeURIComponent(currentDraft)}/chat`, {
+    const r = await api(`/api/drafts/${encodeURIComponent(보낸초안)}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: msg, content: 원문, keyword: $("#draft-keyword").value, selection: 보낸선택 }),
     });
+    if (currentDraft !== 보낸초안) return;   // 서버에는 남았다 — 그 초안을 다시 열면 보인다
     대화목록.pop();
     대화목록.push({ id: r.대화id, role: "assistant", content: r.답, applied: r.새글 ? false : null });
     대화그리기();
     if (r.새글) { 제안 = { 원문, 새글: r.새글, 대화id: r.대화id }; 제안그리기(); }
     남은그리기(r.남은);
   } catch (e) {
+    if (currentDraft !== 보낸초안) return;
     대화목록.splice(-2);   // 실패한 부탁은 세지 않는다 — 올려 둔 말도 걷는다
     대화그리기();
+    if (e.status === 429) { 남은그리기(0); return alert(e.message); }   // 이 초안의 대화를 다 썼다
     $("#chat-msg").value = msg;
     alert(e.message);
   } finally {
+    기다림끝();
     if (!$("#chat-msg").disabled) $("#chat-send").disabled = false;
   }
 }

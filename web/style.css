@@ -263,8 +263,8 @@ header { justify-content: flex-start; }
 .chat-applied { font-size: 11px; color: #2e7d4f; margin-left: 4px; }
 .chat-proposal { border: 1px solid #dfe3ea; border-radius: 10px; padding: 10px; margin-bottom: 10px; }
 .chat-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 13px; line-height: 1.6; }
-.chat-diff .old div { background: #fdeceb; padding: 8px; border-radius: 8px; white-space: pre-wrap; }
-.chat-diff .new div { background: #e8f6ee; padding: 8px; border-radius: 8px; white-space: pre-wrap; }
+.chat-diff .old div { background: #fdeceb; padding: 8px; border-radius: 8px; white-space: pre-wrap; max-height: 320px; overflow-y: auto; }
+.chat-diff .new div { background: #e8f6ee; padding: 8px; border-radius: 8px; white-space: pre-wrap; max-height: 320px; overflow-y: auto; }
 .chat-diff b { display: block; font-size: 12px; margin-bottom: 4px; color: #4b5563; }
 .chat-act { margin-top: 10px; display: flex; gap: 8px; }
 .chat-sel { font-size: 12px; background: #fff8e6; border-radius: 8px; padding: 6px 10px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
@@ -275,4 +275,17 @@ header { justify-content: flex-start; }
 .admin-chat { border-bottom: 1px solid #eef0f4; padding: 8px 0; }
 .admin-chat summary { cursor: pointer; font-size: 13px; }
 .admin-chat .chat-m { margin-top: 6px; max-width: 100%; }
-@media (max-width: 720px) { .chat-diff { grid-template-columns: 1fr; } .chat-m { max-width: 100%; } }
+/* 기다리는 동안 — 이모티콘이 통통 튀고 말이 바뀐다 */
+.chat-wait { display: flex; align-items: center; gap: 8px; }
+.chat-emo { display: inline-block; font-size: 20px; animation: chat-bounce 0.9s ease-in-out infinite; }
+.chat-wtext { transition: opacity 0.3s; }
+.chat-dots i { display: inline-block; width: 5px; height: 5px; margin: 0 1px; border-radius: 50%; background: #9aa3b2; animation: chat-dot 1.2s ease-in-out infinite; }
+.chat-dots i:nth-child(2) { animation-delay: 0.2s; }
+.chat-dots i:nth-child(3) { animation-delay: 0.4s; }
+@keyframes chat-bounce { 0%, 100% { transform: translateY(0) rotate(-8deg); } 50% { transform: translateY(-6px) rotate(8deg); } }
+@keyframes chat-dot { 0%, 80%, 100% { opacity: 0.25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) { .chat-emo, .chat-dots i { animation: none; } }
+#chat-jump { animation: chat-pop 0.25s ease-out; }
+@keyframes chat-pop { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+/* 휴대폰: 글자가 16px 보다 작으면 아이폰이 칸을 누를 때마다 화면을 확대한다 */
+@media (max-width: 720px) { .chat-diff { grid-template-columns: 1fr; } .chat-m { max-width: 100%; } .chat-input textarea { font-size: 16px; } }
