@@ -15,6 +15,10 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
 const DRAFT_DIR = path.join(ROOT, "drafts");
 const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
+// 키워드 횟수를 사람 말로. min 과 max 가 같으면 "3~3회"가 아니라 "정확히 3회"라고 해야 알아듣는다.
+const 횟수말 = CONFIG.키워드횟수.min === CONFIG.키워드횟수.max
+  ? `정확히 ${CONFIG.키워드횟수.min}회`
+  : `${CONFIG.키워드횟수.min}~${CONFIG.키워드횟수.max}회`;
 const PORT = Number(process.env.PORT) || 4039;
 // 유료 엔진(ANTHROPIC_API_KEY가 있을 때만). Fable 5.1 = Opus 위 최상위 등급, 값은 Opus의 두 배.
 const MODEL = "claude-fable-5-1";
@@ -460,7 +464,7 @@ ${CONFIG.스타일변주.금지}
 - 사진 자리는 [사진: 무엇이 보이는지] 로 표시한다. "사진 삽입"처럼 비워 두지 마라.
 ${사진지시()}
 - 공백 제외 ${CONFIG.최소글자수}자 이상, ${권장글자수(CONFIG)}자 근처를 목표로 (레퍼런스 평균이 더 높으면 평균 이상)
-- 키워드는 제목 1회 + 본문 ${CONFIG.키워드횟수.min}~${CONFIG.키워드횟수.max}회, 자연스러운 문장 안에서만
+- 키워드는 제목 1회 + 본문 ${횟수말}, 자연스러운 문장 안에서만
 - 이때 세는 단위는 '키워드 전체'다. 단어를 쪼개 흩어 놓지 말고 키워드를 통째로 문장에 넣는다 (검증기가 띄어쓰기는 무시하고 전체 일치만 센다)
 - ${CONFIG.키워드횟수.max}회를 넘기지 않는다. 반복이 과하면 네이버가 키워드 도배로 보고 감점한다 — 넘칠 것 같으면 지시어나 유의어로 바꾼다
 - 한 문단 3줄 이내 (모바일 가독성)
@@ -616,7 +620,7 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = nu
       ? `1. 공백 제외 ${목표글자수.toLocaleString()}자 이상인가`
       : `1. 공백 제외 ${CONFIG.최소글자수.toLocaleString()}자 이상이고 ${권장글자수(CONFIG).toLocaleString()}자 근처인가`,
     `2. 제목에 "${keyword}"가 통째로 들어갔는가`,
-    `3. 본문에 "${keyword}"가 통째로(붙여서) ${CONFIG.키워드횟수.min}~${CONFIG.키워드횟수.max}회 들어갔는가 — 단어를 쪼개 흩어 놓으면 0회로 셉니다`,
+    `3. 본문에 "${keyword}"가 통째로(붙여서) ${횟수말} 들어갔는가 — 단어를 쪼개 흩어 놓으면 0회로 셉니다`,
     `4. 추상어(${추상어목록(CONFIG).slice(0, 8).join(", ")} 등)를 하나도 쓰지 않았는가`,
     `5. 단위 붙은 숫자를 1,000자당 ${CONFIG.구체성?.["1000자당_권장"] ?? 8}개 이상 썼는가 (지금 목표 분량이면 ${Math.ceil((목표글자수 || CONFIG.최소글자수) / 1000 * (CONFIG.구체성?.["1000자당_권장"] ?? 8))}개 이상)`,
     `6. 정도 부사(정말·너무·굉장히 등)가 ${CONFIG.줄일말?.허용횟수 ?? 3}번 이하인가`,
@@ -979,7 +983,7 @@ function fixInstruction(v, keyword) {
       );
     } else if (issue.includes("최소") && issue.includes("키워드")) {
       todo.push(
-        `키워드: "${keyword}"를 통째로(붙여서) 본문에 ${CONFIG.키워드횟수.min}~${CONFIG.키워드횟수.max}회 넣어라. ` +
+        `키워드: "${keyword}"를 통째로(붙여서) 본문에 ${횟수말} 넣어라. ` +
           `지금 ${v.kwCount}회다. 단어를 쪼개 흩어 놓으면 세어지지 않는다.`
       );
     } else if (issue.includes("과다")) {

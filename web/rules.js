@@ -1006,8 +1006,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const issues = [];
   if (제목 && keyword && !titleHasKw) issues.push(말.제목키워드(v));
   if (chars < 목표) issues.push(말.글자수(v));
-  if (kwLack) issues.push(말.키워드부족(v));
-  else if (kwOver) issues.push(말.키워드과다(v));
+  if (kwLack) issues.push(말.키워드부족(v));   // 부족은 불합격 — 안 잡히면 글을 쓴 보람이 없다
   if (abstractFound.length) issues.push(말.추상어(v));
   // 금지어를 안 썼어도 명사구 안에 접혀 있으면 결국 확인할 수 없는 글이다
   if (압축.length) issues.push(말.압축(v));
@@ -1062,6 +1061,9 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   if (본보기베낌.length) advice.push(말.본보기베낌(v));
   if (지어낸경험.length) advice.push(말.지어낸경험(v));
   if (구체권장 && 구체밀도 >= 구체최소 && 구체밀도 < 구체권장) advice.push(말.구체성권장(v));
+  // 과다는 권장이다. 불합격으로 걸면 AI가 내용을 버리고 횟수만 맞춘다 — 2026-09-30에 상한을
+  // 3회로 좁히면서 같이 내렸다(그 전엔 7회 상한에 불합격이었다).
+  if (kwOver && !kwLack) advice.push(말.키워드과다(v));
 
   return {
     chars, photos, kwCount, kwParts, tokens, kwLack, kwOver,

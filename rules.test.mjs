@@ -166,11 +166,23 @@ test("띄어쓰기를 무시하고 센다 (네이버와 같은 기준)", () => {
   assert.equal(countLoose("여드름 피부관리가 중요합니다", "여드름피부관리"), 1);
 });
 
-test("키워드 도배도 미달만큼 지적한다", () => {
+// 2026-09-30: 상한을 3회로 좁히면서 과다를 불합격에서 권장으로 내렸다.
+// 불합격으로 걸면 AI가 내용을 버리고 횟수만 맞춘다 — 부족은 그대로 불합격이다(안 잡히면 소용없다).
+test("키워드 도배는 권장으로 짚고, 부족은 불합격으로 건다", () => {
   const 도배 = "제목: 여드름\n\n" + "여드름 ".repeat(40) + "가".repeat(1400);
   const v = 재기(도배);
-  assert.equal(v.pass, false);
-  assert.ok(v.issues.some((i) => i.includes("과다")));
+  assert.ok(v.advice.some((i) => i.includes("과다")), "과다는 권장 줄로 나간다");
+  assert.ok(!v.issues.some((i) => i.includes("과다")), "과다로 다시 쓰게 만들지 않는다");
+
+  const 부족 = "제목: 여드름\n\n여드름 이야기입니다. " + "가".repeat(1500);
+  const 부 = 재기(부족);
+  assert.equal(부.pass, false);
+  assert.ok(부.issues.some((i) => i.includes("최소")), JSON.stringify(부.issues));
+});
+
+test("키워드 횟수는 3회로 통일돼 있다 (2026-09-30 우진)", () => {
+  assert.equal(CONFIG.키워드횟수.min, 3);
+  assert.equal(CONFIG.키워드횟수.max, 3);
 });
 
 test("단어는 다 있는데 통째로 없으면 그렇게 말해 준다", () => {
