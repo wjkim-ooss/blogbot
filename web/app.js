@@ -3,6 +3,7 @@
 import {
   countLoose, 요청글자수, 적힌목표, 적힌유형, 분량표시 as 분량문구,
   참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 평가, 원장글보관함, 원장글인가, 유형정보,
+  초안본문,
 } from "/rules.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -52,11 +53,8 @@ const api = async (url, opts = {}) => {
 const targetPhotosOf = (ref, 목표글자수) => targetPhotosFor(ref, CONFIG, 목표글자수);
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-// 초안 파일에서 헤더(--- 위)를 뺀 본문만 추출
-function draftBody(content) {
-  const idx = content.indexOf("\n---\n");
-  return idx >= 0 ? content.slice(idx + 5).trim() : content.trim();
-}
+// 초안 파일에서 머리말(--- 위)을 뺀 본문 — 자르는 자리는 rules.js 한 곳이다(서버의 대화 수정도 같은 것을 쓴다)
+const draftBody = 초안본문;
 
 const 분량표시 = (목표) => 분량문구(목표, CONFIG);
 

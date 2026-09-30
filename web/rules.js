@@ -20,6 +20,11 @@ export const countWord = (text, w) => (w ? text.split(w).length - 1 : 0);
 export const despace = (t) => (t || "").replace(/\s+/g, "");
 export const countLoose = (text, w) => countWord(despace(text), despace(w));
 
+// ---------- 고치기 전·후 ----------
+// 대화로 고친 글이 '전에는 통과하던 기준'을 떨어뜨렸는가. 원래 걸려 있던 것은 세지 않는다 —
+// 원장이 고치려는 글은 이미 몇 군데 걸려 있을 수 있고, 그걸 이번 수정 탓으로 돌리면 안 된다.
+export const 깨진기준 = (전, 후) => (후?.걸린기준 || []).filter((이름) => !(전?.걸린기준 || []).includes(이름));
+
 // ---------- 목표 글자수 ----------
 // 너무 짧으면 상위노출이 안 되고, 너무 길면 원장이 못 쓴다. 범위를 벗어나면 null.
 export const 요청글자수 = (v) => {
@@ -42,6 +47,13 @@ export const 분량표시 = (목표, config) =>
 // 키 목록을 한 곳에 둔다. 읽는 쪽(적힌목표·적힌유형)과 본문에서 걸러내는 쪽(본문문장)이
 // 같은 목록에서 파생돼야 한다 — 예전엔 따로 적어 두어 새 키가 본문 문장으로 세어졌다.
 export const 머리말키 = ["목표글자수", "글쓴이유형"];
+
+// 초안 파일에서 머리말(--- 위)을 뺀 본문. 편집기와 서버(대화 수정)가 같은 자리에서 자른다 —
+// 따로 자르면 서버가 잰 '고치기 전'과 편집기가 보여 주는 판정이 갈린다.
+export function 초안본문(content) {
+  const 자리 = (content || "").indexOf("\n---\n");
+  return 자리 >= 0 ? content.slice(자리 + 5).trim() : (content || "").trim();
+}
 const 머리값 = (content, 이름) =>
   ((((content || "").split("\n---\n")[0]).match(new RegExp(`^-\\s*${이름}:\\s*(\\S+)`, "m")) || [])[1] || "");
 
@@ -1004,22 +1016,26 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   // 반드시 고쳐야 하는 것(issues)과 고치면 더 좋은 것(advice)을 나눈다.
   // 섞어 두면 ⚠️ 숫자가 부풀어 진짜 문제가 묻힌다 — 사진 수는 권장치일 뿐 불합격 사유가 아니다.
   const issues = [];
-  if (제목 && keyword && !titleHasKw) issues.push(말.제목키워드(v));
-  if (chars < 목표) issues.push(말.글자수(v));
-  if (kwLack) issues.push(말.키워드부족(v));   // 부족은 불합격 — 안 잡히면 글을 쓴 보람이 없다
-  if (abstractFound.length) issues.push(말.추상어(v));
+  // 무엇에 걸렸는지 이름으로도 남긴다. 문구에는 숫자가 섞여 매번 달라지니, 고치기 전·후를
+  // 견줄 때(대화 수정이 다른 기준을 깨뜨렸나)는 이 이름으로 본다 — 이름은 문구 함수 이름 그대로다.
+  const 걸린기준 = [];
+  const 걸림 = (이름) => { issues.push(말[이름](v)); 걸린기준.push(이름); };
+  if (제목 && keyword && !titleHasKw) 걸림("제목키워드");
+  if (chars < 목표) 걸림("글자수");
+  if (kwLack) 걸림("키워드부족");   // 부족은 불합격 — 안 잡히면 글을 쓴 보람이 없다
+  if (abstractFound.length) 걸림("추상어");
   // 금지어를 안 썼어도 명사구 안에 접혀 있으면 결국 확인할 수 없는 글이다
-  if (압축.length) issues.push(말.압축(v));
+  if (압축.length) 걸림("압축");
   // 금지어를 안 썼어도 숫자가 없으면 결국 추상적인 글이다 — 그쪽이 진짜 기준이다
-  if (구체최소 && 구체밀도 < 구체최소) issues.push(말.구체성(v));
-  if (medicalFound.length) issues.push(말.의료법(v));
-  if (overclaimFound.length) issues.push(말.과장(v));
-  if (needsEvidence && !pmids.length) issues.push(말.근거없음(v));
-  if (가짜PMID.length) issues.push(말.가짜PMID(v));
+  if (구체최소 && 구체밀도 < 구체최소) 걸림("구체성");
+  if (medicalFound.length) 걸림("의료법");
+  if (overclaimFound.length) 걸림("과장");
+  if (needsEvidence && !pmids.length) 걸림("근거없음");
+  if (가짜PMID.length) 걸림("가짜PMID");
   // 남의 문장을 문장째로 옮긴 것은 불합격이다. 상위글끼리 재어 보니 서로 베끼지 않은 글이
   // 이만큼 이어지는 일은 0.25%뿐이었고, 그 0.25%는 전부 실제 복붙이었다.
-  if (베낌) issues.push(말.베낀문장(v));
-  if (약속 && 약속.항목 !== 약속.약속) issues.push(말.제목약속(v));
+  if (베낌) 걸림("베낀문장");
+  if (약속 && 약속.항목 !== 약속.약속) 걸림("제목약속");
 
   const advice = [];
   if (photos < 목표사진) advice.push(말.사진(v));
@@ -1044,7 +1060,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
     // 748자가 되면 같은 복붙이 1.6%로 조용해졌다 — 방향이 거꾸로였다.
     if (!베낌 && !긴겹침 && 겹침.토막.length && 겹침.겹침률 >= (유사.겹침률경고 ?? Infinity)) advice.push(말.겹침주의(v));
     // 긴 문장은 티가 나면 안 된다(우진, 2026-09-14) — config.문장길이.불합격이 켜져 있으면 다시 쓰게 한다
-    if (문장길이값.비율 > 문장허용) (config.문장길이?.불합격 ? issues : advice).push(말.문장길이(v));
+    if (문장길이값.비율 > 문장허용) config.문장길이?.불합격 ? 걸림("문장길이") : advice.push(말.문장길이(v));
     if (말투값.비율 < 말투값.최소) advice.push(말.말투부족(v));
     else if (말투값.비율 > 말투값.최대) advice.push(말.말투과다(v));
     // 말을 거는 것과 가벼워지는 것은 다르다 — ~어요가 늘어나면 유형과 상관없이 짚는다
@@ -1077,6 +1093,6 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
     // pass 하나로는 두 가지가 같아 보인다: '다 재서 통과'와 '몇 개는 못 재서 걸린 게 없음'.
     // 세 갈래로 나눠 한 곳에서 낸다 — 부르는 쪽이 저마다 해석하면 그게 규칙 두 벌이다.
     판정: issues.length ? "불합격" : 꺼진검사.length ? "부분통과" : "통과",
-    issues, advice, pass: issues.length === 0,
+    issues, advice, 걸린기준, pass: issues.length === 0,
   };
 }

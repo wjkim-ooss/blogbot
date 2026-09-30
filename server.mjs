@@ -9,7 +9,7 @@ import { resolveDraftView } from "./permissions.mjs";
 // 보관함 읽기는 한 곳(scripts/보관함.mjs)에서 한다 — 발행검증과 같은 목록을 봐야 한다.
 import { 보관함읽기 } from "./scripts/보관함.mjs";
 // 초안 판정 규칙은 브라우저와 한 파일을 함께 쓴다 (web/rules.js). 두 벌로 두면 반드시 갈라진다.
-import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 압축찾기, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형, 원장글보관함, 원장글고르기, 문장길이범위 } from "./web/rules.js";
+import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 압축찾기, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형, 원장글보관함, 원장글고르기, 문장길이범위, 깨진기준, 초안본문, 적힌목표, 적힌유형 } from "./web/rules.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
@@ -748,13 +748,14 @@ const 소진진단 = (ctx, 전체 = []) => {
 // 걸렸을 때 빈 글로 끝나지 않게. 대체 모델까지 거절하면 그때 오류로 알린다.
 // 고쳐 쓰기 대화의 assistant 차례는 글(텍스트)만 넘긴다 — 생각 블록을 안 돌려보내면
 // '앞 차례를 고쳤는가' 검사(preserved thinking)에 걸릴 것이 없다.
-async function streamClaude(client, messages, send, 유형 = "원장", 기록 = {}) {
+// 시스템: 비우면 초안 생성용 지시문. 대화 수정은 자기 지시문을 넘긴다(같은 기준을 품고 말투만 다르다).
+async function streamClaude(client, messages, send, 유형 = "원장", 기록 = {}, 시스템 = 시스템프롬프트(유형)) {
   const stream = client.beta.messages.stream({
     model: MODEL,
     max_tokens: 64000,
     betas: ["server-side-fallback-2026-07-01"],
     fallbacks: "default",
-    system: 시스템프롬프트(유형),
+    system: 시스템,
     messages,
   });
   stream.on("text", (t) => send({ type: "delta", text: t }));
@@ -771,7 +772,7 @@ async function streamClaude(client, messages, send, 유형 = "원장", 기록 = 
 // Gemini는 SDK 없이 REST로 부른다 (의존성을 늘리지 않으려고).
 // 붐비면 잠깐 쉬었다 다시, 그래도 안 되면 다음 모델로 넘어간다.
 // 원장 입장에서 "나중에 다시 해보세요"는 사실상 못 쓰는 것이나 마찬가지라서.
-async function streamGemini(messages, send, 유형 = "원장", 기록 = {}) {
+async function streamGemini(messages, send, 유형 = "원장", 기록 = {}, 시스템 = 시스템프롬프트(유형)) {
   const models = await geminiModels();
   const contents = messages.map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -779,7 +780,7 @@ async function streamGemini(messages, send, 유형 = "원장", 기록 = {}) {
   }));
   const 만들기 = (cfg) =>
     JSON.stringify({
-      system_instruction: { parts: [{ text: 시스템프롬프트(유형) }] },
+      system_instruction: { parts: [{ text: 시스템 }] },
       contents,
       generationConfig: { maxOutputTokens: 16384, ...cfg },
     });
@@ -855,7 +856,7 @@ async function streamGemini(messages, send, 유형 = "원장", 기록 = {}) {
   // 스트리밍(SSE)이 계속 빈손이면 방식을 바꿔 한 번만 통째로 받아 본다.
   // 스트리밍 쪽 문제라면 이걸로 그냥 되고, 아니면 왜 비었는지가 응답 안에 그대로 들어 있다.
   send({ type: "status", message: "방식을 바꿔 한 번 더 시도합니다" });
-  const 통째로 = await 한번에받기(남은[0], contents, 유형);
+  const 통째로 = await 한번에받기(남은[0], contents, 유형, 시스템);
   if (통째로.text) {
     send({ type: "delta", text: 통째로.text });
     return 통째로.text;
@@ -868,7 +869,7 @@ async function streamGemini(messages, send, 유형 = "원장", 기록 = {}) {
 }
 
 // 스트리밍이 아닌 일반 호출. 한 덩어리 JSON이라 차단 사유·중단 사유가 그대로 보인다.
-async function 한번에받기(model, contents, 유형 = "원장") {
+async function 한번에받기(model, contents, 유형 = "원장", 시스템 = 시스템프롬프트(유형)) {
   try {
     const r = await fetch(
       `${GEMINI_BASE()}/v1beta/models/${model}:generateContent?key=${encodeURIComponent(GEMINI_KEY())}`,
@@ -876,7 +877,7 @@ async function 한번에받기(model, contents, 유형 = "원장") {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          system_instruction: { parts: [{ text: 시스템프롬프트(유형) }] },
+          system_instruction: { parts: [{ text: 시스템 }] },
           contents,
           generationConfig: { maxOutputTokens: 16384 },
         }),
@@ -964,8 +965,8 @@ async function 읽기(res, send) {
 }
 
 // 기록.모델에 실제로 글을 쓴 모델 이름이 남는다 (초안 머리말에 찍는다)
-const streamOnce = (client, messages, send, 유형, 기록) =>
-  client ? streamClaude(client, messages, send, 유형, 기록) : streamGemini(messages, send, 유형, 기록);
+const streamOnce = (client, messages, send, 유형, 기록, 시스템) =>
+  client ? streamClaude(client, messages, send, 유형, 기록, 시스템) : streamGemini(messages, send, 유형, 기록, 시스템);
 
 // 통과할 때까지 고쳐 쓰는 최대 횟수. 넘기면 미달인 채로 저장하고 무엇이 남았는지 알린다.
 const MAX_FIX_ROUNDS = 3;
@@ -1040,6 +1041,11 @@ async function consumeQuota(ctx) {
   const p = ctx.profile;
   const mk = monthKey();
   const used = p.usage_month === mk ? p.usage_count : 0;
+  // 한도를 꺼 둬도 세기는 한다 — 관리자 화면의 '누가 몇 번 썼나'가 이 숫자다(config.초안월한도).
+  if (!CONFIG.초안월한도?.켜짐) {
+    await supaAdmin.from("profiles").update({ usage_month: mk, usage_count: used + 1 }).eq("id", p.id);
+    return { unlimited: true, 셌음: true };   // 셌으니 실패하면 돌려준다 — 안 그러면 실패도 쓴 횟수가 된다
+  }
   if (used >= p.monthly_limit) return null; // 초과
   await supaAdmin.from("profiles").update({ usage_month: mk, usage_count: used + 1 }).eq("id", p.id);
   return { remaining: p.monthly_limit - (used + 1), limit: p.monthly_limit };
@@ -1085,7 +1091,7 @@ async function handleGenerate(res, body, ctx) {
     const quota = await consumeQuota(ctx);
     if (quota === null)
       return fail(`이번 달 초안 생성 한도(${ctx.profile.monthly_limit}회)를 모두 사용했습니다. 다음 달에 초기화됩니다.`);
-    차감함 = !quota.unlimited;
+    차감함 = !quota.unlimited || !!quota.셌음;
     const { ref, 종류 } = 레퍼런스고르기(keyword);
     send({ type: "status", message: 레퍼런스안내(keyword, ref, 종류, "지시") });
 
@@ -1316,6 +1322,193 @@ function readBody(req) {
   });
 }
 
+// ---------- 대화 수정 ----------
+// 편집기 옆 대화창. 원장님이 말로 부탁하면 AI가 초안을 고친다 — 초안 생성과 **같은 기준** 안에서만.
+// 기준은 시스템프롬프트(유형) 하나에서 온다. 여기서 규칙을 다시 적지 않는다(두 벌로 두지 않는다).
+// 원장님께는 기준의 이름·숫자를 말하지 않고 네이버와 읽는 고객 입장에서 이유를 댄다(2026-09-30 우진).
+// 고친 글은 바로 넣지 않는다. 먼저 보여 주고 원장님이 '적용'을 눌러야 편집기에 들어간다.
+// 고치다가 전에 통과하던 기준이 떨어지면 AI에게 다시 시킨다(config.대화수정.다시시키기).
+const 대화수정프롬프트 = (유형) => `너는 에스테틱 블로그 초안을 원장님 옆에서 같이 고쳐 주는 도우미다.
+원장님이 말로 부탁하시면 초안을 고쳐 드린다.
+
+[지켜야 할 기준 — 네가 지킬 것이지 원장님께 보여 드릴 것이 아니다]
+${시스템프롬프트(유형)}
+[기준 끝]
+
+[원장님과 말하는 법]
+- 존댓말로, 짧게. 한 번에 2~4문장.
+- 위 기준을 드러내지 마라. "규칙", "기준", "검사", "금지어", "불합격", "추상어", "초사고", "논문 검증" 같은 말을 쓰지 말고,
+  기준에 적힌 숫자(문장 몇 자, 키워드 몇 번 같은 것)도 말하지 마라.
+- 이유는 네이버 블로그와 글을 읽는 고객 입장에서 말한다.
+  예) "이렇게 쓰면 고객님이 광고 글로 느끼기 쉬워요", "네이버에서는 짧게 끊어 읽히는 글이 끝까지 읽혀요".
+- 부탁이 위 기준과 부딪히면 그대로 따르지 않는다. 왜 그런지 위처럼 설명하고,
+  원장님이 바라는 효과를 내는 다른 방법으로 고쳐 드린다.
+  · 키워드를 더 넣어 달라고 하시면: 키워드가 너무 많으면 네이버가 스팸처럼 보고, 읽는 고객도 광고 같다고
+    불편해한다고 설명한다. 대신 그 뜻을 자연스러운 다른 표현으로 풀어 드린다.
+  · 키워드를 줄여 달라고 하시면: 지금이 검색에 걸리는 데 필요한 만큼이라고 설명하고,
+    반복이 티 나지 않게 문장을 다듬어 드린다.
+  · 피부과·병원에 가 보라는 말, 치료·피부회복처럼 병원에서 쓰는 말을 넣어 달라고 하시면:
+    에스테틱 글에서 그렇게 쓰면 고객이 오히려 믿기 어려워하고 문제가 될 수 있다고 설명하고,
+    관리 과정과 달라진 모습으로 풀어 드린다. (압출·모낭염처럼 샵에서 실제로 쓰는 말은 괜찮다)
+  · 효과를 크게 말해 달라고 하시면: 과장은 고객이 먼저 알아챈다고 설명하고, 실제 관리 과정과 숫자로 보여 드린다.
+- 원장님이 드래그한 부분이 있으면 **그 부분만** 고친다. 나머지는 한 글자도 바꾸지 마라.
+- 드래그한 부분이 없으면 부탁하신 것만 고치고 나머지는 그대로 둔다.
+- 모르는 값(연차·가격·횟수 등)은 지어내지 마라. [원장확인: 무엇] 으로 비워 둔다.
+
+[답하는 형식 — 반드시 지킨다]
+<답>원장님께 드릴 말</답>
+글을 고쳤으면 바로 이어서 둘 중 하나만:
+- 드래그한 부분이 있을 때: <바꾼부분>그 부분 대신 들어갈 글</바꾼부분>
+- 없을 때: <수정본>고친 본문 전체</수정본>
+글을 고치지 않고 대답만 했으면 <답>만 쓴다.`;
+
+// AI 답에서 세 칸을 꺼낸다. 태그를 빠뜨리면 전부 '답'으로 보고 글은 안 고친 것으로 친다 —
+// 닫는 태그가 없는(잘린) 고친 글을 넣었다가 본문이 반토막 나는 것보다 안 고치는 편이 낫다.
+function 대화답풀기(text) {
+  const 원 = text || "";
+  const 꺼내 = (태그) => { const m = 원.match(new RegExp(`<${태그}>([\\s\\S]*?)</${태그}>`)); return m ? m[1].trim() : null; };
+  const 답 = 꺼내("답") ?? 원.replace(/<(바꾼부분|수정본)>[\s\S]*$/, "").trim();
+  return { 답, 바꾼부분: 꺼내("바꾼부분"), 수정본: 꺼내("수정본") };
+}
+
+// 드래그한 자리에 새 글을 끼운다. 그사이 편집기 글이 바뀌어 그 자리에 그 글이 없으면 끼우지 않는다 —
+// 엉뚱한 곳을 덮어쓰는 것보다 안 고치는 편이 낫다. 드래그한 글 앞뒤의 빈 줄은 그대로 살린다.
+function 끼워넣기(원문, 선택, 새글) {
+  if (!선택 || 새글 == null) return null;
+  const { start, end, text } = 선택;
+  if (!(Number.isInteger(start) && Number.isInteger(end) && start >= 0 && start < end && end <= 원문.length)) return null;
+  if (원문.slice(start, end) !== text) return null;
+  const 앞 = text.match(/^\s*/)[0], 뒤 = text.match(/\s*$/)[0];
+  return 원문.slice(0, start) + 앞 + 새글.trim() + 뒤 + 원문.slice(end);
+}
+
+// 본문 전체를 갈아 끼운다. 머리말(--- 위)은 그대로 둔다 — 목표 글자수·글쓴이 유형이 거기 적혀 있다.
+function 본문갈기(원문, 새본문) {
+  const 자리 = 원문.indexOf("\n---\n");
+  return 자리 >= 0 ? `${원문.slice(0, 자리 + 5)}\n${새본문.trim()}\n` : `${새본문.trim()}\n`;
+}
+
+// 편집기가 재는 것과 같은 재료로 잰다(목표·유형은 초안 머리말, 원장값은 내 샵 정보).
+// 말투만 "지시" — 다시 시킬 때 AI에게 무엇을 어떻게 고칠지까지 알려 주려고.
+async function 대화판정준비(원문, keyword, ctx) {
+  const shop = await 샵읽기(ctx);
+  const 유형 = 유형정규화(적힌유형(원문) || shop.유형);
+  const { ref } = 레퍼런스고르기(keyword);
+  const 원장글 = 유형정보(유형).원장글본보기 ? 원장글보관함(보관함읽기()) : null;
+  const 목표 = 적힌목표(원문) || 0;
+  const 재기 = (글) => 평가(초안본문(글), { keyword, config: CONFIG, 목표글자수: 목표, ref, 말투: "지시", 원장값: shop, 유형, 원장글 });
+  return { 유형, 재기 };
+}
+
+const 대화최대 = () => CONFIG.대화수정?.초안당최대 ?? 10;
+
+// 표가 아직 없으면(우진이 SQL을 안 돌렸으면) 오류를 던진다 — 부르는 쪽이 "곧 열립니다"로 바꾼다.
+async function 대화센수(userId, name) {
+  const { count, error } = await supaAdmin.from("draft_chats")
+    .select("id", { count: "exact", head: true }).eq("user_id", userId).eq("draft_name", name).eq("role", "user");
+  if (error) throw error;
+  return count || 0;
+}
+
+// AI에게 앞 대화를 몇 차례 같이 보여 준다 — "아까 그거 다시"가 통하게. 짝이 맞게 user 로 시작시킨다.
+async function 지난대화(userId, name) {
+  const { data } = await supaAdmin.from("draft_chats").select("role, content")
+    .eq("user_id", userId).eq("draft_name", name).order("created_at", { ascending: false }).limit(6);
+  const 차례 = (data || []).reverse().map((r) => ({ role: r.role, content: r.content }));
+  while (차례.length && 차례[0].role !== "user") 차례.shift();
+  return 차례;
+}
+
+async function 대화보기(ctx, 주인, name, readOnly) {
+  if (!ctx.authOn) return { 준비됨: true, 대화: [], 남은: null, 최대: null };
+  const { data, error } = await supaAdmin.from("draft_chats").select("id, role, content, selection, applied, created_at")
+    .eq("user_id", 주인).eq("draft_name", name).order("created_at").limit(60);
+  if (error) return { 준비됨: false, 대화: [], 남은: null, 최대: null };
+  const 쓴 = data.filter((r) => r.role === "user").length;
+  // 관리자가 자기 초안을 볼 때는 무제한. 남의 초안을 열람할 때는 그 원장의 남은 횟수를 보여 준다.
+  const 무제한 = ctx.unlimited && !readOnly;
+  return { 준비됨: true, 대화: data, 남은: 무제한 ? null : Math.max(0, 대화최대() - 쓴), 최대: 무제한 ? null : 대화최대() };
+}
+
+async function handleChat(res, body, ctx, name) {
+  const message = String(body.message || "").trim().slice(0, 1000);
+  if (!message) return json(res, 400, { error: "무엇을 고칠지 적어 주세요" });
+  const 원문 = String(body.content || "");
+  if (!원문.trim()) return json(res, 400, { error: "고칠 초안이 비어 있어요" });
+  const keyword = String(body.keyword || "").trim();
+  const 선택 = body.selection && typeof body.selection.text === "string" && body.selection.text.trim() ? body.selection : null;
+  const 머리끝 = 원문.indexOf("\n---\n");
+  if (선택 && 머리끝 >= 0 && 선택.start < 머리끝 + 5) return json(res, 400, { error: "본문 안에서 드래그해 주세요" });
+
+  const 기록함 = ctx.authOn;   // 로컬 단독 모드에는 대화를 남길 표가 없다
+  let 쓴횟수 = 0;
+  if (기록함) {
+    try { 쓴횟수 = await 대화센수(ctx.userId, name); }
+    catch { return json(res, 503, { error: "대화 수정은 곧 열립니다. 조금만 기다려 주세요." }); }
+    if (!ctx.unlimited && 쓴횟수 >= 대화최대())
+      return json(res, 429, { error: `이 초안의 대화 수정 ${대화최대()}번을 모두 쓰셨어요. 나머지는 편집기에서 직접 고쳐 주세요.`, 남은: 0 });
+  }
+
+  const engine = engineName();
+  if (!engine) return json(res, 503, { error: "AI 연결이 아직 설정되지 않았습니다" });
+  let client = null;
+  if (engine === "claude") { const { default: Anthropic } = await import("@anthropic-ai/sdk"); client = new Anthropic(); }
+
+  const { 유형, 재기 } = await 대화판정준비(원문, keyword, ctx);
+  const 전 = 재기(원문);
+  const 요청 = [
+    "[지금 초안 본문]", 초안본문(원문), "",
+    ...(선택 ? ["[원장님이 드래그한 부분]", 선택.text.trim(), ""] : ["(드래그한 부분 없음 — 부탁하신 것만 고친다)", ""]),
+    "[원장님 부탁]", message,
+  ].join("\n");
+  const messages = [...(기록함 ? await 지난대화(ctx.userId, name) : []), { role: "user", content: 요청 }];
+  const 시스템 = 대화수정프롬프트(유형);
+
+  let 답 = "", 새글 = null, 깨진 = [];
+  try {
+    for (let 차례 = 0; 차례 <= (CONFIG.대화수정?.다시시키기 ?? 2); 차례++) {
+      const 원답 = await streamOnce(client, messages, () => {}, 유형, {}, 시스템);
+      const 풀림 = 대화답풀기(원답);
+      답 = 풀림.답 || 답;   // 다시 시킨 차례에 답이 비면 처음 답을 쓴다
+      새글 = 풀림.바꾼부분 != null && 선택 ? 끼워넣기(원문, 선택, 풀림.바꾼부분)
+        : 풀림.수정본 != null ? 본문갈기(원문, 풀림.수정본) : null;
+      if (!새글 || 새글 === 원문) { 새글 = null; 깨진 = []; break; }
+      const 후 = 재기(새글);
+      깨진 = 깨진기준(전, 후);
+      if (!깨진.length) break;
+      messages.push({ role: "assistant", content: 원답 });
+      messages.push({ role: "user", content: [
+        "방금 고친 글에서 원래 괜찮던 곳이 어긋났다. 원장님 부탁은 그대로 살리면서 아래도 맞춰서,",
+        "같은 형식(<답>, 그리고 <바꾼부분> 또는 <수정본>)으로 다시 써라.",
+        "<답>에는 이 얘기를 하지 마라 — 원장님은 처음 부탁에 대한 답만 보신다.",
+        ...후.걸린기준.map((이름, i) => (깨진.includes(이름) ? `- ${후.issues[i]}` : null)).filter(Boolean),
+      ].join("\n") });
+    }
+  } catch (e) {
+    console.log(`[대화 수정 실패] ${e?.message || e}`);
+    return json(res, 502, { error: "AI가 잠시 답을 못 했어요. 조금 뒤에 다시 부탁해 주세요." });   // 실패는 세지 않는다
+  }
+  // 끝까지 다른 곳을 어긋나게 하면 고친 글을 내놓지 않는다 — 원장님이 모르고 적용하면 글이 나빠진다.
+  const 막힘 = 깨진.length > 0;
+  if (막힘) {
+    새글 = null;
+    답 = `${답}\n\n이대로 바꾸면 글의 다른 부분이 흐트러져서 이번엔 적용하지 않았어요. 조금 다르게 말씀해 주시면 다시 해 볼게요.`.trim();
+  }
+
+  let 대화id = null;
+  if (기록함) {
+    const { data } = await supaAdmin.from("draft_chats").insert([
+      { user_id: ctx.userId, draft_name: name, role: "user", content: message, selection: 선택?.text?.slice(0, 2000) || null },
+      { user_id: ctx.userId, draft_name: name, role: "assistant", content: 답, applied: 새글 ? false : null },
+    ]).select("id, role");
+    대화id = data?.find((r) => r.role === "assistant")?.id ?? null;
+  }
+  return json(res, 200, {
+    답, 새글, 대화id, 막힘,
+    남은: ctx.unlimited || !기록함 ? null : Math.max(0, 대화최대() - 쓴횟수 - 1),
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const p = decodeURIComponent(url.pathname);
@@ -1342,13 +1535,29 @@ const server = http.createServer(async (req, res) => {
         email: p2?.email || null,
         role: ctx.isAdmin ? "admin" : p2?.role || "admin",
         status: ctx.approved ? "approved" : p2?.status || "pending",
-        limit: ctx.unlimited ? null : p2?.monthly_limit ?? null,
+        // 한도를 꺼 두면 화면에 '남은 생성'을 띄우지 않는다(config.초안월한도).
+        limit: ctx.unlimited || !CONFIG.초안월한도?.켜짐 ? null : p2?.monthly_limit ?? null,
         used: ctx.unlimited ? null : used,
-        remaining: ctx.unlimited ? null : Math.max(0, (p2?.monthly_limit ?? 0) - used),
+        remaining: ctx.unlimited || !CONFIG.초안월한도?.켜짐 ? null : Math.max(0, (p2?.monthly_limit ?? 0) - used),
+        대화최대: ctx.unlimited ? null : CONFIG.대화수정?.초안당최대 ?? null,
       });
     }
 
     // 관리자: 회원 목록 / 승인·등급 변경
+    // 관리자: 원장님들이 AI와 나눈 대화. 우진이 "무엇을 답답해하나"를 물으면 이걸 읽고 답한다.
+    if (p === "/api/admin/chats" && req.method === "GET") {
+      if (!ctx.authOn) return json(res, 400, { error: "로컬 모드에는 대화 기록이 없습니다" });
+      if (!ctx.isAdmin) return json(res, 403, { error: "관리자 전용" });
+      const [{ data, error }, { data: 사람들 }] = await Promise.all([
+        supaAdmin.from("draft_chats").select("id, user_id, draft_name, role, content, selection, applied, created_at")
+          .order("created_at", { ascending: false }).limit(3000),
+        supaAdmin.from("profiles").select("id, email"),
+      ]);
+      if (error) return json(res, 503, { error: "대화 기록 표가 아직 없습니다 — Supabase에서 SQL을 먼저 실행해 주세요." });
+      const 이메일 = Object.fromEntries((사람들 || []).map((x) => [x.id, x.email]));
+      return json(res, 200, data.map((r) => ({ ...r, email: 이메일[r.user_id] || r.user_id })));
+    }
+
     if (p === "/api/admin/users") {
       // 로컬 단독 모드에는 회원 명부 자체가 없다 (Supabase 미설정)
       if (!ctx.authOn) return json(res, 400, { error: "로컬 모드에는 회원 명부가 없습니다" });
@@ -1437,6 +1646,20 @@ const server = http.createServer(async (req, res) => {
       const file = await store.create(ctx.userId, base, blankDraft(keyword, findReference(keyword), 요청글자수(body.chars), 유형));
       return json(res, 200, { file });
     }
+    const 대화경로 = p.match(/^\/api\/drafts\/([^/]+)\/chat(?:\/(\d+)\/적용)?$/);
+    if (대화경로) {
+      const name = 대화경로[1];
+      if (!validName(name)) return json(res, 400, { error: "잘못된 파일명" });
+      if (req.method === "GET") return json(res, 200, await 대화보기(ctx, viewing, name, readOnly));
+      if (readOnly) return json(res, 403, { error: "다른 회원의 초안은 열람만 가능합니다" });
+      if (req.method === "POST" && 대화경로[2]) {
+        // 원장님이 '적용'을 눌렀다 — 무엇이 실제로 쓰였는지가 분석 거리다
+        if (ctx.authOn) await supaAdmin.from("draft_chats").update({ applied: true })
+          .eq("id", Number(대화경로[2])).eq("user_id", ctx.userId).eq("role", "assistant");
+        return json(res, 200, { ok: true });
+      }
+      if (req.method === "POST") return handleChat(res, await readBody(req), ctx, name);
+    }
     if (p.startsWith("/api/drafts/")) {
       const name = p.slice("/api/drafts/".length);
       if (!validName(name)) return json(res, 400, { error: "잘못된 파일명" });
@@ -1505,4 +1728,4 @@ if (process.argv[1] && NFC(path.resolve(process.argv[1])) === NFC(fileURLToPath(
   server.listen(PORT, () => console.log(`블로그봇 대시보드: http://localhost:${PORT}`));
 
 // 테스트에서만 쓴다 — 가짜 구글 서버를 세워 놓고 한도·스트리밍 동작을 확인하려고
-export const __test = { streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, buildUserPrompt };
+export const __test = { streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기 };
