@@ -1470,7 +1470,7 @@ async function 대화센수(userId, name) {
 // AI에게 앞 대화를 몇 차례 같이 보여 준다 — "아까 그거 다시"가 통하게. 짝이 맞게 user 로 시작시킨다.
 async function 지난대화(userId, name) {
   const { data } = await supaAdmin.from("draft_chats").select("role, content")
-    .eq("user_id", userId).eq("draft_name", name).order("created_at", { ascending: false }).limit(6);
+    .eq("user_id", userId).eq("draft_name", name).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(6);
   const 차례 = (data || []).reverse().map((r) => ({ role: r.role, content: r.content }));
   while (차례.length && 차례[0].role !== "user") 차례.shift();
   return 차례;
@@ -1479,9 +1479,10 @@ async function 지난대화(userId, name) {
 async function 대화보기(ctx, 주인, name, readOnly) {
   if (!ctx.authOn) return { 준비됨: true, 대화: [], 남은: null, 최대: null };
   const { data, error } = await supaAdmin.from("draft_chats").select("id, role, content, selection, applied, created_at")
-    .eq("user_id", 주인).eq("draft_name", name).order("created_at", { ascending: false }).limit(60);
+    .eq("user_id", 주인).eq("draft_name", name).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(60);
   if (error) return { 준비됨: false, 대화: [], 남은: null, 최대: null };
   data.reverse();   // 최근 60개를 시간순으로 — 오래된 60개만 보이면 새 대화가 화면에서 사라진다
+  // 한 차례의 부탁·답은 한 번에 저장돼 created_at 이 같다 — id 로 한 번 더 줄 세워야 순서가 안 뒤집힌다
   const 쓴 = data.filter((r) => r.role === "user").length;   // 원장은 10번(20줄)까지라 60줄 안에 다 든다
   // 관리자가 자기 초안을 볼 때는 무제한. 남의 초안을 열람할 때는 그 원장의 남은 횟수를 보여 준다.
   const 무제한 = ctx.unlimited && !readOnly;
@@ -1638,7 +1639,7 @@ const server = http.createServer(async (req, res) => {
       if (!ctx.isAdmin) return json(res, 403, { error: "관리자 전용" });
       const [{ data, error }, { data: 사람들 }] = await Promise.all([
         supaAdmin.from("draft_chats").select("id, user_id, draft_name, role, content, selection, applied, created_at")
-          .order("created_at", { ascending: false }).limit(3000),
+          .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(3000),
         supaAdmin.from("profiles").select("id, email"),
       ]);
       if (error) return json(res, 503, { error: "대화 기록 표가 아직 없습니다 — Supabase에서 SQL을 먼저 실행해 주세요." });
