@@ -101,6 +101,8 @@ const 논문 = CONFIG.논문검증 || {}; // 프롬프트에 인용한다 (판�
 
 // 초안 채점 — 규칙은 web/rules.js에 있고 여기서는 서버 사정만 채워 넣는다.
 // 말투 "지시": AI에게 "무엇을 어떻게 고쳐라"까지 적어 준다. 그래야 실제로 고쳐진다.
+// 원장 유형만 원장글 본보기를 받는다(config.글쓴이유형.X.원장글본보기) — 생성과 대화 수정이 같이 쓴다
+const 원장글받기 = (유형) => (유형정보(유형).원장글본보기 ? 원장글보관함(보관함읽기()) : null);
 const validateDraft = (text, keyword, minChars = CONFIG.최소글자수, title = "", ref = null, 원장값 = null, 유형 = "", 원장글 = null) =>
   평가(text, { keyword, config: CONFIG, 목표글자수: minChars, ref, title, 말투: "지시", 원장값, 유형, 원장글 });
 
@@ -135,6 +137,8 @@ const 샵항목 = (유형) => 유형항목(유형).map((x) => x.key);
 // '누구 것을 볼 수 있나'는 여기서 판단하지 않는다 — 호출부가 resolveDraftView로 허가한 id를 준다.
 // 권한 규칙이 두 곳에 살면 반드시 갈라진다 (거절이 빈 샵 {}로 둔갑해 배지에 0/4로 뜨는 식으로).
 async function 샵읽기(ctx, 대상 = null) {
+  // 내 샵 정보는 로그인 확인 때 profiles 를 통째로(select *) 읽어 두었다 — 다시 묻지 않는다
+  if (!대상 && ctx.profile && "shop" in ctx.profile) return ctx.profile.shop || {};
   if (!ctx.authOn) {
     try { return JSON.parse(fs.readFileSync(SHOP_FILE, "utf8")); } catch { return {}; }
   }
@@ -428,7 +432,7 @@ ${(U.제목전략 || []).join("\n")}
 [본문 구조 — 4칸]
 본문은 네 칸을 이 순서로 쌓는다. 칸 이름 자체를 글에 쓰지는 말고 순서만 지킨다.
 ${(U.본문칸 || []).join("\n")}
-소제목(### 사용)은 2~4개로 나누되, 위 네 칸의 순서가 무너지지 않게 붙인다.
+소제목(### 사용)은 ${소제목수().join("~")}개로 나누되, 위 네 칸의 순서가 무너지지 않게 붙인다.
 ${유형블록(U, "독자본능", (B) => `
 [글을 쓰기 전에 — 독자가 지금 느끼는 것]
 ${B.설명}
@@ -514,6 +518,7 @@ ${U.경력주의 ? `      ${U.경력주의}\n` : ""}      수식어를 하나로
 
 [의료법 주의]
 다음 표현 금지: ${CONFIG.의료법금지어.join(", ")}. 에스테틱은 의료기관이 아니므로 의료 행위로 오인될 표현을 쓰지 않는다.
+${CONFIG.주의표현?.낱말?.length ? `조심할 말: ${CONFIG.주의표현.낱말.join(", ")} — 써도 되지만 꼭 필요할 때만, 관리 전후 달라진 모습(붉은 기·당김 같은 것)으로 풀어 쓴다.` : ""}
 
 [유사문서 — 베끼면 글이 죽는다]
 ${CONFIG.유사문서.설명}
@@ -522,17 +527,21 @@ ${CONFIG.유사문서.설명}
 - 단어 몇 개를 바꾸는 것으로는 부족하다. 어순만 뒤집는 것도 마찬가지다.
 - 같은 사실을 말하더라도 ① 다른 자리에서 시작하고 ② 네가 드는 예시를 바꾸고 ③ 문장을 끊는 자리를 바꿔라.
 - 제목도 같다. 상위글 제목의 뼈대를 그대로 쓰지 말고 다른 각도에서 걸어라.
-- 레퍼런스에 있는 제품명·업체명·주소·제휴 문구는 아예 옮기지 마라. 남의 샵 이야기다.
-
-[출력 형식]
+- 레퍼런스에 있는 제품명·업체명·주소·제휴 문구는 아예 옮기지 마라. 남의 샵 이야기다.`;
+};
+// 초안을 새로 쓸 때만 붙는 출력 모양. 기준(위 프롬프트조립)과 따로 둔다 — 대화 수정은 기준만 품고
+// 자기 답 형식을 쓴다. 예전엔 한 덩어리로 만든 뒤 "[출력 형식]" 글자로 잘라 냈는데, 제목 글자가 바뀌면
+// "설명 없이 본문만 내라"가 대화로 조용히 되살아나는 구조였다(2026-09-30 그 버그가 실제로 났다).
+const 출력형식 = `[출력 형식]
 첫 줄: 제목: <추천 제목 1개 — 손실 회피형>
 둘째 줄: 제목후보: <전략 이름> | <제목> // <전략 이름> | <제목> // <전략 이름> | <제목> (전략 이름은 위 제목 항목의 세 가지)
   - 이 두 줄은 각각 한 줄로만 쓴다. 줄바꿈하지 않는다.
 셋째 줄부터: 본문 전체. 제목을 본문에서 반복하지 말고, 설명·머리말·맺음말 코멘트 없이 네이버 에디터에 그대로 붙여넣을 수 있는 본문만 출력한다.`;
-};
 // CONFIG는 시작 시 한 번 읽는 상수다 — 유형별 프롬프트도 시작 시 한 번씩만 조립한다
-const PROMPTS = Object.fromEntries(Object.keys(CONFIG.글쓴이유형 || { 원장: 1 }).map((t) => [t, 프롬프트조립(t)]));
+const 기준들 = Object.fromEntries(Object.keys(CONFIG.글쓴이유형 || { 원장: 1 }).map((t) => [t, 프롬프트조립(t)]));
+const PROMPTS = Object.fromEntries(Object.entries(기준들).map(([t, 기준]) => [t, `${기준}\n\n${출력형식}`]));
 const 시스템프롬프트 = (유형) => PROMPTS[유형정규화(유형)];
+const 기준프롬프트 = (유형) => 기준들[유형정규화(유형)];
 
 // 통과선은 최소글자수(1,300자), 노리는 지점은 권장글자수(2,000자)로 고정한다.
 // 2,000자는 상위노출 글들을 실제로 재어 본 값이다 — 강의 체크리스트도 같은 숫자를 쓴다.
@@ -546,7 +555,10 @@ const 사진목표 = (ref, 목표글자수) => targetPhotosFor(ref, CONFIG, 목�
 // (2026-09-30 우진 "고칠점이 너무 많이 떠"). 가운데 값으로 나누고, 지정이 없으면 권장 글자수를, 지정이 있으면
 // 그보다 15% 넉넉히 겨눈다 — 모자라면 불합격이고, 조금 넘치는 것은 아무 문제가 없다.
 const 평균문장길이 = () => (CONFIG.문장길이.하한 + CONFIG.문장길이.상한) / 2;
-const 겨눌글자수 = (목표글자수) => (목표글자수 ? Math.round(목표글자수 * 1.15) : 권장글자수(CONFIG));
+// 함수 선언으로 둔다 — 시작할 때 조립하는 프롬프트(위쪽)에서도 부르기 때문(const 는 선언 전에 못 부른다)
+function 넉넉히() { return CONFIG.분량?.넉넉히 ?? 1.15; }
+function 소제목수() { return CONFIG.분량?.소제목수 ?? [5, 6]; }
+const 겨눌글자수 = (목표글자수) => (목표글자수 ? Math.round(목표글자수 * 넉넉히()) : 권장글자수(CONFIG));
 const 최소문장수 = (목표글자수) => Math.ceil(겨눌글자수(목표글자수) / 평균문장길이());
 
 
@@ -598,7 +610,7 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = nu
       : `[목표 분량] 공백 제외 ${분량표시(0, CONFIG)} — ${CONFIG.최소글자수.toLocaleString()}자 아래로 내려가면 다시 써야 한다. ${권장글자수(CONFIG).toLocaleString()}자 쪽을 노릴 것`,
     // 글자수는 모델이 셀 수 없다. 셀 수 있는 것(문장·문단 개수)으로 바꿔 준다 —
     // 안 그러면 한 문장씩 뚝뚝 떼어 놓고 사진만 끼워 넣어 분량이 안 나온다(1,079자·754자에서 멈췄다).
-    `  └ 글자수는 네가 셀 수 없으니 이렇게 잡아라: 본문 문장을 적어도 ${최소문장수(목표글자수)}개 쓴다. 한 문장이 짧아서(10~20자) 이만큼 써야 분량이 찬다. 문단은 2~3문장씩 묶고, 소제목(###) 5~6개로 나눠 소제목마다 문장 ${Math.ceil(최소문장수(목표글자수) / 6)}개 안팎을 쓴다.`,
+    `  └ 글자수는 네가 셀 수 없으니 이렇게 잡아라: 본문 문장을 적어도 ${최소문장수(목표글자수)}개 쓴다. 한 문장이 짧아서(${CONFIG.문장길이.하한}~${CONFIG.문장길이.상한}자) 이만큼 써야 분량이 찬다. 문단은 2~3문장씩 묶고, 소제목(###) ${소제목수().join("~")}개로 나눠 소제목마다 문장 ${Math.ceil(최소문장수(목표글자수) / 소제목수().at(-1))}개 안팎을 쓴다.`,
     `  └ 한 문장씩 떼어 놓지 마라. 문단 하나가 한 문장이면 분량이 절대 안 나온다.`,
     `[사진 자리] ${사진목표(ref, 목표글자수)}곳 (${사진범위(CONFIG)} 범위)${ref?.avgImages ? ` — 상위글 평균은 ${ref.avgImages}장이지만 원장이 실제로 찍을 수 있는 양으로 맞춘다` : ""} — [사진: 설명] 형식`,
     `  └ 사진 표시는 문단과 문단 사이에만 넣는다. 두 개를 연달아 붙이지 말고, 문장 사이에 끼우지도 마라.`
@@ -977,6 +989,14 @@ async function 읽기(res, send) {
 }
 
 // 기록.모델에 실제로 글을 쓴 모델 이름이 남는다 (초안 머리말에 찍는다)
+// 어느 엔진으로 쓸지와 그 손잡이 — 초안 생성과 대화 수정이 같이 쓴다(한쪽만 바뀌지 않게). client 가 null 이면 Gemini 경로.
+async function 엔진준비() {
+  const engine = engineName();
+  if (engine !== "claude") return { engine, client: null };
+  const { default: Anthropic } = await import("@anthropic-ai/sdk");
+  return { engine, client: new Anthropic() };
+}
+
 const streamOnce = (client, messages, send, 유형, 기록, 시스템, 최소) =>
   client ? streamClaude(client, messages, send, 유형, 기록, 시스템) : streamGemini(messages, send, 유형, 기록, 시스템, 최소);
 
@@ -991,7 +1011,7 @@ function fixInstruction(v, keyword) {
       const 모자란 = v.targetChars - v.chars;
       todo.push(
         `글자수: 지금 ${v.chars.toLocaleString()}자 → ${v.targetChars.toLocaleString()}자 이상. ` +
-          `약 ${모자란.toLocaleString()}자가 부족하다 — 짧은 문장으로 ${Math.ceil((모자란 * 1.15) / 평균문장길이())}문장쯤 더 써야 찬다. ` +
+          `약 ${모자란.toLocaleString()}자가 부족하다 — 짧은 문장으로 ${Math.ceil((모자란 * 넉넉히()) / 평균문장길이())}문장쯤 더 써야 찬다. ` +
           `소제목 1~2개를 더 만들어 관리 과정·시간·고객이 흔히 하는 실수 같은 새 내용을 채워라(금액은 쓰지 않는다). ` +
           `기존 문장을 늘려 쓰지 말고 새 내용을 더해라 — 문장을 길게 늘이면 문장 길이에서 다시 걸린다.`
       );
@@ -1055,13 +1075,10 @@ async function consumeQuota(ctx) {
   const mk = monthKey();
   const used = p.usage_month === mk ? p.usage_count : 0;
   // 한도를 꺼 둬도 세기는 한다 — 관리자 화면의 '누가 몇 번 썼나'가 이 숫자다(config.초안월한도).
-  if (!CONFIG.초안월한도?.켜짐) {
-    await supaAdmin.from("profiles").update({ usage_month: mk, usage_count: used + 1 }).eq("id", p.id);
-    return { unlimited: true, 셌음: true };   // 셌으니 실패하면 돌려준다 — 안 그러면 실패도 쓴 횟수가 된다
-  }
-  if (used >= p.monthly_limit) return null; // 초과
+  const 막음 = !!CONFIG.초안월한도?.켜짐;
+  if (막음 && used >= p.monthly_limit) return null; // 초과
   await supaAdmin.from("profiles").update({ usage_month: mk, usage_count: used + 1 }).eq("id", p.id);
-  return { remaining: p.monthly_limit - (used + 1), limit: p.monthly_limit };
+  return 막음 ? { remaining: p.monthly_limit - (used + 1), limit: p.monthly_limit } : { 셌음: true };   // 셌으니 실패하면 돌려준다
 }
 
 // 글이 한 줄도 안 나왔으면 월 한도를 도로 돌려준다.
@@ -1091,7 +1108,7 @@ async function handleGenerate(res, body, ctx) {
     const keyword = (body.keyword || "").trim();
     if (!keyword) return fail("키워드를 입력하세요");
     // 키 유무는 오류가 아니라 사전 조건 — 실패를 기다리지 않고 여기서 걸러낸다
-    const engine = engineName();
+    const { engine, client } = await 엔진준비();
     if (!engine)
       return fail(
         adminHint(
@@ -1104,15 +1121,11 @@ async function handleGenerate(res, body, ctx) {
     const quota = await consumeQuota(ctx);
     if (quota === null)
       return fail(`이번 달 초안 생성 한도(${ctx.profile.monthly_limit}회)를 모두 사용했습니다. 다음 달에 초기화됩니다.`);
-    차감함 = !quota.unlimited || !!quota.셌음;
+    차감함 = !quota.unlimited;
     const { ref, 종류 } = 레퍼런스고르기(keyword);
     send({ type: "status", message: 레퍼런스안내(keyword, ref, 종류, "지시") });
 
-    let client = null; // null이면 Gemini 경로
-    if (engine === "claude") {
-      const { default: Anthropic } = await import("@anthropic-ai/sdk");
-      client = new Anthropic();
-    } else {
+    if (!client) {
       // 하루치가 끝난 모델을 빼고 실제로 쓸 모델을 알린다 (막힌 모델 이름을 알리면 헷갈린다)
       const 쓸것 = (await geminiModels()).filter((m) => !소진됨(m));
       send({ type: "status", message: `무료 엔진(Gemini ${쓸것[0] || "재확인 중"})으로 작성합니다` });
@@ -1129,7 +1142,7 @@ async function handleGenerate(res, body, ctx) {
     const 사례 = (body.사례 || "").trim().slice(0, 1000);
     // 원장이 쓴 글 보관함 — 원장 유형에만 본보기로 보여주고, 그때만 베끼기 대조에도 넣는다(안 본 글과 대조할 이유가 없다).
     // 보관함은 여기서 한 번만 읽는다 — check()는 고쳐 쓰기마다 돈다.
-    const 원장글 = 유형정보(글쓴이유형).원장글본보기 ? 원장글보관함(보관함읽기()) : null;
+    const 원장글 = 원장글받기(글쓴이유형);
     const 원장본보기 = 원장글 ? 원장글고르기([원장글], keyword, CONFIG) : [];
     if (원장본보기.length) send({ type: "status", message: `원장이 직접 쓴 글 ${원장본보기.length}편을 말투 본보기로 같이 보여줍니다` });
     const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례, 원장본보기) }];
@@ -1341,17 +1354,13 @@ function readBody(req) {
 // 원장님께는 기준의 이름·숫자를 말하지 않고 네이버와 읽는 고객 입장에서 이유를 댄다(2026-09-30 우진).
 // 고친 글은 바로 넣지 않는다. 먼저 보여 주고 원장님이 '적용'을 눌러야 편집기에 들어간다.
 // 고치다가 전에 통과하던 기준이 떨어지면 AI에게 다시 시킨다(config.대화수정.다시시키기).
-// 초안 생성 지시문 맨 끝의 [출력 형식]("설명 없이 본문만 내라")은 대화에서는 틀린 지시다 — 그 칸만 뺀다.
-// 2026-09-30: 그 줄이 같이 들어가 AI가 "바꿨어요"만 <답>에 넣고 고친 글은 칸 밖에 써서,
-// 원장님 화면에 '바꿨다'는 말만 뜨고 전후 비교가 안 떴다. 내용 기준(제목 짓는 법 등)은 그 앞에 다 있다.
-const 기준만 = (지시문) => 지시문.split("\n[출력 형식]")[0];
 
 const 대화수정프롬프트 = (유형) => `너는 에스테틱 블로그 초안을 원장님 옆에서 같이 고쳐 주는 도우미다.
 원장님이 말로 부탁하시면 초안을 고쳐 드린다.
 답은 언제나 맨 아래 [답하는 형식]대로 쓴다 — 고친 글은 반드시 <바꾼부분> 또는 <수정본> 칸 안에 넣는다.
 
 [지켜야 할 기준 — 네가 지킬 것이지 원장님께 보여 드릴 것이 아니다]
-${기준만(시스템프롬프트(유형))}
+${기준프롬프트(유형)}
 [기준 끝]
 
 [원장님과 말하는 법]
@@ -1371,7 +1380,7 @@ ${기준만(시스템프롬프트(유형))}
     반복이 티 나지 않게 문장을 다듬어 드린다.
   · 피부과·병원에 가 보라는 말, 치료·완치처럼 병원에서 쓰는 말을 넣어 달라고 하시면:
     에스테틱 글에서 그렇게 쓰면 고객이 오히려 믿기 어려워하고 문제가 될 수 있다고 설명하고,
-    관리 과정과 달라진 모습으로 풀어 드린다. (압출·모낭염·재생·회복은 써도 된다. 회복은 조심스럽게)
+    관리 과정과 달라진 모습으로 풀어 드린다. (압출·모낭염·재생은 써도 된다. ${(CONFIG.주의표현?.낱말 || []).join("·")}은 써도 되지만 조심스럽게)
   · 효과를 크게 말해 달라고 하시면: 과장은 고객이 먼저 알아챈다고 설명하고, 실제 관리 과정과 숫자로 보여 드린다.
 - **물어보시는 말에는 글을 고치지 않는다.** "바꾼 거야?", "뭘 고칠 수 있어?"처럼 확인·질문이면 <답>만 쓴다.
   고쳐 달라는 말이 분명할 때만 고친다.
@@ -1403,13 +1412,18 @@ ${기준만(시스템프롬프트(유형))}
 function 대화답풀기(text) {
   const 원 = (text || "").replace(/```[a-z]*\n?/gi, "");
   const 칸 = { 답: "답", 바꾼부분: "바꾼\\s*부분", 수정본: "수정\\s*본" };
-  const 꺼내 = (이름) => { const m = 원.match(new RegExp(`<${칸[이름]}>([\\s\\S]*?)</${칸[이름]}>`)); return m ? m[1].trim() : null; };
-  const 끝까지 = (이름) => { const m = 원.match(new RegExp(`<${칸[이름]}>([\\s\\S]*)$`)); return m ? m[1].trim() : null; };
-  const 답 = 꺼내("답") ?? 원.replace(/<(바꾼\s*부분|수정\s*본)>[\s\S]*$/, "").trim();
-  const 바꾼부분 = 꺼내("바꾼부분") ?? 끝까지("바꾼부분");
+  // 닫힘없어도: 끝에서 안 닫힌 칸도 받는다(끝까지가 그 칸)
+  const 꺼내 = (이름, 닫힘없어도 = false) => {
+    const m = 원.match(new RegExp(`<${칸[이름]}>([\\s\\S]*?)(?:</${칸[이름]}>${닫힘없어도 ? "|$" : ""})`));
+    return m ? m[1].trim() : null;
+  };
+  const 글칸 = new RegExp(`<(${칸.바꾼부분}|${칸.수정본})>[\\s\\S]*$`);
+  const 답 = 꺼내("답") ?? 원.replace(글칸, "").trim();
+  const 바꾼부분 = 꺼내("바꾼부분", true);
   const 수정본 = 꺼내("수정본");
-  const 답끝 = 원.search(/<\/답>/);
-  const 남은글 = 바꾼부분 == null && 수정본 == null && 답끝 >= 0 ? 원.slice(답끝 + 4).replace(/<\/?[^>\n]{1,12}>/g, "").trim() || null : null;
+  const 답끝 = 원.indexOf("</답>");
+  const 남은글 = 바꾼부분 == null && 수정본 == null && 답끝 >= 0
+    ? 원.slice(답끝 + "</답>".length).replace(/<\/?[^>\n]{1,12}>/g, "").trim() || null : null;
   return { 답, 바꾼부분, 수정본, 남은글 };
 }
 
@@ -1436,13 +1450,14 @@ async function 대화판정준비(원문, keyword, ctx) {
   const shop = await 샵읽기(ctx);
   const 유형 = 유형정규화(적힌유형(원문) || shop.유형);
   const { ref } = 레퍼런스고르기(keyword);
-  const 원장글 = 유형정보(유형).원장글본보기 ? 원장글보관함(보관함읽기()) : null;
+  const 원장글 = 원장글받기(유형);
   const 목표 = 적힌목표(원문) || 0;
-  const 재기 = (글) => 평가(초안본문(글), { keyword, config: CONFIG, 목표글자수: 목표, ref, 말투: "지시", 원장값: shop, 유형, 원장글 });
+  const 재기 = (글) => validateDraft(초안본문(글), keyword, 목표, "", ref, shop, 유형, 원장글);
   return { 유형, 재기 };
 }
 
 const 대화최대 = () => CONFIG.대화수정?.초안당최대 ?? 10;
+const 남은횟수 = (쓴) => Math.max(0, 대화최대() - 쓴);
 
 // 표가 아직 없으면(우진이 SQL을 안 돌렸으면) 오류를 던진다 — 부르는 쪽이 "곧 열립니다"로 바꾼다.
 async function 대화센수(userId, name) {
@@ -1464,12 +1479,13 @@ async function 지난대화(userId, name) {
 async function 대화보기(ctx, 주인, name, readOnly) {
   if (!ctx.authOn) return { 준비됨: true, 대화: [], 남은: null, 최대: null };
   const { data, error } = await supaAdmin.from("draft_chats").select("id, role, content, selection, applied, created_at")
-    .eq("user_id", 주인).eq("draft_name", name).order("created_at").limit(60);
+    .eq("user_id", 주인).eq("draft_name", name).order("created_at", { ascending: false }).limit(60);
   if (error) return { 준비됨: false, 대화: [], 남은: null, 최대: null };
-  const 쓴 = data.filter((r) => r.role === "user").length;
+  data.reverse();   // 최근 60개를 시간순으로 — 오래된 60개만 보이면 새 대화가 화면에서 사라진다
+  const 쓴 = data.filter((r) => r.role === "user").length;   // 원장은 10번(20줄)까지라 60줄 안에 다 든다
   // 관리자가 자기 초안을 볼 때는 무제한. 남의 초안을 열람할 때는 그 원장의 남은 횟수를 보여 준다.
   const 무제한 = ctx.unlimited && !readOnly;
-  return { 준비됨: true, 대화: data, 남은: 무제한 ? null : Math.max(0, 대화최대() - 쓴), 최대: 무제한 ? null : 대화최대() };
+  return { 준비됨: true, 대화: data, 남은: 무제한 ? null : 남은횟수(쓴), 최대: 무제한 ? null : 대화최대() };
 }
 
 // AI 답을 원장님께 보이기 전에 다듬는다 — 지시문으로 시켜도 모델이 안 지키는 두 가지를 확실하게.
@@ -1500,14 +1516,11 @@ async function handleChat(res, body, ctx, name) {
       return json(res, 429, { error: `이 초안의 대화 수정 ${대화최대()}번을 모두 쓰셨어요. 나머지는 편집기에서 직접 고쳐 주세요.`, 남은: 0 });
   }
 
-  const engine = engineName();
+  const { engine, client } = await 엔진준비();
   if (!engine) return json(res, 503, { error: "AI 연결이 아직 설정되지 않았습니다" });
-  let client = null;
-  if (engine === "claude") { const { default: Anthropic } = await import("@anthropic-ai/sdk"); client = new Anthropic(); }
 
-  const { 유형, 재기 } = await 대화판정준비(원문, keyword, ctx);
+  const [{ 유형, 재기 }, 지난] = await Promise.all([대화판정준비(원문, keyword, ctx), 기록함 ? 지난대화(ctx.userId, name) : []]);
   const 전 = 재기(원문);
-  const 지난 = 기록함 ? await 지난대화(ctx.userId, name) : [];
   const 요청 = [
     지난.length ? "(이미 인사를 나눴다 — '원장님' 호칭 없이 바로 본론을 말한다)" : "(이번이 대화의 첫 답이다 — 처음에 한 번만 '원장님'이라고 불러도 된다)",
     "",
@@ -1518,9 +1531,23 @@ async function handleChat(res, body, ctx, name) {
   const messages = [...지난, { role: "user", content: 요청 }];
   const 시스템 = 대화수정프롬프트(유형);
 
-  // "바꿨어요"라고 말했는데 고친 글이 칸에 없으면 — 형식만 한 번 더 재촉한다(글을 추측해서 넣지 않는다)
-  const 바꿨다고함 = (말) => /(바꿨|바꾸었|고쳤|다듬었|수정했|넣었|줄였|늘렸|옮겼|지웠|뺐|풀었)/.test(말 || "");
-  let 답 = "", 새글 = null, 깨진 = [], 재촉함 = false, 못받음 = false;
+  // AI에게 한 번 더 시키는 두 가지 말. 원장님은 이 말을 못 보신다 — <답>에 쓰지 말라고 같이 이른다.
+  const 형식재촉 = () => [
+    "고친 글이 칸 안에 없다. 방금 한 답을 형식대로 다시 써라:",
+    선택 ? "<답>원장님께 드릴 말</답> 다음에 <바꾼부분>드래그한 부분 대신 들어갈 글</바꾼부분>"
+      : "<답>원장님께 드릴 말</답> 다음에 <수정본>고친 본문 전체(제목: 줄부터)</수정본>",
+    "칸은 반드시 닫는다. <답>에는 이 얘기를 하지 마라.",
+  ].join("\n");
+  const 깨짐알림 = (후, 깨진) => [
+    "방금 고친 글에서 원래 괜찮던 곳이 어긋났다. 원장님 부탁은 그대로 살리면서 아래도 맞춰서,",
+    "같은 형식(<답>, 그리고 <바꾼부분> 또는 <수정본>)으로 다시 써라.",
+    "<답>에는 이 얘기를 하지 마라 — 원장님은 처음 부탁에 대한 답만 보신다.",
+    ...깨진.map((이름) => `- ${후.걸린문구[이름]}`),
+  ].join("\n");
+
+  // 재촉은 고친 글을 칸 밖(</답> 뒤)에 써 버렸을 때만, 한 번만 한다 — 글을 추측해서 넣지 않는다.
+  // 예전엔 "바꿨/고쳤" 같은 말만 보고도 재촉했는데, "안 바꿨어요"에도 걸려 쓸데없이 AI를 한 번 더 불렀다.
+  let 답 = "", 새글 = null, 깨진 = [], 재촉함 = false;
   try {
     for (let 차례 = 0; 차례 <= (CONFIG.대화수정?.다시시키기 ?? 2); 차례++) {
       const 원답 = await streamOnce(client, messages, () => {}, 유형, {}, 시스템, 1);   // 대화 답은 짧아도 된다
@@ -1528,28 +1555,19 @@ async function handleChat(res, body, ctx, name) {
       답 = 풀림.답 || 답;   // 다시 시킨 차례에 답이 비면 처음 답을 쓴다
       새글 = 풀림.바꾼부분 != null && 선택 ? 끼워넣기(원문, 선택, 풀림.바꾼부분)
         : 풀림.수정본 != null ? 본문갈기(원문, 풀림.수정본) : null;
-      if (!새글 && !재촉함 && (풀림.남은글 || 바꿨다고함(풀림.답))) {
-        재촉함 = true;
-        messages.push({ role: "assistant", content: 원답 });
-        messages.push({ role: "user", content: [
-          "고친 글이 칸 안에 없다. 방금 한 답을 형식대로 다시 써라:",
-          선택 ? "<답>원장님께 드릴 말</답> 다음에 <바꾼부분>드래그한 부분 대신 들어갈 글</바꾼부분>"
-            : "<답>원장님께 드릴 말</답> 다음에 <수정본>고친 본문 전체(제목: 줄부터)</수정본>",
-          "칸은 반드시 닫는다. <답>에는 이 얘기를 하지 마라.",
-        ].join("\n") });
-        continue;
+      let 다시말 = null;
+      if (!새글 && 풀림.남은글 && !재촉함) { 재촉함 = true; 다시말 = 형식재촉(); }
+      else if (!새글 || 새글 === 원문) { 새글 = null; 깨진 = []; break; }
+      else {
+        const 후 = 재기(새글);
+        const 이번 = 깨진기준(전, 후);
+        // 다시 시켜도 같은 곳이 그대로 어긋나면 더 불러도 소용없다 — 돈만 든다
+        const 그대로 = 이번.length && 이번.length === 깨진.length && 이번.every((이름) => 깨진.includes(이름));
+        깨진 = 이번;
+        if (!깨진.length || 그대로) break;
+        다시말 = 깨짐알림(후, 깨진);
       }
-      if (!새글 || 새글 === 원문) { 못받음 = !새글 && 바꿨다고함(답); 새글 = null; 깨진 = []; break; }
-      const 후 = 재기(새글);
-      깨진 = 깨진기준(전, 후);
-      if (!깨진.length) break;
-      messages.push({ role: "assistant", content: 원답 });
-      messages.push({ role: "user", content: [
-        "방금 고친 글에서 원래 괜찮던 곳이 어긋났다. 원장님 부탁은 그대로 살리면서 아래도 맞춰서,",
-        "같은 형식(<답>, 그리고 <바꾼부분> 또는 <수정본>)으로 다시 써라.",
-        "<답>에는 이 얘기를 하지 마라 — 원장님은 처음 부탁에 대한 답만 보신다.",
-        ...후.걸린기준.map((이름, i) => (깨진.includes(이름) ? `- ${후.issues[i]}` : null)).filter(Boolean),
-      ].join("\n") });
+      messages.push({ role: "assistant", content: 원답 }, { role: "user", content: 다시말 });
     }
   } catch (e) {
     console.log(`[대화 수정 실패] ${e?.message || e}`);
@@ -1558,7 +1576,7 @@ async function handleChat(res, body, ctx, name) {
   // 끝까지 다른 곳을 어긋나게 하면 고친 글을 내놓지 않는다 — 원장님이 모르고 적용하면 글이 나빠진다.
   답 = 답다듬기(답, !지난.length);
   // 재촉해도 고친 글을 못 받았으면 "바꿨어요"를 그대로 두지 않는다 — 원장님은 바뀐 줄 안다
-  if (못받음) 답 = `${답}\n\n(고친 글을 화면에 넣지 못했어요. 같은 부탁을 한 번만 더 해 주세요.)`;
+  if (재촉함 && !새글 && !깨진.length) 답 = `${답}\n\n(고친 글을 화면에 넣지 못했어요. 같은 부탁을 한 번만 더 해 주세요.)`;
   const 막힘 = 깨진.length > 0;
   if (막힘) {
     새글 = null;
@@ -1575,7 +1593,7 @@ async function handleChat(res, body, ctx, name) {
   }
   return json(res, 200, {
     답, 새글, 대화id, 막힘,
-    남은: ctx.unlimited || !기록함 ? null : Math.max(0, 대화최대() - 쓴횟수 - 1),
+    남은: ctx.unlimited || !기록함 ? null : 남은횟수(쓴횟수 + 1),
   });
 }
 
@@ -1597,6 +1615,7 @@ const server = http.createServer(async (req, res) => {
       const p2 = ctx.profile;
       const mk = monthKey();
       const used = p2 && p2.usage_month === mk ? p2.usage_count : 0;
+      const 한도없음 = ctx.unlimited || !CONFIG.초안월한도?.켜짐;
       return json(res, 200, {
         id: ctx.userId,
         authOn: ctx.authOn,
@@ -1606,10 +1625,9 @@ const server = http.createServer(async (req, res) => {
         role: ctx.isAdmin ? "admin" : p2?.role || "admin",
         status: ctx.approved ? "approved" : p2?.status || "pending",
         // 한도를 꺼 두면 화면에 '남은 생성'을 띄우지 않는다(config.초안월한도).
-        limit: ctx.unlimited || !CONFIG.초안월한도?.켜짐 ? null : p2?.monthly_limit ?? null,
+        limit: 한도없음 ? null : p2?.monthly_limit ?? null,
         used: ctx.unlimited ? null : used,
-        remaining: ctx.unlimited || !CONFIG.초안월한도?.켜짐 ? null : Math.max(0, (p2?.monthly_limit ?? 0) - used),
-        대화최대: ctx.unlimited ? null : CONFIG.대화수정?.초안당최대 ?? null,
+        remaining: 한도없음 ? null : Math.max(0, (p2?.monthly_limit ?? 0) - used),
       });
     }
 
@@ -1798,4 +1816,4 @@ if (process.argv[1] && NFC(path.resolve(process.argv[1])) === NFC(fileURLToPath(
   server.listen(PORT, () => console.log(`블로그봇 대시보드: http://localhost:${PORT}`));
 
 // 테스트에서만 쓴다 — 가짜 구글 서버를 세워 놓고 한도·스트리밍 동작을 확인하려고
-export const __test = { streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기, 답다듬기 };
+export const __test = { streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, 기준프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기, 답다듬기 };

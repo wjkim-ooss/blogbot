@@ -423,7 +423,9 @@ function 선택읽기() {
   const ed = $("#editor");
   const start = ed.selectionStart, end = ed.selectionEnd;
   const text = ed.value.slice(start, end);
-  선택 = end > start && text.trim() ? { start, end, text } : null;
+  const 새선택 = end > start && text.trim() ? { start, end, text } : null;
+  if (!새선택 && !선택) return;   // 글자 칠 때마다(keyup) 화면을 다시 그리지 않는다
+  선택 = 새선택;
   선택그리기();
 }
 function 선택그리기() {
@@ -456,8 +458,8 @@ function 기다림시작() {
   clearInterval(기다림타이머);
   기다림타이머 = setInterval(() => {
     const el = document.querySelector(".chat-wait");
-    if (!el) return clearInterval(기다림타이머);
-    i = Math.min(i + 1, 기다림말.length - 1);   // 마지막 말("거의 다 됐어요")에서 멈춘다
+    i += 1;
+    if (!el || i >= 기다림말.length) return clearInterval(기다림타이머);   // 마지막 말("거의 다 됐어요")에서 멈춘다
     const 글 = el.querySelector(".chat-wtext");
     글.style.opacity = 0;
     setTimeout(() => { el.querySelector(".chat-emo").textContent = 기다림말[i][0]; 글.textContent = 기다림말[i][1]; 글.style.opacity = 1; }, 300);

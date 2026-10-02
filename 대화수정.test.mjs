@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { __test } from "./server.mjs";
 import { 평가, 깨진기준, 초안본문 } from "./web/rules.js";
 
-const { 대화답풀기, 끼워넣기, 본문갈기, 대화수정프롬프트, 시스템프롬프트 } = __test;
+const { 대화답풀기, 끼워넣기, 본문갈기, 대화수정프롬프트, 시스템프롬프트, 기준프롬프트 } = __test;
 const CONFIG = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8"));
 
 // ---------- AI 답 꺼내기 ----------
@@ -92,7 +92,8 @@ test("걸린기준과 issues 는 같은 순서로 짝을 이룬다 — 다시 �
 // ---------- 대화용 지시문 ----------
 test("대화용 지시문은 초안 생성과 같은 기준을 품는다 — 규칙을 두 벌로 적지 않는다", () => {
   for (const 유형 of ["원장", "정보"]) {
-    const 기준 = 시스템프롬프트(유형).split("\n[출력 형식]")[0];
+    const 기준 = 기준프롬프트(유형);
+    assert.ok(시스템프롬프트(유형).startsWith(기준), "초안 생성은 같은 기준 뒤에 출력 형식만 붙인다");
     assert.ok(기준.length > 5000, "기준이 통째로 잘려 나가면 안 된다");
     assert.ok(대화수정프롬프트(유형).includes(기준), `${유형}: 기준이 빠졌다`);
   }

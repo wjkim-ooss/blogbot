@@ -1026,8 +1026,8 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const issues = [];
   // 무엇에 걸렸는지 이름으로도 남긴다. 문구에는 숫자가 섞여 매번 달라지니, 고치기 전·후를
   // 견줄 때(대화 수정이 다른 기준을 깨뜨렸나)는 이 이름으로 본다 — 이름은 문구 함수 이름 그대로다.
-  const 걸린기준 = [];
-  const 걸림 = (이름) => { issues.push(말[이름](v)); 걸린기준.push(이름); };
+  const 걸린기준 = [], 걸린문구 = {};
+  const 걸림 = (이름) => { const 글 = 말[이름](v); issues.push(글); 걸린기준.push(이름); 걸린문구[이름] = 글; };
   if (제목 && keyword && !titleHasKw) 걸림("제목키워드");
   if (chars < 목표) 걸림("글자수");
   if (kwLack) 걸림("키워드부족");   // 부족은 불합격 — 안 잡히면 글을 쓴 보람이 없다
@@ -1103,6 +1103,6 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
     // 세 갈래로 나눠 한 곳에서 낸다 — 부르는 쪽이 저마다 해석하면 그게 규칙 두 벌이다.
     판정: issues.length ? "불합격" : 꺼진검사.length ? "부분통과" : "통과",
     주의낱말,
-    issues, advice, 걸린기준, pass: issues.length === 0,
+    issues, advice, 걸린기준, 걸린문구, pass: issues.length === 0,
   };
 }

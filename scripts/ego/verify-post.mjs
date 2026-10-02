@@ -112,7 +112,7 @@ for (const [i, url] of urls.entries()) {
 
     if (isRateLimited(body)) {
       run.note({ t: "rate-limited", url });
-      await run.save({ checked: results.length, failed: results.filter((r) => r.status !== "pass").length, 중단: true });
+      await run.save({ checked: results.length, failed: results.filter((r) => r.status === "fail").length, 중단: true });
       await finishSpace(task, { projectDir: PROJECT, flow: "verify" });
       report({ status: "rate-limited", message: "네이버가 접근을 제한했습니다. 중단합니다.", results });
       process.exit(0);
