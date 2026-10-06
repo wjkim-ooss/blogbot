@@ -1655,10 +1655,13 @@ const server = http.createServer(async (req, res) => {
         // 누가 몇 번 썼는지 한눈에 — 초안을 하나씩 열어보지 않아도 되게.
         // 본문은 가져오지 않는다(목록에 필요 없고 양이 크다). 관리자만 오는 경로다.
         // 서로 무관한 조회라 함께 보낸다.
-        const [{ data }, { data: rows }] = await Promise.all([
+        // 가입할 때 적은 에스테틱 이름·성함은 로그인 계정(user_metadata)에 있다 — 승인할 때 누구인지 알아보게.
+        const [{ data }, { data: rows }, { data: 계정들 }] = await Promise.all([
           supaAdmin.from("profiles").select("*").order("created_at", { ascending: false }),
           supaAdmin.from("drafts").select("user_id,updated_at"),
+          supaAdmin.auth.admin.listUsers({ perPage: 1000 }),
         ]);
+        const 가입정보 = new Map((계정들?.users || []).map((a) => [a.id, a.user_metadata || {}]));
         const 통계 = new Map();
         for (const r of rows || []) {
           const s = 통계.get(r.user_id) || { count: 0, last: null };
@@ -1676,6 +1679,8 @@ const server = http.createServer(async (req, res) => {
             const 칸 = 유형항목(유형);
             return {
               ...u,
+              샵이름: String(가입정보.get(u.id)?.샵이름 || "").slice(0, 40),
+              이름: String(가입정보.get(u.id)?.이름 || "").slice(0, 20),
               draftCount: 통계.get(u.id)?.count || 0,
               lastDraftAt: 통계.get(u.id)?.last || null,
               샵: { 유형, 채움: 칸.filter((x) => shop?.[x.key]).length, 전체: 칸.length, 확인일: shop?.확인일 || null },

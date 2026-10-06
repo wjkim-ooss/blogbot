@@ -29,6 +29,11 @@
       <p class="muted">에스테틱 원장 전용 · 로그인 후 관리자 승인이 필요합니다</p>
       <input id="auth-email" type="email" placeholder="이메일" autocomplete="username" />
       <input id="auth-pw" type="password" placeholder="비밀번호 (6자 이상)" autocomplete="current-password" />
+      <!-- 회원가입 때만 — 관리자가 승인할 때 이메일만으로는 누구인지 모른다 -->
+      <div id="signup-extra" class="hidden">
+        <input id="auth-shop" type="text" placeholder="에스테틱 이름 (예: OO에스테틱 강남점)" maxlength="40" autocomplete="organization" />
+        <input id="auth-name" type="text" placeholder="원장님 성함" maxlength="20" autocomplete="name" />
+      </div>
       <div id="auth-msg" class="auth-msg"></div>
       <div class="auth-actions">
         <button id="login-btn" class="primary">로그인</button>
@@ -115,21 +120,18 @@
           <input id="draft-keyword" placeholder="검증용 키워드" />
           <button id="save-btn">💾 저장</button>
           <button id="copy-btn">📋 본문 복사 (네이버용)</button>
-          <!-- 편집기가 길어 드래그한 뒤 대화창까지 내려가기 멀다 — 드래그하면 바로가기가 뜬다 -->
+          <!-- 편집기가 길어 아래쪽을 드래그하면 대화창이 화면 밖에 있다 — 드래그하면 바로가기가 뜬다 -->
           <button id="chat-jump" class="primary hidden">💬 드래그한 부분 AI에게 부탁하기</button>
           <span id="editor-msg" class="muted"></span>
         </div>
-        <div class="editor-split">
-          <textarea id="editor" placeholder="왼쪽에서 초안을 선택하거나 새로 생성하세요" spellcheck="false"></textarea>
-          <aside id="validation" class="card"></aside>
-        </div>
-        <!-- 대화 수정: 원장님이 말로 부탁하면 AI가 고친다. 고친 글은 먼저 보여 주고 '적용'을 눌러야 들어간다 -->
+        <!-- 대화 수정: 원장님이 말로 부탁하면 AI가 고친다. 고친 글은 먼저 보여 주고 '적용'을 눌러야 들어간다.
+             편집기 위에 둔다 — 편집기(560px) 밑에 있으면 잘 안 보였다 (2026-10-06 우진) -->
         <div id="chat-box" class="card chat-box hidden">
           <div class="chat-head">
-            <b>💬 AI에게 고쳐 달라고 하기</b>
+            <b>💬 AI에게 말로 고쳐 달라고 하세요</b>
             <span id="chat-left" class="muted"></span>
           </div>
-          <p class="muted chat-guide">고치고 싶은 부분을 <b>위 편집기에서 마우스로 드래그</b>한 뒤, 어떻게 바꿀지 말씀해 주세요.
+          <p class="muted chat-guide">고치고 싶은 부분을 <b>아래 편집기에서 마우스로 드래그</b>한 뒤, 어떻게 바꿀지 말씀해 주세요.
             드래그하지 않고 말씀하시면 글 전체에서 고쳐 드려요.<br>예) "이 문단 좀 더 부드럽게", "여기에 관리 과정을 한 줄 더 넣어줘"</p>
           <div id="chat-log" class="chat-log"></div>
           <div id="chat-proposal" class="chat-proposal hidden"></div>
@@ -138,6 +140,10 @@
             <textarea id="chat-msg" rows="2" placeholder="어떻게 바꿀지 말씀해 주세요"></textarea>
             <button id="chat-send" class="primary">보내기</button>
           </div>
+        </div>
+        <div class="editor-split">
+          <textarea id="editor" placeholder="왼쪽에서 초안을 선택하거나 새로 생성하세요" spellcheck="false"></textarea>
+          <aside id="validation" class="card"></aside>
         </div>
       </div>
     </div>

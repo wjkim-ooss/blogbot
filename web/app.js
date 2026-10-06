@@ -439,7 +439,7 @@ function 선택그리기() {
 }
 ["mouseup", "keyup", "select"].forEach((ev) => $("#editor").addEventListener(ev, 선택읽기));
 $("#chat-jump").addEventListener("click", () => {
-  $("#chat-box").scrollIntoView({ behavior: "smooth", block: "end" });
+  $("#chat-box").scrollIntoView({ behavior: "smooth", block: "nearest" });
   setTimeout(() => $("#chat-msg").focus({ preventScroll: true }), 400);
 });
 
@@ -801,7 +801,18 @@ async function authAction(mode) {
   if (!email || pw.length < 6) return (msg.textContent = "이메일과 6자 이상 비밀번호를 입력하세요");
   try {
     if (mode === "signup") {
-      const { error } = await supa.auth.signUp({ email, password: pw });
+      // 가입 정보는 처음 누를 때 칸을 펼쳐 받는다 — 로그인하는 사람에게는 필요 없는 칸이라
+      const 칸 = $("#signup-extra");
+      if (칸.classList.contains("hidden")) {
+        칸.classList.remove("hidden");
+        $("#auth-shop").focus();
+        msg.style.color = "#3b4bd8";
+        return (msg.textContent = "에스테틱 이름과 성함을 적고 회원가입을 한 번 더 눌러 주세요");
+      }
+      const 샵이름 = $("#auth-shop").value.trim(), 이름 = $("#auth-name").value.trim();
+      if (!샵이름 || !이름) return (msg.textContent = "에스테틱 이름과 원장님 성함을 적어 주세요");
+      // 로그인 계정 정보(user_metadata)에 담는다 — 표를 새로 만들지 않아도 관리자 목록에서 읽힌다
+      const { error } = await supa.auth.signUp({ email, password: pw, options: { data: { 샵이름, 이름 } } });
       if (error) throw error;
       const { data } = await supa.auth.getSession();
       if (!data.session) {
@@ -885,7 +896,8 @@ async function loadAdminUsers() {
   box.innerHTML = users
     .map(
       (u) => `<div class="admin-user" data-id="${u.id}">
-        <span class="em">${esc(u.email || "(이메일 없음)")}</span>
+        <span class="who">${u.샵이름 || u.이름 ? `<span><b>${esc(u.샵이름 || "(에스테틱 이름 없음)")}</b> · ${esc(u.이름 || "(성함 없음)")}</span>` : '<span class="muted">이름 안 적음 (예전 가입)</span>'}
+          <span class="em">${esc(u.email || "(이메일 없음)")}</span></span>
         <span class="st ${u.status}">${statusLabel(u.status)}</span>
         <span class="drafts ${u.draftCount ? "" : "none"}" title="${u.lastDraftAt ? "마지막 작성 " + 날짜(u.lastDraftAt) : "아직 작성한 초안이 없습니다"}">📝 ${u.draftCount}개${u.lastDraftAt ? ` · ${날짜(u.lastDraftAt)}` : ""}</span>
         <span class="shopst ${u.샵?.채움 ? (u.샵.채움 === u.샵.전체 ? "full" : "part") : "none"}"
@@ -966,6 +978,7 @@ $("#logout-btn").addEventListener("click", doLogout);
 $("#pending-logout").addEventListener("click", doLogout);
 $("#pending-refresh").addEventListener("click", gateByStatus);
 $("#auth-pw").addEventListener("keydown", (e) => { if (e.key === "Enter") authAction("login"); });
+$("#auth-name").addEventListener("keydown", (e) => { if (e.key === "Enter") authAction("signup"); });
 
 // ---------- 초기화 ----------
 (async () => {

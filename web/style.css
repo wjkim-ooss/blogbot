@@ -161,7 +161,8 @@ header { justify-content: flex-start; }
 
 /* 회원 관리 */
 .admin-user { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #eef0f4; flex-wrap: wrap; }
-.admin-user .em { font-weight: 700; min-width: 200px; }
+.admin-user .who { min-width: 220px; display: flex; flex-direction: column; gap: 2px; }
+.admin-user .who .em { font-weight: 400; font-size: 12px; color: #6b7280; }
 .admin-user .st { font-size: 12px; padding: 2px 8px; border-radius: 6px; }
 .st.pending { background: #fdeecb; color: #a5691a; }
 .st.approved { background: #e7f7ea; color: #1c8c3c; }
@@ -217,7 +218,7 @@ header { justify-content: flex-start; }
 
   .stat { flex: 1 1 calc(50% - 6px); min-width: 0; padding: 10px 12px; }
   .stat .num { font-size: 18px; }
-  .admin-user .em { min-width: 0; width: 100%; word-break: break-all; }
+  .admin-user .who { min-width: 0; width: 100%; word-break: break-all; }
   .detail { overflow-x: auto; } /* 레퍼런스 표가 넘칠 때 화면 대신 표만 스크롤 */
   .auth-card { width: 100%; }
   #draft-owner { width: 100%; }
@@ -251,10 +252,10 @@ header { justify-content: flex-start; }
 .admin-user .del:hover { background: #f8e8e5; }
 
 /* 대화 수정 */
-.chat-box { margin-top: 14px; }
+.chat-box { margin-bottom: 14px; border: 2px solid #c9d3ff; background: #f8f9ff; }   /* 편집기 위에서 눈에 띄게 */
 .chat-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 4px; }
 .chat-guide { font-size: 12px; line-height: 1.6; margin: 4px 0 10px; }
-.chat-log { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.chat-log { max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
 .chat-log:empty { display: none; }
 .chat-m { padding: 8px 11px; border-radius: 10px; font-size: 13px; line-height: 1.6; max-width: 85%; word-break: keep-all; }
 .chat-m.user { align-self: flex-end; background: #eef3ff; }
