@@ -42,12 +42,25 @@ const openTabFromHash = () => showTab(location.hash.replace("#", "") || DEFAULT_
 window.addEventListener("hashchange", openTabFromHash);
 
 // ---------- 공용 ----------
+// 로그인 열쇠(액세스 토큰)는 1시간이면 만료된다. 로그인할 때 한 번 받아 두고 계속 쓰면, 창을 오래 켜 둔 원장님은
+// 모든 요청이 "로그인이 필요합니다"로 막힌다 — 2026-10-07 우진: 초안 생성이 "생성 준비 중"에서 3분째 멈췄다.
+// 요청마다 Supabase에 지금 열쇠를 묻는다. 만료됐으면 Supabase가 알아서 새로 받아 온다.
+async function 지금열쇠() {
+  if (!supa) return authToken;
+  try {
+    const { data } = await supa.auth.getSession();
+    if (data.session) authToken = data.session.access_token;
+  } catch { /* 못 물으면 들고 있던 열쇠로 — 서버가 거절하면 그때 알린다 */ }
+  return authToken;
+}
+const 로그인풀림 = "로그인이 풀렸습니다. 새로고침(F5) 한 뒤 다시 로그인해 주세요.";
+
 const api = async (url, opts = {}) => {
   const headers = { ...(opts.headers || {}) };
-  if (authToken) headers["Authorization"] = "Bearer " + authToken;
+  if (await 지금열쇠()) headers["Authorization"] = "Bearer " + authToken;
   const res = await fetch(url, { ...opts, headers });
   const data = await res.json();
-  if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error(res.status === 401 && authToken ? 로그인풀림 : data.error || res.statusText), { status: res.status });
   return data;
 };
 const targetPhotosOf = (ref, 목표글자수) => targetPhotosFor(ref, CONFIG, 목표글자수);
@@ -698,7 +711,7 @@ $("#gen-btn").addEventListener("click", async () => {
   $("#gen-status").textContent = "생성 준비 중...";
   try {
     const genHeaders = { "Content-Type": "application/json" };
-    if (authToken) genHeaders["Authorization"] = "Bearer " + authToken;
+    if (await 지금열쇠()) genHeaders["Authorization"] = "Bearer " + authToken;
     const res = await fetch("/api/generate", {
       method: "POST",
       headers: genHeaders,
@@ -710,6 +723,12 @@ $("#gen-btn").addEventListener("click", async () => {
         사례: $("#gen-case").value.trim(), // 비우면 AI가 사례를 지어내지 않는다
       }),
     });
+    // 거절(로그인 풀림·승인 대기 등)은 흐름이 아니라 JSON 한 덩이로 온다. 예전엔 이걸 흐름으로 읽다가
+    // 아무 소식도 못 받고 "생성 준비 중"에 멈춰 있었다.
+    if (!res.ok) {
+      const 이유 = await res.json().catch(() => ({}));
+      throw new Error(res.status === 401 ? 로그인풀림 : 이유.error || `서버가 거절했습니다 (${res.status})`);
+    }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
