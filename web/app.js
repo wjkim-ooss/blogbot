@@ -204,9 +204,21 @@ async function loadDrafts(selectName) {
   else if (!drafts.length) clearEditor();
 }
 
+// 초안 머리말(--- 위: 키워드·기계 검증·목표글자수·글쓴이유형·제목 후보)은 기계가 읽는 자리라
+// 편집기에는 보이지 않게 따로 들고 있다가 저장·채점·대화 수정 때 다시 붙인다 (2026-10-07 우진: "앞으로 모든 글에 안 뜨게").
+// 파일에서 지우지 않는 이유 — 목표글자수·글쓴이유형이 없으면 그 글을 엉뚱한 기준으로 잰다.
+let 머리말 = "";
+function 편집기에넣기(content = "") {
+  const 끝 = content.indexOf("\n---\n");
+  const 자리 = 끝 >= 0 ? 끝 + 5 + (content.slice(끝 + 5).match(/^\n*/)[0].length) : 0;
+  머리말 = content.slice(0, 자리);
+  $("#editor").value = content.slice(자리);
+}
+const 전체글 = () => 머리말 + $("#editor").value;   // 파일에 들어갈 모양 그대로
+
 function clearEditor() {
   currentDraft = null;
-  $("#editor").value = "";
+  편집기에넣기("");
   $("#draft-keyword").value = "";
   runValidation();
   대화불러오기(null);
@@ -304,7 +316,7 @@ async function openDraft(name, el) {
   if (el) el.classList.add("active");
   const content = await draftContent(name); // 열람 대상·캐시는 draftContent가 처리
   currentDraft = name;
-  $("#editor").value = content;
+  편집기에넣기(content);
   $("#draft-keyword").value = keywordOf(name);
   runValidation();
   대화불러오기(name);
@@ -329,8 +341,8 @@ function evaluateDraft(body, keyword, 지정목표 = 0, 유형 = "") {
 function runValidation() {
   const panel = $("#validation");
   if (!CONFIG) return;
-  const raw = $("#editor").value;
-  if (!raw.trim()) {
+  const raw = 전체글();
+  if (!$("#editor").value.trim()) {
     panel.innerHTML = '<span class="muted">본문을 입력하면 검증 결과가 표시됩니다</span>';
     return;
   }
@@ -545,12 +557,12 @@ function 제안그리기() {
 async function 적용하기() {
   if (!제안) return;
   // 제안을 받은 뒤 편집기를 고쳤으면 그 제안은 옛 글 기준이다 — 덮어쓰면 고친 것이 사라진다
-  if ($("#editor").value !== 제안.원문) {
+  if (전체글() !== 제안.원문) {
     제안 = null; 제안그리기();
     return alert("그사이 글을 고치셔서 이 제안은 맞지 않아요. 다시 부탁해 주세요.");
   }
   const id = 제안.대화id;
-  $("#editor").value = 제안.새글;
+  편집기에넣기(제안.새글);
   제안 = null; 제안그리기();
   선택 = null; 선택그리기();
   runValidation();
@@ -565,8 +577,9 @@ async function 적용하기() {
 async function 보내기() {
   const msg = $("#chat-msg").value.trim();
   if (!msg || !currentDraft || viewingOther() || $("#chat-send").disabled) return;
-  const 원문 = $("#editor").value;
-  const 보낸선택 = 선택;
+  const 원문 = 전체글();
+  // 드래그 자리는 편집기 기준이다 — 서버는 머리말까지 붙은 글에서 그 자리를 찾으므로 머리말 길이만큼 민다
+  const 보낸선택 = 선택 && { ...선택, start: 선택.start + 머리말.length, end: 선택.end + 머리말.length };
   const 보낸초안 = currentDraft;   // 기다리는 동안 다른 초안을 열 수 있다 — 결과는 이 초안 것이다
   제안 = null; 제안그리기();
   $("#chat-send").disabled = true;
@@ -608,7 +621,7 @@ $("#chat-msg").addEventListener("keydown", (e) => {
 $("#save-btn").addEventListener("click", async () => {
   if (viewingOther()) return alert("다른 회원의 초안은 고칠 수 없습니다");
   if (!currentDraft) return alert("열려 있는 초안이 없습니다");
-  const content = $("#editor").value;
+  const content = 전체글();
   await api(`/api/drafts/${encodeURIComponent(currentDraft)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -646,7 +659,7 @@ async function copyText(text) {
 }
 
 $("#copy-btn").addEventListener("click", async () => {
-  const body = draftBody($("#editor").value).replace(/^제목:.*\n+/, "");
+  const body = draftBody(전체글()).replace(/^제목:.*\n+/, "");
   if (await copyText(body)) flash("본문이 복사됐어요. 네이버 에디터에 붙여넣으세요 📋");
   else flash("자동 복사가 막혀 있어요. 편집기에서 직접 복사해 주세요");
 });
