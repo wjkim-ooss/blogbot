@@ -218,6 +218,7 @@ function buildDraftContent(keyword, title, body, v, 후보 = "", 유형 = 기본
     "",
     `제목: ${title}`,
     "",
+    "",   // join 은 마지막 빈 칸을 줄바꿈 하나로만 만든다 — 제목과 본문 사이에 빈 줄을 두려면 둘 필요하다
   ].join("\n");
   return header + body.trim() + "\n";
 }
@@ -1043,6 +1044,57 @@ function fixInstruction(v, keyword) {
     .join("\n");
 }
 
+// 글자수는 '다시 써라'로는 잘 안 찬다 — 글 전체를 다시 쓰게 하면 AI는 늘 비슷한 길이로 돌아온다
+// (고쳐 쓰기 세 번을 돌아도 제자리, 2026-10-07 우진 "글자수가 잘 안 채워진다").
+// 그래서 마지막에 한 번, 쓴 글은 그대로 두고 소제목마다 덧붙일 문단만 받아 서버가 끼워 넣는다.
+// 이미 맞춰 둔 문장을 건드리지 않으니 늘어나기만 하고, 다른 기준이 깨질 자리가 좁다.
+function 덧붙이기지시(parsed, v) {
+  const 소제목들 = parsed.body.split("\n").filter((l) => /^###\s/.test(l)).map((l) => l.replace(/^###\s*/, "").trim());
+  const 모자란 = v.targetChars - v.chars;
+  return [
+    `글이 공백 빼고 ${v.chars.toLocaleString()}자라 ${v.targetChars.toLocaleString()}자에 ${모자란.toLocaleString()}자 모자란다.`,
+    "글은 다시 쓰지 마라. 이미 쓴 문장은 한 글자도 고치지 않는다.",
+    `대신 아래 소제목들 밑에 덧붙일 새 문단만 써라 — 모두 합쳐 짧은 문장 ${Math.ceil((모자란 * 넉넉히()) / 평균문장길이())}개 이상.`,
+    "소제목마다 2~4문장. 그 소제목에 이어지는 새 내용(관리 과정·순서, 고객이 집에서 흔히 하는 실수, 그 자리에서 고객이 하는 말)을 쓴다. 앞 내용을 되풀이하지 마라.",
+    `지켜 온 것은 그대로: 한 문장은 짧게(${CONFIG.문장길이.하한}~${CONFIG.문장길이.상한}자), 금액·지어낸 숫자·지어낸 사례 금지, 키워드는 더 넣지 않는다.`,
+    "",
+    "형식 — 이것 말고 아무것도 쓰지 마라:",
+    "### 소제목(아래 목록 글자 그대로)",
+    "덧붙일 문단",
+    "",
+    "소제목 목록:",
+    ...소제목들.map((t) => `- ${t}`),
+  ].join("\n");
+}
+
+// AI가 준 '### 소제목 + 문단'을 그 소제목 끝(다음 소제목 앞, 마지막이면 해시태그 앞)에 끼운다.
+// 소제목 이름이 조금 달라도(띄어쓰기·문장부호) 맞춰 보고, 못 찾은 덩이는 버린다 — 엉뚱한 자리에 넣느니 안 넣는다.
+function 덧붙여넣기(body, 답) {
+  const 정규 = (t) => String(t).replace(/[^\p{L}\p{N}]/gu, "");
+  const 덧 = new Map();
+  for (const 덩이 of String(답 || "").replace(/```[a-z]*\n?/gi, "").split(/^###\s*/m).slice(1)) {
+    const [첫, ...나머지] = 덩이.split("\n");
+    const 글 = 나머지.join("\n").trim();
+    if (글) 덧.set(정규(첫), 글);
+  }
+  const 줄 = String(body).split("\n");
+  const 머리들 = 줄.map((l, i) => (/^###\s/.test(l) ? i : -1)).filter((i) => i >= 0);
+  let 붙인 = 0;
+  for (let k = 머리들.length - 1; k >= 0; k--) {   // 뒤에서부터 넣어야 앞 소제목의 줄 번호가 안 밀린다
+    const 글 = 덧.get(정규(줄[머리들[k]].replace(/^###\s*/, "")));
+    if (!글) continue;
+    let 끝 = k + 1 < 머리들.length ? 머리들[k + 1] : 줄.length;
+    if (k + 1 === 머리들.length) {
+      const 태그 = 줄.findIndex((l, i) => i > 머리들[k] && /^#[^#\s]/.test(l.trim()));
+      if (태그 >= 0) 끝 = 태그;
+    }
+    while (끝 > 머리들[k] + 1 && !줄[끝 - 1].trim()) 끝--;
+    줄.splice(끝, 0, "", 글);
+    붙인 += 1;
+  }
+  return 붙인 ? 줄.join("\n") : null;
+}
+
 // 말투만 다듬는 지시. 고쳐 쓰기는 불합격 항목에 매달리느라 말투를 못 챙긴다 —
 // 내용이 다 맞은 뒤에 어미와 리듬만 한 번 더 손본다. (2026-09-14: 새 지시문으로도 말 거는 문장이 6%였다)
 function 말투지시(v) {
@@ -1194,6 +1246,27 @@ async function handleGenerate(res, body, ctx) {
     }
     ({ parsed, validation } = best);
 
+    // 글자수만 모자라면 다시 쓰게 하지 않고 덧붙인다 (덧붙이기지시 참고)
+    const 짧음 = (v) => v.issues.some((i) => i.startsWith("글자수 부족"));
+    const 다른걸림 = (v) => v.issues.filter((i) => !i.startsWith("글자수 부족")).length;
+    // 한 번에 다 못 채우면 한 번 더 — 덧붙이기는 줄지 않으니 되풀이해도 글이 망가지지 않는다
+    for (let 덧번 = 1; 덧번 <= 2 && 짧음(validation) && validation.chars >= 100; 덧번++) {
+      send({ type: "status", message: `글자수가 ${(validation.targetChars - validation.chars).toLocaleString()}자 모자라 소제목마다 문단을 덧붙이는 중 (${덧번}/2)` });
+      send({ type: "reset" });
+      messages.splice(1);
+      messages.push({ role: "assistant", content: `제목: ${parsed.title}\n\n${parsed.body}` }, { role: "user", content: 덧붙이기지시(parsed, validation) });
+      try {
+        const 새몸 = 덧붙여넣기(parsed.body, await streamOnce(client, messages, send, 글쓴이유형, 기록));
+        const 이번 = 새몸 && check(`제목: ${parsed.title}\n\n${새몸}`);
+        if (이번 && 이번.validation.chars > validation.chars && 다른걸림(이번.validation) <= 다른걸림(validation)) {
+          best = { ...이번, 모델: 기록.모델 }; ({ parsed, validation } = best);
+        } else { send({ type: "status", message: "덧붙인 글이 다른 곳을 어긋나게 해서 쓰지 않았습니다" }); break; }
+      } catch (e) {
+        send({ type: "status", message: `덧붙이기는 건너뜁니다 (${e.message})` });
+        break;
+      }
+    }
+
     // 말투 다듬기 — 내용이 자리를 잡은 뒤에 어미와 리듬만 한 번 더.
     // 검증에서 더 나빠지거나(불합격이 늘거나 통과가 깨지면) 말투가 안 늘면 버리고 직전 것을 쓴다.
     // 부른 까닭을 한 번만 정한다 — 안내 문구도, 결과를 받을지 말지도 그 까닭으로 판단한다.
@@ -1218,7 +1291,10 @@ async function handleGenerate(res, body, ctx) {
         const 살림 = 이번.validation.pass === validation.pass
           && 이번.validation.issues.length <= validation.issues.length
           && 나아진말투
-          && 이번.validation.chars >= validation.chars * 0.9;
+          // 글자수가 이미 모자라면 한 글자도 줄면 안 된다. 예전엔 '90% 이상'만 봐서, 이미 모자란 글이
+          // 다듬기를 거치며 더 짧아져도(불합격 개수는 그대로라) 받아 줬다.
+          && 이번.validation.chars >= (validation.chars < validation.targetChars
+            ? validation.chars : Math.max(validation.targetChars, validation.chars * 0.9));
         if (살림) { best = { ...이번, 모델: 기록.모델 }; ({ parsed, validation } = best); }
         else send({ type: "status", message: `말투 다듬기 결과가 더 나빠서 직전 글을 저장합니다 (말 거는 문장 ${이번.validation.말투.비율}%, 불합격 ${이번.validation.issues.length}개)` });
       } catch (e) {
@@ -1830,4 +1906,4 @@ if (process.argv[1] && NFC(path.resolve(process.argv[1])) === NFC(fileURLToPath(
   server.listen(PORT, () => console.log(`블로그봇 대시보드: http://localhost:${PORT}`));
 
 // 테스트에서만 쓴다 — 가짜 구글 서버를 세워 놓고 한도·스트리밍 동작을 확인하려고
-export const __test = { streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, 기준프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기, 답다듬기 };
+export const __test = { 덧붙여넣기, 덧붙이기지시, streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, 기준프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기, 답다듬기 };
