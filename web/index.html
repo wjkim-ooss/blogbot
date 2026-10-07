@@ -117,7 +117,7 @@
       <div class="editor-wrap">
         <div id="readonly-banner" class="hidden"></div>
         <div class="editor-tools">
-          <input id="draft-keyword" placeholder="검증용 키워드" />
+          <input id="draft-keyword" placeholder="검증용 키워드" autocomplete="off" />
           <button id="save-btn">💾 저장</button>
           <button id="copy-btn">📋 본문 복사 (네이버용)</button>
           <!-- 편집기가 길어 아래쪽을 드래그하면 대화창이 화면 밖에 있다 — 드래그하면 바로가기가 뜬다 -->
@@ -142,7 +142,8 @@
           </div>
         </div>
         <div class="editor-split">
-          <textarea id="editor" placeholder="왼쪽에서 초안을 선택하거나 새로 생성하세요" spellcheck="false"></textarea>
+          <!-- autocomplete=off: 화면 코드가 멈췄을 때 브라우저가 옛 글을 되살려 '멀쩡해 보이는' 일이 없게 -->
+          <textarea id="editor" placeholder="왼쪽에서 초안을 선택하거나 새로 생성하세요" spellcheck="false" autocomplete="off"></textarea>
           <aside id="validation" class="card"></aside>
         </div>
       </div>

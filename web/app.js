@@ -15,6 +15,19 @@ let supa = null; // Supabase 클라이언트 (인증 ON일 때)
 let ME = null; // 내 계정 상태
 let SHOP = null; // 원장이 저장한 샵 정보 — 출처 검사에 쓴다 (서버와 같은 값을 봐야 한다)
 
+// 화면 코드가 도중에 멈추면 원장님은 '글은 보이는데 목록·판정·대화가 다 빈' 화면만 본다 — 무엇이 잘못됐는지 모른 채.
+// (2026-10-07 한 원장님 화면: 브라우저가 편집기 글자만 되살려 둬서 고장 난 줄도 몰랐다) 맨 위에 띠로 알린다.
+function 알림띠(말) {
+  let el = document.getElementById("app-alert");
+  if (!el) { el = document.createElement("div"); el.id = "app-alert"; el.className = "app-alert"; document.body.prepend(el); }
+  el.textContent = 말;
+}
+const 고장말 = (이유) => `화면에 문제가 생겼습니다. 새로고침(F5) 해 주세요 — 계속되면 크롬으로 열어 주세요. (${String(이유 || "").slice(0, 120)})`;
+window.addEventListener("error", (e) => 알림띠(고장말(e.message)));
+window.addEventListener("unhandledrejection", (e) => 알림띠(고장말(e.reason?.message || e.reason)));
+let 시작됨 = false;   // 로그인 창·승인 대기·본 화면 가운데 하나가 떴으면 참
+setTimeout(() => { if (!시작됨) 알림띠("화면을 불러오는 데 오래 걸립니다. 새로고침(F5) 해 주세요 — 계속되면 크롬으로 열어 주세요."); }, 20000);
+
 // ---------- 탭 (주소 #drafts 처럼 붙여 특정 탭으로 바로 들어올 수 있게) ----------
 const DEFAULT_TAB = "refs";
 
@@ -45,12 +58,15 @@ window.addEventListener("hashchange", openTabFromHash);
 // 로그인 열쇠(액세스 토큰)는 1시간이면 만료된다. 로그인할 때 한 번 받아 두고 계속 쓰면, 창을 오래 켜 둔 원장님은
 // 모든 요청이 "로그인이 필요합니다"로 막힌다 — 2026-10-07 우진: 초안 생성이 "생성 준비 중"에서 3분째 멈췄다.
 // 요청마다 Supabase에 지금 열쇠를 묻는다. 만료됐으면 Supabase가 알아서 새로 받아 온다.
+// 묻는 일이 멈추면 화면 전체가 멈춘다 — 3초 안에 답이 없으면 들고 있던 열쇠로 간다(만료됐으면 서버가 거절하고, 그때 알린다).
+// 평소에는 Supabase가 열쇠를 갈 때마다 알려 주므로(onAuthStateChange) 묻지 않아도 대개 새 열쇠를 들고 있다.
 async function 지금열쇠() {
   if (!supa) return authToken;
   try {
-    const { data } = await supa.auth.getSession();
+    const 늦음 = new Promise((_, 거절) => setTimeout(() => 거절(new Error("늦음")), 3000));
+    const { data } = await Promise.race([supa.auth.getSession(), 늦음]);
     if (data.session) authToken = data.session.access_token;
-  } catch { /* 못 물으면 들고 있던 열쇠로 — 서버가 거절하면 그때 알린다 */ }
+  } catch { /* 못 물으면 들고 있던 열쇠로 */ }
   return authToken;
 }
 const 로그인풀림 = "로그인이 풀렸습니다. 새로고침(F5) 한 뒤 다시 로그인해 주세요.";
@@ -774,10 +790,12 @@ function hideOverlays() {
   $("#pending-overlay").classList.add("hidden");
 }
 function showLogin() {
+  시작됨 = true;
   hideOverlays();
   $("#auth-overlay").classList.remove("hidden");
 }
 function showPending() {
+  시작됨 = true;
   hideOverlays();
   $("#pending-email").textContent = ME?.email || "";
   $("#pending-overlay").classList.remove("hidden");
@@ -794,6 +812,7 @@ function updateQuota() {
 }
 
 async function enterApp() {
+  시작됨 = true;
   hideOverlays();
   if (ME.authOn) {
     $("#user-chip").classList.remove("hidden");
@@ -1020,8 +1039,11 @@ $("#auth-name").addEventListener("keydown", (e) => { if (e.key === "Enter") auth
     ME = await api("/api/me");
     return enterApp();
   }
-  const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
+  // 판을 고정한다 — "@2"는 받을 때마다 최신판이라, 새 판이 나오면 원장님마다 다른 코드가 돌 수 있다 (2026-10-07: 2.117.2)
+  const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2.117.2");
   supa = createClient(CONFIG.auth.supabaseUrl, CONFIG.auth.supabaseAnonKey);
+  // 열쇠를 갈면 바로 받아 둔다. 이 안에서 Supabase를 다시 부르면 서로 기다리다 멈추므로 값만 옮긴다.
+  supa.auth.onAuthStateChange((_일, 세션) => { if (세션?.access_token) authToken = 세션.access_token; });
   const { data } = await supa.auth.getSession();
   if (data.session) {
     authToken = data.session.access_token;
