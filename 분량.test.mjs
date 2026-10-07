@@ -78,3 +78,24 @@ test("소제목이 없으면 사진 사이 구간을 덧붙일 자리로 쓰고,
   assert.ok(새.indexOf("덧붙인 클렌저 이야기.") > 새.indexOf("클렌저를 쓰시나요?"));
   assert.ok(!새.includes("없는 자리."), "구간 12 는 구간 1 로 잘못 붙지 않는다");
 });
+
+// ---------- 2026-10-07 실제 초안: 남은 문구가 검사기 잘못이었던 것 ----------
+import { 약속숫자, 평가 } from "./web/rules.js";
+import fs from "node:fs";
+const CONFIG = JSON.parse(fs.readFileSync(new URL("./config.json", import.meta.url), "utf8"));
+
+test("제목 '3가지'는 번호 붙은 소제목 수와 맞춘다 — 들어가는 말·샵 소개 소제목은 항목이 아니다", () => {
+  const 글 = "### 1. 하나\n가\n### 2. 둘\n나\n### 3. 셋\n다\n### 80분 관리 순서\n라\n### 마치며\n마";
+  assert.equal(약속숫자("일어나는 3가지 문제", 글).항목, 3);
+  assert.equal(약속숫자("3가지", "### 하나\n### 둘").항목, 2, "번호 소제목이 없으면 예전처럼 소제목 수");
+});
+
+test("숫자 권장은 권장의 85% 밑일 때만 짚는다 — 7.7개에 '8개까지 올리라'는 잔소리다", () => {
+  const 문장 = (n) => Array.from({ length: n }, (_, i) => `관리를 ${i + 1}분 동안 합니다.`).join("\n");
+  const v = 평가(`제목: 가\n\n${문장(40)}`, { config: CONFIG, 유형: "원장" });
+  assert.ok(!v.advice.some((a) => a.includes("올리면 상위글과")), `밀도 ${v.구체밀도}`);
+});
+
+test("초안 하나에 AI는 많아야 3번 (2026-10-07 우진: 1~3번 안에)", () => {
+  assert.equal(CONFIG.생성.AI호출최대, 3);
+});

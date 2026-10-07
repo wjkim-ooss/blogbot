@@ -657,7 +657,12 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = nu
     `8. 수식어를 2개 이상 겹쳐 붙인 명사구가 없는가 ("1:1 맞춤 케어", "프리미엄 집중관리" 같은 꼴) — 있으면 '누가·어디부터 어디까지·몇 분'을 넣은 문장으로 펴라`,
     `9. 경력·연차를 적었다면 그 년수 안에 맡았던 자리가 2개 이상 순서대로 적혀 있는가 ("경력 15년" X / "리셉션-상담실장-피부관리사까지 15년" O) — 모르면 "[원장확인: 맡았던 자리를 순서대로]"로 비워 둘 것`,
     `10. 한 문장(한 줄)이 공백 빼고 ${문장범위}인가 — 넘는 문장은 마침표·쉼표로 끊거나 줄을 바꿔 두 줄로 (기계가 줄과 쉼표 토막마다 잽니다)`,
-    "위 열 개를 다 만족한 뒤에 출력하세요."
+    // 11~14: 고쳐 쓰기를 줄이려고 — 실제 초안에서 끝까지 남던 것들이다 (2026-10-07)
+    `11. 첫 문단 첫 ${CONFIG.네이버형식?.첫문단문장수 ?? 3}줄 안에 "${keyword}"가 한 번 들어갔는가`,
+    `12. 소제목(###) 가운데 하나에 "${keyword}"나 그 일부가 들어갔는가`,
+    `13. 제목에 "3가지"처럼 숫자를 썼다면 번호 붙인 소제목(### 1. …)이 정확히 그 수만큼인가 — 다른 소제목에는 번호를 붙이지 말 것`,
+    `14. 말 거는 문장(~시죠? ~인데요 ~거든요 ~어떤가요?)이 전체 문장의 ${공감범위(CONFIG, 유형정규화(shop?.유형)).join("~")}%인가, 같은 어미가 ${같은어미상한}번 넘게 되풀이되지 않는가`,
+    "위 항목을 다 만족한 뒤에 출력하세요."
   );
   lines.push("", "위 조건으로 견본 글을 작성하세요.");
   return lines.join("\n");
@@ -1007,11 +1012,10 @@ async function 엔진준비() {
 const streamOnce = (client, messages, send, 유형, 기록, 시스템, 최소) =>
   client ? streamClaude(client, messages, send, 유형, 기록, 시스템) : streamGemini(messages, send, 유형, 기록, 시스템, 최소);
 
-// 통과할 때까지 고쳐 쓰는 최대 횟수. 넘기면 미달인 채로 저장하고 무엇이 남았는지 알린다.
-const MAX_FIX_ROUNDS = 3;
 
 // "글자수 부족" 같은 말만으로는 잘 안 고쳐진다. 얼마나 모자란지, 무엇을 하라는 건지 숫자로 준다.
-function fixInstruction(v, keyword) {
+// 권장도: 권장 항목까지 이번에 같이 고치라고 한다 (고쳐 쓰기를 한 번만 부르므로 남겨 둘 여유가 없다)
+function fixInstruction(v, keyword, { 권장도 = false } = {}) {
   const todo = [];
   for (const issue of v.issues) {
     if (issue.startsWith("글자수 부족")) {
@@ -1043,7 +1047,7 @@ function fixInstruction(v, keyword) {
   return [
     "아래를 전부 고쳐서 글 **전체**를 같은 출력 형식으로 다시 출력하라. 요약·설명 없이 글만 출력한다.",
     ...todo.map((t) => `- ${t}`),
-    v.advice.length ? `\n필수는 아니지만 함께 개선하면 좋은 것:\n- ${v.advice.join("\n- ")}` : "",
+    v.advice.length ? `\n${권장도 ? "이것도 이번에 같이 고쳐라" : "필수는 아니지만 함께 개선하면 좋은 것"}:\n- ${v.advice.join("\n- ")}` : "",
     "\n고치면서 이미 통과한 항목(글자수·키워드 횟수·추상어 없음 등)을 깨뜨리지 마라.",
   ]
     .filter(Boolean)
@@ -1140,21 +1144,31 @@ async function 같은키워드글(ctx, keyword) {
   } catch { return []; }
 }
 
+// 한 번에 몰아 고쳐 쓰는 지시 — 불합격·권장·말투를 같이 준다. 예전엔 셋을 따로 불러 AI를 7번까지 불렀다.
+function 고쳐쓰기지시(v, keyword) {
+  const 말투줄 = v.말투 ? 말투지시(v, { 같이: true }) : "";
+  return [
+    fixInstruction(v, keyword, { 권장도: true }),
+    말투줄 ? `\n말투·키워드 자리도 같이:\n${말투줄}` : "",
+  ].filter(Boolean).join("\n");
+}
+
 // 말투만 다듬는 지시. 고쳐 쓰기는 불합격 항목에 매달리느라 말투를 못 챙긴다 —
 // 내용이 다 맞은 뒤에 어미와 리듬만 한 번 더 손본다. (2026-09-14: 새 지시문으로도 말 거는 문장이 6%였다)
-function 말투지시(v) {
+// 같이: 고쳐쓰기지시 안에 넣을 때 — "내용은 손대지 말라"·출력 형식 줄을 뺀다(고쳐 쓰기 지시가 갖고 있다)
+function 말투지시(v, { 같이 = false } = {}) {
   const M = CONFIG.말투 || {};
   const 흐름 = (M.흐름본보기?.줄 || []).map((x) => `  ${x}`).join("\n");
   const G = M.고침본보기 || {};
-  return [
-    `내용은 손대지 말고 말투만 다듬어라. 지금 말을 거는 문장이 ${v.말투.비율}%(${v.말투.공감}/${v.말투.전체})다. ${v.말투.최소}~${v.말투.최대}%로.`,
+  const 줄 = [
+    같이 ? `- 말을 거는 문장이 지금 ${v.말투.비율}%다. ${v.말투.최소}~${v.말투.최대}%로.` : `내용은 손대지 말고 말투만 다듬어라. 지금 말을 거는 문장이 ${v.말투.비율}%(${v.말투.공감}/${v.말투.전체})다. ${v.말투.최소}~${v.말투.최대}%로.`,
     v.말투.연속단정 > v.말투.연속허용
       ? `- ~입니다 계열 문장이 ${v.말투.연속단정}개 연달아 이어진다 ("${v.말투.연속자리.slice(0, 40)}"부터). ${v.말투.연속허용}개를 넘기지 마라 — 그 줄 가운데 한 문장을 말 거는 문장으로 바꿔 끊어라. 글 전체에서 그런 줄마다.`
       : "",
     // 남은 권장 항목도 여기서 같이 고친다 — 고쳐 쓰기는 불합격만 보고, 권장은 끝까지 화면에 남아 원장님께 '고칠 게 많다'로 읽혔다(10/7 우진)
     v.kwOver ? `- 키워드 "${v.keyword}"가 본문에 ${v.kwCount}번이다. ${CONFIG.키워드횟수.max}번만 남기고 나머지는 "이 트러블", "이런 피부"처럼 가리키는 말로 바꿔라. 띄어쓰기로 쪼개지 마라.` : "",
     v.첫문단키워드 === false && !v.kwLack ? `- 첫 문단(${v.첫문단문장수}문장 안)에 "${v.keyword}"가 없다 — 도입 문장 하나에 자연스럽게 넣고, 대신 뒤쪽 한 곳을 가리키는 말로 바꿔 횟수는 그대로 둔다.` : "",
-    "- 바꿀 것: 문장 끝(어미)과 문장의 리듬, 위에 적은 키워드 자리뿐이다. 소제목·숫자·사진 자리·해시태그·제목·글자수는 그대로 둔다. 문장을 지우거나 새로 넣지 마라.",
+    같이 ? "" : "- 바꿀 것: 문장 끝(어미)과 문장의 리듬, 위에 적은 키워드 자리뿐이다. 소제목·숫자·사진 자리·해시태그·제목·글자수는 그대로 둔다. 문장을 지우거나 새로 넣지 마라.",
     "- 장면을 묘사한 다음 문장은 ~시죠?로, 이유를 꺼내는 문장은 ~인데요로, 오해를 바로잡는 문장은 ~거든요로, 예를 보여주는 문장은 ~어떤가요?로.",
     "- 설명·근거·약속은 ~입니다 / ~합니다 그대로 둔다. ~어요 / ~해요 / ~네요는 쓰지 마라.",
     "- 어색해질 바에는 그 문장은 ~입니다로 둔다. 억지로 바꾸지 마라.",
@@ -1164,8 +1178,9 @@ function 말투지시(v) {
     `- 말을 걸려고 두 문장을 ~인데요로 잇지 마라. 한 문장은 공백 빼고 ${문장범위} — 넘는 문장은 마침표나 쉼표로 끊거나 줄을 바꿔 두 줄로.`,
     G.나쁨 && G.좋음 ? `- 같은 내용, 다른 말투:\n  (딱딱함) ${G.나쁨}\n  (이렇게) ${G.좋음}` : "",
     흐름 ? `- 이 리듬으로:\n${흐름}` : "",
-    "글 **전체**를 같은 출력 형식으로 다시 출력하라. 요약·설명 없이 글만 출력한다.",
-  ].filter(Boolean).join("\n");
+    같이 ? "" : "글 **전체**를 같은 출력 형식으로 다시 출력하라. 요약·설명 없이 글만 출력한다.",
+  ];
+  return 줄.filter(Boolean).join("\n");
 }
 
 // 월 한도 확인·차감 (level1만). 통과 시 남은 횟수 반환, 초과 시 null.
@@ -1262,49 +1277,47 @@ async function handleGenerate(res, body, ctx) {
     let draft = await streamOnce(client, messages, send, 글쓴이유형, 기록);
     let { parsed, validation } = check(draft);
     // 마지막 시도가 늘 제일 낫지는 않다. 고쳐 쓰다 더 나빠질 수도 있으므로 제일 좋았던 것을 들고 간다.
-    // 순위: 통과 여부 → 남은 고칠 점이 적은 순 → 긴 순.
+    // 순위: 통과 여부 → 남은 고칠 점이 적은 순 → 남은 권장이 적은 순 → 긴 순.
     let best = { parsed, validation, 모델: 기록.모델 };
     const 더나은가 = (a, b) =>
       a.validation.pass !== b.validation.pass ? a.validation.pass
       : a.validation.issues.length !== b.validation.issues.length ? a.validation.issues.length < b.validation.issues.length
+      : a.validation.advice.length !== b.validation.advice.length ? a.validation.advice.length < b.validation.advice.length
       : a.validation.chars > b.validation.chars;
 
-    // 통과할 때까지 고쳐 쓴다. 한 번만 보완하면 미달인 채로 저장되는 일이 잦았다.
-    // 매번 '무엇이 얼마나 모자란지'를 수치로 돌려줘야 실제로 고쳐진다.
-    let 미개선 = 0;
-    for (let round = 1; round <= MAX_FIX_ROUNDS && !validation.pass; round++) {
-      send({
-        type: "status",
-        message: `검증 미달 → 고쳐 쓰는 중 (${round}/${MAX_FIX_ROUNDS}): ${validation.issues.join(" / ")}`,
-      });
-      send({ type: "reset" });
-      messages.push({ role: "assistant", content: draft });
-      messages.push({ role: "user", content: fixInstruction(validation, keyword) });
-      try {
-        draft = await streamOnce(client, messages, send, 글쓴이유형, 기록);
-      } catch (e) {
-        // 한 번 실패했다고 앞서 만든 글까지 버리지 않는다
-        if (best.validation.chars >= 100) { send({ type: "status", message: `이번 시도는 실패했습니다 (${e.message}) — 직전 결과를 저장합니다` }); break; }
-        throw e;
-      }
-      ({ parsed, validation } = check(draft));
-      const 이번 = { parsed, validation, 모델: 기록.모델 };
-      const 나아졌나 = 더나은가(이번, best);
-      if (나아졌나) { best = 이번; 미개선 = 0; } else 미개선 += 1;
-      // 두 번 연달아 안 나아지면 더 불러도 대개 안 나아진다. 무료 등급의 분당 한도를 헛되이 태우지 않는다.
-      // (한 번만 보고 끊었더니 첫 고쳐쓰기가 제자리면 그대로 미달로 저장됐다 — 2026-09-14 모낭염 3편 중 2편)
-      if (미개선 >= 2 && !validation.pass) break;
-      // 대화가 길어지면 비용·지연이 커진다. 직전 시도만 남기고 앞은 버린다.
-      if (messages.length > 5) messages.splice(1, messages.length - 3);
-    }
-    ({ parsed, validation } = best);
-
-    // 글자수만 모자라면 다시 쓰게 하지 않고 덧붙인다 (덧붙이기지시 참고)
+    // AI는 많아야 CONFIG.생성.AI호출최대(3)번 부른다 — 2026-10-07 우진: "너무 오래 걸린다. 1~3번 안에".
+    // 예전엔 고쳐 쓰기 3 + 덧붙이기 2 + 말투 다듬기 1을 따로 돌려 최대 7번이었다. 지금 순서:
+    //   ① 처음 쓰기 → ② 불합격·권장·말투가 남았으면 한 번에 몰아 고쳐 쓰기 → ③ 글자수가 모자라면 덧붙이기.
+    // 고칠 게 없으면 ①에서 끝난다. 글자수 하나만 모자라면 ②를 건너뛴다(다시 쓰기보다 덧붙이기가 확실히 늘린다).
+    const 최대 = CONFIG.생성?.AI호출최대 ?? 3;
+    let 부른 = 1;
     const 짧음 = (v) => v.issues.some((i) => i.startsWith("글자수 부족"));
     const 다른걸림 = (v) => v.issues.filter((i) => !i.startsWith("글자수 부족")).length;
-    // 한 번에 다 못 채우면 한 번 더 — 덧붙이기는 줄지 않으니 되풀이해도 글이 망가지지 않는다
-    for (let 덧번 = 1; 덧번 <= 2 && 짧음(validation) && validation.chars >= 100; 덧번++) {
-      send({ type: "status", message: `글자수가 ${(validation.targetChars - validation.chars).toLocaleString()}자 모자라 문단을 덧붙이는 중 (${덧번}/2)` });
+    const 다듬을까 = (v) => {
+      if (!CONFIG.말투?.다듬기?.켜짐) return false;
+      const m = v.말투;
+      return !!(m && (m.비율 < m.최소 || m.연속단정 > m.연속허용 || m.반복어미?.length)) || v.kwOver || v.첫문단키워드 === false;
+    };
+
+    if (부른 < 최대 && validation.chars >= 100 && (다른걸림(validation) || 다듬을까(validation))) {
+      부른 += 1;
+      send({ type: "status", message: `한 번에 고쳐 쓰는 중 (AI ${부른}/${최대}번째): ${[...validation.issues, ...validation.advice].length}가지` });
+      send({ type: "reset" });
+      messages.splice(1);
+      messages.push({ role: "assistant", content: `제목: ${parsed.title}\n\n${parsed.body}` }, { role: "user", content: 고쳐쓰기지시(validation, keyword) });
+      try {
+        const 이번 = { ...check(await streamOnce(client, messages, send, 글쓴이유형, 기록)), 모델: 기록.모델 };
+        if (더나은가(이번, best)) { best = 이번; ({ parsed, validation } = best); }
+        else send({ type: "status", message: "고친 글이 처음 글보다 낫지 않아 처음 글을 씁니다" });
+      } catch (e) {
+        send({ type: "status", message: `고쳐 쓰기는 건너뜁니다 (${e.message})` });
+      }
+    }
+
+    // 글자수만 모자라면 다시 쓰게 하지 않고 덧붙인다 (덧붙이기지시 참고). 덧붙이기는 줄지 않으니 남은 횟수만큼 되풀이해도 된다.
+    while (부른 < 최대 && 짧음(validation) && validation.chars >= 100) {
+      부른 += 1;
+      send({ type: "status", message: `글자수가 ${(validation.targetChars - validation.chars).toLocaleString()}자 모자라 문단을 덧붙이는 중 (AI ${부른}/${최대}번째)` });
       send({ type: "reset" });
       messages.splice(1);
       messages.push({ role: "assistant", content: `제목: ${parsed.title}\n\n${parsed.body}` }, { role: "user", content: 덧붙이기지시(parsed, validation) });
@@ -1317,49 +1330,6 @@ async function handleGenerate(res, body, ctx) {
       } catch (e) {
         send({ type: "status", message: `덧붙이기는 건너뜁니다 (${e.message})` });
         break;
-      }
-    }
-
-    // 말투 다듬기 — 내용이 자리를 잡은 뒤에 어미와 리듬만 한 번 더.
-    // 검증에서 더 나빠지거나(불합격이 늘거나 통과가 깨지면) 말투가 안 늘면 버리고 직전 것을 쓴다.
-    // 부른 까닭을 한 번만 정한다 — 안내 문구도, 결과를 받을지 말지도 그 까닭으로 판단한다.
-    // (둘을 따로 보던 때는 '연속' 때문에 불러 놓고 비율이 1%p 오른 것만으로 받아 줄이 그대로 남았다.)
-    const 다듬을까 = (v) => {
-      const m = v.말투;
-      if (m && m.비율 < m.최소) return "비율";
-      if (m && m.연속단정 > m.연속허용) return "연속";
-      if ((m?.반복어미?.length) || v.kwOver || v.첫문단키워드 === false) return "권장";
-      return null;
-    };
-    const 까닭 = CONFIG.말투?.다듬기?.켜짐 && validation.chars >= 100 ? 다듬을까(validation) : null;
-    if (까닭) {
-      const m = validation.말투;
-      send({ type: "status", message: 까닭 === "비율"
-        ? `말투 다듬는 중: 말 거는 문장 ${m.비율}% → ${m.최소}% 이상으로`
-        : 까닭 === "연속" ? `말투 다듬는 중: ~입니다 문장이 ${m.연속단정}개 연달아 이어진 자리를 끊습니다`
-        : `마무리 다듬는 중: 남은 권장 ${validation.advice.length}개 (키워드 횟수·어미 되풀이·첫 문단)` });
-      send({ type: "reset" });
-      const 본문 = `제목: ${parsed.title}\n\n${parsed.body}`;
-      messages.splice(1); // 지시문 + 제일 좋았던 글 + 다듬기 지시만
-      messages.push({ role: "assistant", content: 본문 }, { role: "user", content: 말투지시(validation) });
-      try {
-        const 다듬은 = await streamOnce(client, messages, send, 글쓴이유형, 기록);
-        const 이번 = check(다듬은);
-        const 나아진말투 = 까닭 === "비율"
-          ? 이번.validation.말투.비율 > validation.말투.비율
-          : 까닭 === "연속" ? 이번.validation.말투.연속단정 < validation.말투.연속단정
-          : 이번.validation.advice.length < validation.advice.length;
-        const 살림 = 이번.validation.pass === validation.pass
-          && 이번.validation.issues.length <= validation.issues.length
-          && 나아진말투
-          // 글자수가 이미 모자라면 한 글자도 줄면 안 된다. 예전엔 '90% 이상'만 봐서, 이미 모자란 글이
-          // 다듬기를 거치며 더 짧아져도(불합격 개수는 그대로라) 받아 줬다.
-          && 이번.validation.chars >= (validation.chars < validation.targetChars
-            ? validation.chars : Math.max(validation.targetChars, validation.chars * 0.9));
-        if (살림) { best = { ...이번, 모델: 기록.모델 }; ({ parsed, validation } = best); }
-        else send({ type: "status", message: `말투 다듬기 결과가 더 나빠서 직전 글을 저장합니다 (말 거는 문장 ${이번.validation.말투.비율}%, 불합격 ${이번.validation.issues.length}개)` });
-      } catch (e) {
-        send({ type: "status", message: `말투 다듬기는 건너뜁니다 (${e.message})` });
       }
     }
 
