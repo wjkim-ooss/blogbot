@@ -3,7 +3,7 @@
 import {
   countLoose, 요청글자수, 적힌목표, 적힌유형, 분량표시 as 분량문구,
   참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 평가, 원장글보관함, 원장글인가, 유형정보,
-  초안본문,
+  초안본문, 초안나누기, 이름꼬리,
 } from "/rules.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -57,26 +57,33 @@ window.addEventListener("hashchange", openTabFromHash);
 // ---------- 공용 ----------
 // 로그인 열쇠(액세스 토큰)는 1시간이면 만료된다. 로그인할 때 한 번 받아 두고 계속 쓰면, 창을 오래 켜 둔 원장님은
 // 모든 요청이 "로그인이 필요합니다"로 막힌다 — 2026-10-07 우진: 초안 생성이 "생성 준비 중"에서 3분째 멈췄다.
-// 요청마다 Supabase에 지금 열쇠를 묻는다. 만료됐으면 Supabase가 알아서 새로 받아 온다.
+// 평소에는 Supabase가 열쇠를 갈 때마다 알려 준다(onAuthStateChange → 열쇠받기). 만료가 1분 안으로 다가왔을 때만
+// 직접 묻는다 — 요청마다 물으면 초안 목록을 그릴 때 초안 수만큼 줄 서서 묻는다.
 // 묻는 일이 멈추면 화면 전체가 멈춘다 — 3초 안에 답이 없으면 들고 있던 열쇠로 간다(만료됐으면 서버가 거절하고, 그때 알린다).
-// 평소에는 Supabase가 열쇠를 갈 때마다 알려 주므로(onAuthStateChange) 묻지 않아도 대개 새 열쇠를 들고 있다.
+let 열쇠만료 = 0;   // 초 단위 (Supabase session.expires_at)
+function 열쇠받기(세션) {
+  authToken = 세션?.access_token || null;
+  열쇠만료 = 세션?.expires_at || 0;
+}
 async function 지금열쇠() {
-  if (!supa) return authToken;
+  if (!supa || Date.now() / 1000 < 열쇠만료 - 60) return authToken;
+  let 타이머;
   try {
-    const 늦음 = new Promise((_, 거절) => setTimeout(() => 거절(new Error("늦음")), 3000));
+    const 늦음 = new Promise((_, 거절) => { 타이머 = setTimeout(() => 거절(new Error("늦음")), 3000); });
     const { data } = await Promise.race([supa.auth.getSession(), 늦음]);
-    if (data.session) authToken = data.session.access_token;
-  } catch { /* 못 물으면 들고 있던 열쇠로 */ }
+    if (data.session) 열쇠받기(data.session);
+  } catch { /* 못 물으면 들고 있던 열쇠로 */ } finally { clearTimeout(타이머); }
   return authToken;
 }
-const 로그인풀림 = "로그인이 풀렸습니다. 새로고침(F5) 한 뒤 다시 로그인해 주세요.";
+const 인증머리 = async () => ((await 지금열쇠()) ? { Authorization: "Bearer " + authToken } : {});
+// 거절 이유를 원장님 말로 — api()와 초안 생성(흐름이라 api()를 못 쓴다)이 같이 쓴다
+const 거절말 = (status, data) =>
+  status === 401 && authToken ? "로그인이 풀렸습니다. 새로고침(F5) 한 뒤 다시 로그인해 주세요." : data?.error || `서버가 거절했습니다 (${status})`;
 
 const api = async (url, opts = {}) => {
-  const headers = { ...(opts.headers || {}) };
-  if (await 지금열쇠()) headers["Authorization"] = "Bearer " + authToken;
-  const res = await fetch(url, { ...opts, headers });
+  const res = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), ...(await 인증머리()) } });
   const data = await res.json();
-  if (!res.ok) throw Object.assign(new Error(res.status === 401 && authToken ? 로그인풀림 : data.error || res.statusText), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error(거절말(res.status, data)), { status: res.status });
   return data;
 };
 const targetPhotosOf = (ref, 목표글자수) => targetPhotosFor(ref, CONFIG, 목표글자수);
@@ -199,9 +206,8 @@ function draftContent(name) {
     draftCache.set(key, api(draftsUrl(`/api/drafts/${encodeURIComponent(name)}`)).then((d) => d.content));
   return draftCache.get(key);
 }
-// 파일명(YYYY-MM-DD_키워드.md)에서 검증용 키워드 추출
-const keywordOf = (name) =>
-  name.replace(/^\d{4}-\d{2}-\d{2}_/, "").replace(/(_\d+)?\.md$/, "").replace(/-/g, " ");
+// 파일명(YYYY-MM-DD_키워드.md)에서 검증용 키워드 추출 — 이름 규칙은 rules.js 하나(서버가 이름을 지을 때와 같다)
+const keywordOf = (name) => 이름꼬리(name).replace(/-/g, " ");
 
 async function loadDrafts(selectName) {
   const drafts = await api(draftsUrl("/api/drafts"));
@@ -238,10 +244,9 @@ async function loadDrafts(selectName) {
 // 파일에서 지우지 않는 이유 — 목표글자수·글쓴이유형이 없으면 그 글을 엉뚱한 기준으로 잰다.
 let 머리말 = "";
 function 편집기에넣기(content = "") {
-  const 끝 = content.indexOf("\n---\n");
-  const 자리 = 끝 >= 0 ? 끝 + 5 + (content.slice(끝 + 5).match(/^\n*/)[0].length) : 0;
-  머리말 = content.slice(0, 자리);
-  $("#editor").value = content.slice(자리);
+  const { 머리, 본문 } = 초안나누기(content);   // 자르는 자리는 rules.js 하나 — 서버·판정과 같은 곳에서 자른다
+  머리말 = 머리;
+  $("#editor").value = 본문;
 }
 const 전체글 = () => 머리말 + $("#editor").value;   // 파일에 들어갈 모양 그대로
 
@@ -380,7 +385,7 @@ function runValidation() {
   const { chars, targetChars, 지정목표, refHit, photos, targetPhotos, kwCount, tokens, kwLack, kwOver,
           title, titleHasKw, titleHasNum, titleLen,
           abstractFound, abstractByKind, medicalFound, overclaimFound, pmids, needsEvidence,
-          구체, 구체밀도, 구체최소, 구체권장, 정도부사, 정도부사횟수,
+          구체, 구체밀도, 구체최소, 구체권장, 구체권장미달, 정도부사, 정도부사횟수,
           꺼진검사, 판정, issues, advice } = evaluateDraft(body, keyword, 적힌목표(raw), 적힌유형(raw));
   const kwCls = kwLack ? "v-bad" : kwOver ? "v-warn" : "v-ok";
   const kwNote = kwLack ? " 부족" : kwOver ? " 과다" : "";
@@ -426,7 +431,7 @@ function runValidation() {
     ${kwLack && tokens.length > 1
       ? '<div class="v-sub">이 키워드는 파일명에서 자동으로 뽑은 값입니다. 실제로 노리는 검색어와 다르면 위 <b>검증용 키워드</b> 칸에서 고치세요.</div>'
       : ""}
-    <h4>구체성 <span class="${구체밀도 >= 구체권장 ? "v-ok" : 구체밀도 >= 구체최소 ? "v-warn" : "v-bad"}">1,000자당 ${구체밀도}개</span></h4>
+    <h4>구체성 <span class="${구체밀도 < 구체최소 ? "v-bad" : 구체권장미달 ? "v-warn" : "v-ok"}">1,000자당 ${구체밀도}개</span></h4>
     <div class="v-sub">숫자 ${구체}개 · 최소 ${구체최소} / 권장 ${구체권장} — 상위글 중앙값은 2~3개입니다</div>
     <h4>추상어 <span class="${ok(!abstractFound.length)}">${abstractFound.length ? abstractFound.length + "개 발견" : "통과"}</span></h4>
     ${Object.entries(abstractByKind || {}).map(([갈래, 말들]) =>
@@ -726,11 +731,9 @@ $("#gen-btn").addEventListener("click", async () => {
   $("#gen-output").textContent = "";
   $("#gen-status").textContent = "생성 준비 중...";
   try {
-    const genHeaders = { "Content-Type": "application/json" };
-    if (await 지금열쇠()) genHeaders["Authorization"] = "Bearer " + authToken;
     const res = await fetch("/api/generate", {
       method: "POST",
-      headers: genHeaders,
+      headers: { "Content-Type": "application/json", ...(await 인증머리()) },
       body: JSON.stringify({
         keyword,
         region: $("#gen-region").value.trim(),
@@ -741,10 +744,7 @@ $("#gen-btn").addEventListener("click", async () => {
     });
     // 거절(로그인 풀림·승인 대기 등)은 흐름이 아니라 JSON 한 덩이로 온다. 예전엔 이걸 흐름으로 읽다가
     // 아무 소식도 못 받고 "생성 준비 중"에 멈춰 있었다.
-    if (!res.ok) {
-      const 이유 = await res.json().catch(() => ({}));
-      throw new Error(res.status === 401 ? 로그인풀림 : 이유.error || `서버가 거절했습니다 (${res.status})`);
-    }
+    if (!res.ok) throw new Error(거절말(res.status, await res.json().catch(() => ({}))));
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -785,17 +785,16 @@ $("#gen-btn").addEventListener("click", async () => {
 
 // ---------- 인증 · 회원 관리 ----------
 function hideOverlays() {
+  시작됨 = true;   // 로그인 창·승인 대기·본 화면은 모두 여기를 거쳐 뜬다
   $("#shop-overlay")?.classList.add("hidden"); // 세션이 끊겨 로그인 창이 뜰 때 위에 남지 않게
   $("#auth-overlay").classList.add("hidden");
   $("#pending-overlay").classList.add("hidden");
 }
 function showLogin() {
-  시작됨 = true;
   hideOverlays();
   $("#auth-overlay").classList.remove("hidden");
 }
 function showPending() {
-  시작됨 = true;
   hideOverlays();
   $("#pending-email").textContent = ME?.email || "";
   $("#pending-overlay").classList.remove("hidden");
@@ -812,7 +811,6 @@ function updateQuota() {
 }
 
 async function enterApp() {
-  시작됨 = true;
   hideOverlays();
   if (ME.authOn) {
     $("#user-chip").classList.remove("hidden");
@@ -870,12 +868,12 @@ async function authAction(mode) {
         msg.style.color = "#1c8c3c";
         return (msg.textContent = "가입 완료. 이메일 확인 후 로그인해 주세요.");
       }
-      authToken = data.session.access_token;
+      열쇠받기(data.session);
       return gateByStatus();
     }
     const { data, error } = await supa.auth.signInWithPassword({ email, password: pw });
     if (error) throw error;
-    authToken = data.session.access_token;
+    열쇠받기(data.session);
     return gateByStatus();
   } catch (e) {
     msg.textContent = e.message || "실패했습니다";
@@ -884,7 +882,7 @@ async function authAction(mode) {
 
 async function doLogout() {
   if (supa) await supa.auth.signOut();
-  authToken = null;
+  열쇠받기(null);
   ME = null;
   location.reload();
 }
@@ -1043,10 +1041,10 @@ $("#auth-name").addEventListener("keydown", (e) => { if (e.key === "Enter") auth
   const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2.117.2");
   supa = createClient(CONFIG.auth.supabaseUrl, CONFIG.auth.supabaseAnonKey);
   // 열쇠를 갈면 바로 받아 둔다. 이 안에서 Supabase를 다시 부르면 서로 기다리다 멈추므로 값만 옮긴다.
-  supa.auth.onAuthStateChange((_일, 세션) => { if (세션?.access_token) authToken = 세션.access_token; });
+  supa.auth.onAuthStateChange((_일, 세션) => { if (세션?.access_token) 열쇠받기(세션); });
   const { data } = await supa.auth.getSession();
   if (data.session) {
-    authToken = data.session.access_token;
+    열쇠받기(data.session);
     return gateByStatus();
   }
   showLogin();

@@ -40,14 +40,15 @@ test("형식을 안 지킨 답이면 아무것도 넣지 않는다", () => {
 });
 
 test("덧붙이기 지시는 글을 다시 쓰지 말라고 하고 소제목 목록을 준다", () => {
-  const p = 덧붙이기지시({ body: 본문 }, { chars: 1300, targetChars: 1450 });
+  const p = 덧붙이기지시(본문, { chars: 1300, targetChars: 1450 });
   assert.ok(p.includes("글은 다시 쓰지 마라"));
   assert.ok(p.includes("- 왜 생기나요") && p.includes("- 관리 순서"));
   assert.ok(p.includes("150자 모자란다"));
 });
 
 // ---------- 2026-10-07 실제 초안: 소제목 0개, 사진 사이 14줄이 한 덩어리 ----------
-const { 문단나누기, 덧붙일자리 } = __test;
+const { 덧붙일자리 } = __test;
+const 문단나누기 = (t) => 나누기(t, CONFIG);
 const 덩어리 = [
   "[사진: 턱]",
   "",
@@ -80,7 +81,7 @@ test("소제목이 없으면 사진 사이 구간을 덧붙일 자리로 쓰고,
 });
 
 // ---------- 2026-10-07 실제 초안: 남은 문구가 검사기 잘못이었던 것 ----------
-import { 약속숫자, 평가 } from "./web/rules.js";
+import { 약속숫자, 평가, 문단나누기 as 나누기 } from "./web/rules.js";
 import fs from "node:fs";
 const CONFIG = JSON.parse(fs.readFileSync(new URL("./config.json", import.meta.url), "utf8"));
 

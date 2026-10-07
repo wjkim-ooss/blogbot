@@ -51,9 +51,19 @@ export const 머리말키 = ["목표글자수", "글쓴이유형"];
 // 초안 파일에서 머리말(--- 위)을 뺀 본문. 편집기와 서버(대화 수정)가 같은 자리에서 자른다 —
 // 따로 자르면 서버가 잰 '고치기 전'과 편집기가 보여 주는 판정이 갈린다.
 export function 초안본문(content) {
-  const 자리 = (content || "").indexOf("\n---\n");
-  return 자리 >= 0 ? content.slice(자리 + 5).trim() : (content || "").trim();
+  return 초안나누기(content).본문.trim();
 }
+// 머리 + 본문 = 원래 글 그대로 (빈 줄 하나 바뀌지 않는다). 편집기는 머리를 숨겼다가 저장할 때 다시 붙인다.
+export function 초안나누기(content = "") {
+  const 끝 = content.indexOf("\n---\n");
+  if (끝 < 0) return { 머리: "", 본문: content };
+  const 자리 = 끝 + 5 + content.slice(끝 + 5).match(/^\n*/)[0].length;
+  return { 머리: content.slice(0, 자리), 본문: content.slice(자리) };
+}
+
+// 초안 파일 이름(날짜_키워드[_2].md)과 키워드를 오가는 규칙 — 서버(이름 짓기·같은 키워드 찾기)와 화면이 같이 쓴다
+export const 키워드꼬리 = (keyword) => String(keyword).replace(/[\/\s]+/g, "-");
+export const 이름꼬리 = (name) => String(name).replace(/^\d{4}-\d{2}-\d{2}_/, "").replace(/(_\d+)?\.md$/, "");
 const 머리값 = (content, 이름) =>
   ((((content || "").split("\n---\n")[0]).match(new RegExp(`^-\\s*${이름}:\\s*(\\S+)`, "m")) || [])[1] || "");
 
@@ -466,7 +476,36 @@ export const 공감범위 = (config, 유형) => 유형정보(config, 유형).공
 // 사진 표시는 문장 끝에도 붙는다 — 걷어내지 않으면 사진 설명문의 끝을 어미로 읽는다.
 // 한 번 만들어 문장 길이·말투가 나눠 쓴다(문장나누기를 돌려쓰는 것과 같은 이유).
 const 머리말줄 = new RegExp(`^-\\s*(?:${머리말키.join("|")}):`);
-const 본문문장 = (s) => !/^(#|제목:|제목후보:|\[사진:|근거\s*[:：])/.test(s) && !머리말줄.test(s);
+export const 본문문장 = (s) => !/^(#|제목:|제목후보:|\[사진:|근거\s*[:：])/.test(s) && !머리말줄.test(s);
+export const 소제목줄 = /^#{2,4}\s+\S/;
+// 당부·교훈으로 끝나는 줄인가 (config.당부.어미) — 평가의 '문단 끝 당부'와 문단나누기가 같이 쓴다
+export const 당부끝 = (줄, config) =>
+  (config.당부?.어미 || []).some((e) => stripPhotos(줄).trim().replace(어미꼬리, "").endsWith(e));
+
+// AI가 문단을 안 나누고 낸 덩어리를 문장이 끝나는 줄에서 나눈다 (config.문단). 글자는 그대로, 빈 줄만 더한다.
+export function 문단나누기(body, config) {
+  const { 최대줄 = 5, 묶음 = 3, 끝남은최소 = 2 } = config.문단 || {};
+  const 끝줄 = (l) => /[.?!…][)"'”’]*\s*$/.test(l.trim()) && !당부끝(l, config);
+  const 나온 = [];
+  let 덩이 = [];
+  const 털기 = () => {
+    if (덩이.length > 최대줄) {
+      let 모음 = [];
+      덩이.forEach((l, i) => {
+        모음.push(l);
+        if (모음.length >= 묶음 && 끝줄(l) && 덩이.length - i - 1 >= 끝남은최소) { 나온.push(...모음, ""); 모음 = []; }
+      });
+      나온.push(...모음);
+    } else 나온.push(...덩이);
+    덩이 = [];
+  };
+  for (const l of String(body).split("\n")) {
+    if (l.trim() && 본문문장(l.trim())) 덩이.push(l);
+    else { 털기(); 나온.push(l); }
+  }
+  털기();
+  return 나온.join("\n");
+}
 export const 본문만 = (text, 문장들 = null) =>
   (문장들 || 문장나누기(text)).filter(본문문장).map((s) => stripPhotos(s).trim()).filter(Boolean);
 
@@ -687,11 +726,11 @@ export function 약속숫자(제목, text) {
   if (!m) return null;
   const 약속 = Number(m[1]);
   if (!약속 || 약속 > 12) return null; // 연차·분·원 같은 수는 항목 약속이 아니다
-  const 소제목 = ((text || "").match(/^#{2,4}\s+\S.*$/gm) || []).length;
   // 번호 붙은 소제목(### 1. …)이 있으면 그게 항목이다. 들어가는 말·샵 소개 같은 번호 없는 소제목까지 세면
   // "3가지" 글에 번호 소제목 셋 + 다른 소제목 다섯을 8개로 잡아 멀쩡한 글을 불합격시켰다(2026-10-07).
   const 번호소제목 = ((text || "").match(/^#{2,4}\s+(?:\d+\s*[.)]|[①-⑫])\s*\S/gm) || []).length;
   if (번호소제목) return { 약속, 항목: 번호소제목, 말: m[0] };
+  const 소제목 = ((text || "").match(/^#{2,4}\s+\S.*$/gm) || []).length;
   const 번호줄 = ((text || "").match(/^\s*(?:\d+[.)]|[①-⑫])\s*\S/gm) || []).length;
   const 차례말 = ((text || "").match(/(?:^|\n)\s*(?:첫째|둘째|셋째|넷째|다섯째|첫 번째|두 번째|세 번째|네 번째|다섯 번째|이유 ?\d)/g) || []).length;
   return { 약속, 항목: Math.max(소제목, 번호줄, 차례말), 말: m[0] };
@@ -906,6 +945,8 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const 본보기베낌 = 문구뽑기(text, config.본보기문구?.목록);
   // 1,000자당 몇 개인가 — 글이 길수록 더 많이 요구하는 게 맞다
   const 구체밀도 = chars ? Number(((구체 / chars) * 1000).toFixed(1)) : 0;
+  // 권장에 거의 닿았으면(권장안내비율) 짚지 않는다 — 7.7개에 "8개까지"는 잔소리다. 화면 색도 이 값을 따른다.
+  const 구체권장미달 = !!구체권장 && 구체밀도 >= 구체최소 && 구체밀도 < 구체권장 * (config.구체성?.권장안내비율 ?? 1);
   const 문장들 = 문장나누기(text); // 아래 검사들이 같은 쪼갬을 돌려쓴다
   // 글에 적힌 유형이 먼저다. 남의 초안을 열어봐도 그 글의 기준으로 잰다.
   const 글유형 = 유형 || 원장값?.유형;
@@ -933,12 +974,10 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
     : [];
   // 문단 끝마다 당부·교훈이 붙으면 훈계문이 된다 — 문단의 마지막 줄만 본다.
   // 어느 줄이 본문인지는 본문만()과 같은 잣대(본문문장)를 쓴다 — 두 벌로 두면 조용히 갈린다.
-  const 당부어미 = config.당부?.어미 || [];
   const 당부문단 = text.split(문단경계)
     .map((p) => p.trim().split("\n").at(-1).trim())
-    .filter(본문문장)
-    .map((s) => stripPhotos(s).trim().replace(어미꼬리, ""))
-    .filter((끝) => 당부어미.some((e) => 끝.endsWith(e)));
+    .filter((s) => 본문문장(s) && 당부끝(s, config))
+    .map((s) => stripPhotos(s).trim().replace(어미꼬리, ""));
   const 말투값 = 말투재기(본문들, config, 공감범위(config, 글유형));
   // 반박제거·가격은 파는 사람에게만 해당한다 — 정보형은 예약을 받지도, 가격을 숨길 것도 없다
   const 반박 = 검사켜짐(검사설정, "반박제거") ? 반박제거찾기(text, config) : [];
@@ -1088,7 +1127,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   // 아래 둘은 비율이 아니라 '있으면 잘못된 것'이라 짧은 초안에서도 짚는다
   if (본보기베낌.length) advice.push(말.본보기베낌(v));
   if (지어낸경험.length) advice.push(말.지어낸경험(v));
-  if (구체권장 && 구체밀도 >= 구체최소 && 구체밀도 < 구체권장 * (config.구체성?.권장안내비율 ?? 1)) advice.push(말.구체성권장(v));
+  if (구체권장미달) advice.push(말.구체성권장(v));
   // 과다는 권장이다. 불합격으로 걸면 AI가 내용을 버리고 횟수만 맞춘다 — 2026-09-30에 상한을
   // 3회로 좁히면서 같이 내렸다(그 전엔 7회 상한에 불합격이었다).
   if (kwOver && !kwLack) advice.push(말.키워드과다(v));
@@ -1098,7 +1137,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
     chars, photos, kwCount, kwParts, tokens, kwLack, kwOver,
     title: 제목, titleHasKw, titleHasNum, titleLen: noSpace(제목), 첫문단문장수, 첫문단키워드, 소제목키워드,
     abstractFound, abstractByKind, medicalFound, overclaimFound, pmids, claims, needsEvidence,
-    구체, 구체밀도, 구체최소, 구체권장, 정도부사, 정도부사횟수, 압축, 채움, 출처없음,
+    구체, 구체밀도, 구체최소, 구체권장, 구체권장미달, 정도부사, 정도부사횟수, 압축, 채움, 출처없음,
     // 아래는 화면에 따로 칸을 두지 않는다(전부 권장이라 advice 줄로 나간다) — 시험이 읽는 자리다
     문장길이: 문장길이값, 말투: 말투값, 반박, 가격, 겹침, 약속, 태그, 가짜PMID, 본보기베낌, 지어낸경험, 당부문단,
     targetChars: 목표, targetPhotos: 목표사진, 지정목표: 목표글자수,

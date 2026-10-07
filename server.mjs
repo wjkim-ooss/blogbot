@@ -9,7 +9,7 @@ import { resolveDraftView } from "./permissions.mjs";
 // 보관함 읽기는 한 곳(scripts/보관함.mjs)에서 한다 — 발행검증과 같은 목록을 봐야 한다.
 import { 보관함읽기 } from "./scripts/보관함.mjs";
 // 초안 판정 규칙은 브라우저와 한 파일을 함께 쓴다 (web/rules.js). 두 벌로 두면 반드시 갈라진다.
-import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 압축찾기, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형, 원장글보관함, 원장글고르기, 문장길이범위, 깨진기준, 초안본문, 적힌목표, 적힌유형 } from "./web/rules.js";
+import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 압축찾기, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형, 원장글보관함, 원장글고르기, 문장길이범위, 깨진기준, 초안본문, 적힌목표, 적힌유형, 문단나누기, 본문문장, 소제목줄, 키워드꼬리, 이름꼬리 } from "./web/rules.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
@@ -123,7 +123,7 @@ const findReference = (keyword) => 레퍼런스고르기(keyword).ref;
 // 초안 파일명 규칙 — 날짜 접두사 + 키워드. 슬래시·공백을 지우는 것이 validName을 통과시키는 핵심이라
 // 두 군데(AI 생성·직접 쓰기)가 따로 적어 두면 한쪽만 고쳐져 이름이 갈린다.
 const draftBaseName = (keyword) =>
-  `${new Date().toISOString().slice(0, 10)}_${keyword.replace(/[\/\s]+/g, "-")}`;
+  `${new Date().toISOString().slice(0, 10)}_${키워드꼬리(keyword)}`;
 
 // ---------- 원장 샵 정보 ----------
 // 원장만 아는 값(관리 구성·가격·이력·운영 형태)을 한 번 받아 두고 글마다 프롬프트에 실어 보낸다.
@@ -1013,16 +1013,19 @@ const streamOnce = (client, messages, send, 유형, 기록, 시스템, 최소) =
   client ? streamClaude(client, messages, send, 유형, 기록, 시스템) : streamGemini(messages, send, 유형, 기록, 시스템, 최소);
 
 
+// 모자란 글자를 채우려면 짧은 문장이 몇 개 더 들어야 하나 (AI는 시킨 것보다 짧게 쓴다 — 넉넉히)
+const 더쓸문장 = (v) => Math.ceil(((v.targetChars - v.chars) * 넉넉히()) / 평균문장길이());
+
 // "글자수 부족" 같은 말만으로는 잘 안 고쳐진다. 얼마나 모자란지, 무엇을 하라는 건지 숫자로 준다.
-// 권장도: 권장 항목까지 이번에 같이 고치라고 한다 (고쳐 쓰기를 한 번만 부르므로 남겨 둘 여유가 없다)
-function fixInstruction(v, keyword, { 권장도 = false } = {}) {
+// 권장 항목도 이번에 같이 고치라고 한다 — 고쳐 쓰기는 한 번뿐이라 남겨 둘 여유가 없다.
+function fixInstruction(v, keyword) {
   const todo = [];
   for (const issue of v.issues) {
     if (issue.startsWith("글자수 부족")) {
       const 모자란 = v.targetChars - v.chars;
       todo.push(
         `글자수: 지금 ${v.chars.toLocaleString()}자 → ${v.targetChars.toLocaleString()}자 이상. ` +
-          `약 ${모자란.toLocaleString()}자가 부족하다 — 짧은 문장으로 ${Math.ceil((모자란 * 넉넉히()) / 평균문장길이())}문장쯤 더 써야 찬다. ` +
+          `약 ${모자란.toLocaleString()}자가 부족하다 — 짧은 문장으로 ${더쓸문장(v)}문장쯤 더 써야 찬다. ` +
           `소제목 1~2개를 더 만들어 관리 과정·시간·고객이 흔히 하는 실수 같은 새 내용을 채워라(금액은 쓰지 않는다). ` +
           `기존 문장을 늘려 쓰지 말고 새 내용을 더해라 — 문장을 길게 늘이면 문장 길이에서 다시 걸린다.`
       );
@@ -1047,7 +1050,7 @@ function fixInstruction(v, keyword, { 권장도 = false } = {}) {
   return [
     "아래를 전부 고쳐서 글 **전체**를 같은 출력 형식으로 다시 출력하라. 요약·설명 없이 글만 출력한다.",
     ...todo.map((t) => `- ${t}`),
-    v.advice.length ? `\n${권장도 ? "이것도 이번에 같이 고쳐라" : "필수는 아니지만 함께 개선하면 좋은 것"}:\n- ${v.advice.join("\n- ")}` : "",
+    v.advice.length ? `\n이것도 이번에 같이 고쳐라:\n- ${v.advice.join("\n- ")}` : "",
     "\n고치면서 이미 통과한 항목(글자수·키워드 횟수·추상어 없음 등)을 깨뜨리지 마라.",
   ]
     .filter(Boolean)
@@ -1065,15 +1068,15 @@ function 덧붙일자리(body) {
   const 줄 = String(body).split("\n");
   const 태그 = 줄.findIndex((l) => /^#[^#\s]/.test(l.trim()));
   const 글끝 = 태그 >= 0 ? 태그 : 줄.length;
-  const 소제목 = 줄.map((l, i) => (/^###\s/.test(l) ? i : -1)).filter((i) => i >= 0);
+  const 소제목 = 줄.map((l, i) => (소제목줄.test(l) ? i : -1)).filter((i) => i >= 0);
   const 자리 = [];
   if (소제목.length) {
-    소제목.forEach((h, k) => 자리.push({ 이름: 줄[h].replace(/^###\s*/, "").trim(), 시작: h, 끝: k + 1 < 소제목.length ? 소제목[k + 1] : 글끝 }));
+    소제목.forEach((h, k) => 자리.push({ 이름: 줄[h].replace(/^#+\s*/, "").trim(), 시작: h, 끝: k + 1 < 소제목.length ? 소제목[k + 1] : 글끝 }));
   } else {
     let 시작 = 0;
     const 끊기 = 줄.map((l, i) => (/^\[사진/.test(l.trim()) && i < 글끝 ? i : -1)).filter((i) => i > 0);
     for (const 끝 of [...끊기, 글끝]) {
-      const 첫줄 = 줄.slice(시작, 끝).find((l) => l.trim() && !특별줄(l));
+      const 첫줄 = 줄.slice(시작, 끝).find((l) => l.trim() && 본문문장(l.trim()));
       if (첫줄) 자리.push({ 이름: `구간 ${자리.length + 1} — "${첫줄.trim().slice(0, 20)}"로 시작하는 부분`, 짧은이름: `구간 ${자리.length + 1}`, 시작, 끝 });
       시작 = 끝 + 1;
     }
@@ -1081,13 +1084,12 @@ function 덧붙일자리(body) {
   return 자리;
 }
 
-function 덧붙이기지시(parsed, v) {
-  const 소제목들 = 덧붙일자리(parsed.body).map((x) => x.이름);
+function 덧붙이기지시(body, v) {
   const 모자란 = v.targetChars - v.chars;
   return [
     `글이 공백 빼고 ${v.chars.toLocaleString()}자라 ${v.targetChars.toLocaleString()}자에 ${모자란.toLocaleString()}자 모자란다.`,
     "글은 다시 쓰지 마라. 이미 쓴 문장은 한 글자도 고치지 않는다.",
-    `대신 아래 자리들 끝에 덧붙일 새 문단만 써라 — 모두 합쳐 짧은 문장 ${Math.ceil((모자란 * 넉넉히()) / 평균문장길이())}개 이상.`,
+    `대신 아래 자리들 끝에 덧붙일 새 문단만 써라 — 모두 합쳐 짧은 문장 ${더쓸문장(v)}개 이상.`,
     "자리마다 2~4문장. 그 자리에 이어지는 새 내용(관리 과정·순서, 고객이 집에서 흔히 하는 실수, 그 자리에서 고객이 하는 말)을 쓴다. 앞 내용을 되풀이하지 마라.",
     `지켜 온 것은 그대로: 한 문장은 짧게(${CONFIG.문장길이.하한}~${CONFIG.문장길이.상한}자), 금액·지어낸 숫자·지어낸 사례 금지, 키워드는 더 넣지 않는다.`,
     "",
@@ -1096,16 +1098,16 @@ function 덧붙이기지시(parsed, v) {
     "덧붙일 문단",
     "",
     "자리 목록:",
-    ...소제목들.map((t) => `- ${t}`),
+    ...덧붙일자리(body).map((x) => `- ${x.이름}`),
   ].join("\n");
 }
 
-// AI가 준 '### 소제목 + 문단'을 그 소제목 끝(다음 소제목 앞, 마지막이면 해시태그 앞)에 끼운다.
-// 소제목 이름이 조금 달라도(띄어쓰기·문장부호) 맞춰 보고, 못 찾은 덩이는 버린다 — 엉뚱한 자리에 넣느니 안 넣는다.
+// AI가 준 '### 자리 + 문단'을 그 자리 끝(다음 소제목 앞, 마지막이면 해시태그 앞)에 끼운다. 문단은 parseDraftOutput 이 나눈다.
+// 이름이 조금 달라도(띄어쓰기·문장부호) 맞춰 보고, 못 찾은 덩이는 버린다 — 엉뚱한 자리에 넣느니 안 넣는다.
 function 덧붙여넣기(body, 답) {
   const 정규 = (t) => String(t).replace(/[^\p{L}\p{N}]/gu, "");
   const 덩이들 = [];
-  for (const 덩이 of String(답 || "").replace(/```[a-z]*\n?/gi, "").split(/^###\s*/m).slice(1)) {
+  for (const 덩이 of 울타리벗기기(답).split(/^#{2,4}\s*/m).slice(1)) {
     const [첫, ...나머지] = 덩이.split("\n");
     const 글 = 나머지.join("\n").trim();
     if (글) 덩이들.push({ 머리: 정규(첫), 글 });
@@ -1124,63 +1126,43 @@ function 덧붙여넣기(body, 답) {
     줄.splice(끝, 0, "", 덩.글, ...(줄[끝]?.trim() ? [""] : []));
     붙인 += 1;
   }
-  return 붙인 ? 문단나누기(줄.join("\n").replace(/\n{3,}/g, "\n\n")) : null;
+  return 붙인 ? 줄.join("\n").replace(/\n{3,}/g, "\n\n") : null;
 }
 
 // 같은 키워드로 이미 쓴 초안(최근 3편)의 제목·소제목·첫 문장 — 새 글이 이것과 겹치지 않게 프롬프트에 싣는다.
 // 본문을 통째로 싣지 않는다: 길고, 통째로 보이면 오히려 따라 쓴다.
 async function 같은키워드글(ctx, keyword) {
   try {
-    const 꼬리 = keyword.replace(/[\/\s]+/g, "-");
-    const 목록 = (await store.list(ctx.userId)).filter((d) => d.name.replace(/^\d{4}-\d{2}-\d{2}_/, "").replace(/(_\d+)?\.md$/, "") === 꼬리).slice(0, 3);
+    const 목록 = (await store.list(ctx.userId)).filter((d) => 이름꼬리(d.name) === 키워드꼬리(keyword)).slice(0, 3);
     const 글들 = await Promise.all(목록.map((d) => Promise.resolve(store.get(ctx.userId, d.name)).catch(() => null)));
     return 글들.filter(Boolean).map((c) => {
-      const 본 = 초안본문(c);
-      const 제목 = (본.match(/^제목:\s*(.+)$/m) || [])[1] || "";
-      const 소제목 = (본.match(/^###\s+.+$/gm) || []).map((x) => x.replace(/^###\s+/, "")).slice(0, 6);
-      const 첫 = 본.split("\n").find((l) => l.trim() && !/^(제목:|\[사진|#)/.test(l.trim())) || "";
-      return [`제목 "${제목}"`, 소제목.length ? `소제목 ${소제목.map((x) => `"${x}"`).join(", ")}` : "", 첫 ? `첫 문장 "${첫.trim()}"` : ""].filter(Boolean).join(" / ");
+      const { title, body } = 초안풀기(초안본문(c), keyword);
+      const 소제목 = body.split("\n").filter((l) => 소제목줄.test(l)).map((l) => l.replace(/^#+\s*/, "")).slice(0, 6);
+      const 첫 = body.split("\n").find((l) => l.trim() && 본문문장(l.trim())) || "";
+      return [`제목 "${title}"`, 소제목.length ? `소제목 ${소제목.map((x) => `"${x}"`).join(", ")}` : "", 첫 ? `첫 문장 "${첫.trim()}"` : ""].filter(Boolean).join(" / ");
     });
   } catch { return []; }
 }
 
-// 한 번에 몰아 고쳐 쓰는 지시 — 불합격·권장·말투를 같이 준다. 예전엔 셋을 따로 불러 AI를 7번까지 불렀다.
+// 한 번에 몰아 고쳐 쓰는 지시 — 불합격·권장(말투 비율·어미 되풀이·키워드 횟수 포함)을 같이 준다.
+// 예전엔 셋을 따로 불러 AI를 7번까지 불렀다. 말투는 '무엇을'은 권장에 이미 있으니 '어떻게'(본보기)만 덧붙인다.
 function 고쳐쓰기지시(v, keyword) {
-  const 말투줄 = v.말투 ? 말투지시(v, { 같이: true }) : "";
-  return [
-    fixInstruction(v, keyword, { 권장도: true }),
-    말투줄 ? `\n말투·키워드 자리도 같이:\n${말투줄}` : "",
-  ].filter(Boolean).join("\n");
+  return [fixInstruction(v, keyword), v.말투 ? `\n말투를 고칠 때는 이렇게:\n${말투본보기()}` : ""].filter(Boolean).join("\n");
 }
 
-// 말투만 다듬는 지시. 고쳐 쓰기는 불합격 항목에 매달리느라 말투를 못 챙긴다 —
-// 내용이 다 맞은 뒤에 어미와 리듬만 한 번 더 손본다. (2026-09-14: 새 지시문으로도 말 거는 문장이 6%였다)
-// 같이: 고쳐쓰기지시 안에 넣을 때 — "내용은 손대지 말라"·출력 형식 줄을 뺀다(고쳐 쓰기 지시가 갖고 있다)
-function 말투지시(v, { 같이 = false } = {}) {
+// 어미를 어떻게 바꾸나 — 2026-09-14: 지시문만으로는 말 거는 문장이 6%였다. 본보기를 보여 줘야 바뀐다.
+function 말투본보기() {
   const M = CONFIG.말투 || {};
   const 흐름 = (M.흐름본보기?.줄 || []).map((x) => `  ${x}`).join("\n");
   const G = M.고침본보기 || {};
-  const 줄 = [
-    같이 ? `- 말을 거는 문장이 지금 ${v.말투.비율}%다. ${v.말투.최소}~${v.말투.최대}%로.` : `내용은 손대지 말고 말투만 다듬어라. 지금 말을 거는 문장이 ${v.말투.비율}%(${v.말투.공감}/${v.말투.전체})다. ${v.말투.최소}~${v.말투.최대}%로.`,
-    v.말투.연속단정 > v.말투.연속허용
-      ? `- ~입니다 계열 문장이 ${v.말투.연속단정}개 연달아 이어진다 ("${v.말투.연속자리.slice(0, 40)}"부터). ${v.말투.연속허용}개를 넘기지 마라 — 그 줄 가운데 한 문장을 말 거는 문장으로 바꿔 끊어라. 글 전체에서 그런 줄마다.`
-      : "",
-    // 남은 권장 항목도 여기서 같이 고친다 — 고쳐 쓰기는 불합격만 보고, 권장은 끝까지 화면에 남아 원장님께 '고칠 게 많다'로 읽혔다(10/7 우진)
-    v.kwOver ? `- 키워드 "${v.keyword}"가 본문에 ${v.kwCount}번이다. ${CONFIG.키워드횟수.max}번만 남기고 나머지는 "이 트러블", "이런 피부"처럼 가리키는 말로 바꿔라. 띄어쓰기로 쪼개지 마라.` : "",
-    v.첫문단키워드 === false && !v.kwLack ? `- 첫 문단(${v.첫문단문장수}문장 안)에 "${v.keyword}"가 없다 — 도입 문장 하나에 자연스럽게 넣고, 대신 뒤쪽 한 곳을 가리키는 말로 바꿔 횟수는 그대로 둔다.` : "",
-    같이 ? "" : "- 바꿀 것: 문장 끝(어미)과 문장의 리듬, 위에 적은 키워드 자리뿐이다. 소제목·숫자·사진 자리·해시태그·제목·글자수는 그대로 둔다. 문장을 지우거나 새로 넣지 마라.",
+  return [
     "- 장면을 묘사한 다음 문장은 ~시죠?로, 이유를 꺼내는 문장은 ~인데요로, 오해를 바로잡는 문장은 ~거든요로, 예를 보여주는 문장은 ~어떤가요?로.",
     "- 설명·근거·약속은 ~입니다 / ~합니다 그대로 둔다. ~어요 / ~해요 / ~네요는 쓰지 마라.",
     "- 어색해질 바에는 그 문장은 ~입니다로 둔다. 억지로 바꾸지 마라.",
-    v.말투.반복어미?.length
-      ? `- 한 어미가 되풀이된다: ${v.말투.반복어미.map((x) => `~${x.어미} ${x.횟수}번`).join(", ")}. 글 전체에서 ${같은어미상한}번까지만 — 넘친 것은 다른 어미로 나누거나 ~입니다로 돌려라.`
-      : "",
     `- 말을 걸려고 두 문장을 ~인데요로 잇지 마라. 한 문장은 공백 빼고 ${문장범위} — 넘는 문장은 마침표나 쉼표로 끊거나 줄을 바꿔 두 줄로.`,
     G.나쁨 && G.좋음 ? `- 같은 내용, 다른 말투:\n  (딱딱함) ${G.나쁨}\n  (이렇게) ${G.좋음}` : "",
     흐름 ? `- 이 리듬으로:\n${흐름}` : "",
-    같이 ? "" : "글 **전체**를 같은 출력 형식으로 다시 출력하라. 요약·설명 없이 글만 출력한다.",
-  ];
-  return 줄.filter(Boolean).join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 // 월 한도 확인·차감 (level1만). 통과 시 남은 횟수 반환, 초과 시 null.
@@ -1274,9 +1256,8 @@ async function handleGenerate(res, body, ctx) {
     // 엔진이 이미 쓸 수 있는 모델을 모두 훑고 일반 호출까지 해 본 뒤에 던진다.
     // 여기서 한 번 더 부르면 그 전부를 처음부터 되풀이할 뿐이다 (무료 한도만 두 배로 태운다).
     const 기록 = {}; // 어느 모델이 썼는지
-    let draft = await streamOnce(client, messages, send, 글쓴이유형, 기록);
-    let { parsed, validation } = check(draft);
-    // 마지막 시도가 늘 제일 낫지는 않다. 고쳐 쓰다 더 나빠질 수도 있으므로 제일 좋았던 것을 들고 간다.
+    let { parsed, validation } = check(await streamOnce(client, messages, send, 글쓴이유형, 기록));
+    // 고쳐 쓰다 더 나빠질 수도 있으므로 제일 좋았던 것을 들고 간다.
     // 순위: 통과 여부 → 남은 고칠 점이 적은 순 → 남은 권장이 적은 순 → 긴 순.
     let best = { parsed, validation, 모델: 기록.모델 };
     const 더나은가 = (a, b) =>
@@ -1291,46 +1272,41 @@ async function handleGenerate(res, body, ctx) {
     // 고칠 게 없으면 ①에서 끝난다. 글자수 하나만 모자라면 ②를 건너뛴다(다시 쓰기보다 덧붙이기가 확실히 늘린다).
     const 최대 = CONFIG.생성?.AI호출최대 ?? 3;
     let 부른 = 1;
-    const 짧음 = (v) => v.issues.some((i) => i.startsWith("글자수 부족"));
-    const 다른걸림 = (v) => v.issues.filter((i) => !i.startsWith("글자수 부족")).length;
+    const 짧음 = (v) => v.걸린기준.includes("글자수");
+    const 다른걸림 = (v) => v.걸린기준.some((n) => n !== "글자수");
+    // 고쳐 쓰기를 부를 만한 권장 — 말투·어미·키워드 자리처럼 다시 쓰면 고쳐지는 것만 (원장확인 자리·제목 숫자는 다시 써도 그대로다)
     const 다듬을까 = (v) => {
       if (!CONFIG.말투?.다듬기?.켜짐) return false;
       const m = v.말투;
       return !!(m && (m.비율 < m.최소 || m.연속단정 > m.연속허용 || m.반복어미?.length)) || v.kwOver || v.첫문단키워드 === false;
     };
-
-    if (부른 < 최대 && validation.chars >= 100 && (다른걸림(validation) || 다듬을까(validation))) {
+    // AI를 한 번 더 부른다: 지금 제일 좋은 글 + 지시만 보내고(앞 차례는 버린다), 답을 받기(답)로 넘긴다. 실패하면 null.
+    const 한번더 = async (알림, 지시) => {
       부른 += 1;
-      send({ type: "status", message: `한 번에 고쳐 쓰는 중 (AI ${부른}/${최대}번째): ${[...validation.issues, ...validation.advice].length}가지` });
+      send({ type: "status", message: `${알림} (AI ${부른}/${최대}번째)` });
       send({ type: "reset" });
       messages.splice(1);
-      messages.push({ role: "assistant", content: `제목: ${parsed.title}\n\n${parsed.body}` }, { role: "user", content: 고쳐쓰기지시(validation, keyword) });
-      try {
-        const 이번 = { ...check(await streamOnce(client, messages, send, 글쓴이유형, 기록)), 모델: 기록.모델 };
-        if (더나은가(이번, best)) { best = 이번; ({ parsed, validation } = best); }
-        else send({ type: "status", message: "고친 글이 처음 글보다 낫지 않아 처음 글을 씁니다" });
-      } catch (e) {
-        send({ type: "status", message: `고쳐 쓰기는 건너뜁니다 (${e.message})` });
-      }
+      messages.push({ role: "assistant", content: `제목: ${parsed.title}\n\n${parsed.body}` }, { role: "user", content: 지시 });
+      try { return await streamOnce(client, messages, send, 글쓴이유형, 기록); }
+      catch (e) { send({ type: "status", message: `이번 차례는 건너뜁니다 (${e.message})` }); return null; }
+    };
+    const 받기 = (이번) => { best = { ...이번, 모델: 기록.모델 }; ({ parsed, validation } = best); };
+
+    if (부른 < 최대 && validation.chars >= 100 && (다른걸림(validation) || 다듬을까(validation))) {
+      const 답 = await 한번더(`한 번에 고쳐 쓰는 중: ${validation.issues.length + validation.advice.length}가지`, 고쳐쓰기지시(validation, keyword));
+      const 이번 = 답 && check(답);
+      if (이번 && 더나은가(이번, best)) 받기(이번);
+      else if (이번) send({ type: "status", message: "고친 글이 처음 글보다 낫지 않아 처음 글을 씁니다" });
     }
 
     // 글자수만 모자라면 다시 쓰게 하지 않고 덧붙인다 (덧붙이기지시 참고). 덧붙이기는 줄지 않으니 남은 횟수만큼 되풀이해도 된다.
+    // 받는 기준은 대화 수정과 같다 — 늘었고, 전에 통과하던 기준이 깨지지 않았으면(깨진기준).
     while (부른 < 최대 && 짧음(validation) && validation.chars >= 100) {
-      부른 += 1;
-      send({ type: "status", message: `글자수가 ${(validation.targetChars - validation.chars).toLocaleString()}자 모자라 문단을 덧붙이는 중 (AI ${부른}/${최대}번째)` });
-      send({ type: "reset" });
-      messages.splice(1);
-      messages.push({ role: "assistant", content: `제목: ${parsed.title}\n\n${parsed.body}` }, { role: "user", content: 덧붙이기지시(parsed, validation) });
-      try {
-        const 새몸 = 덧붙여넣기(parsed.body, await streamOnce(client, messages, send, 글쓴이유형, 기록));
-        const 이번 = 새몸 && check(`제목: ${parsed.title}\n\n${새몸}`);
-        if (이번 && 이번.validation.chars > validation.chars && 다른걸림(이번.validation) <= 다른걸림(validation)) {
-          best = { ...이번, 모델: 기록.모델 }; ({ parsed, validation } = best);
-        } else { send({ type: "status", message: "덧붙인 글이 다른 곳을 어긋나게 해서 쓰지 않았습니다" }); break; }
-      } catch (e) {
-        send({ type: "status", message: `덧붙이기는 건너뜁니다 (${e.message})` });
-        break;
-      }
+      const 답 = await 한번더(`글자수가 ${(validation.targetChars - validation.chars).toLocaleString()}자 모자라 문단을 덧붙이는 중`, 덧붙이기지시(parsed.body, validation));
+      const 새몸 = 답 && 덧붙여넣기(parsed.body, 답);
+      const 이번 = 새몸 && check(`제목: ${parsed.title}\n\n${새몸}`);
+      if (이번 && 이번.validation.chars > validation.chars && !깨진기준(validation, 이번.validation).length) 받기(이번);
+      else { if (답) send({ type: "status", message: "덧붙인 글이 다른 곳을 어긋나게 해서 쓰지 않았습니다" }); break; }
     }
 
     send({
@@ -1404,39 +1380,10 @@ function describeError(e, ctx) {
   return adminHint(ctx, "생성 중 오류가 발생했습니다.", `상세: ${String(e?.message || e)}`) + 대안안내;
 }
 
-// AI가 문단을 안 나누고 사진과 사진 사이 열네 줄을 한 덩어리로 붙여 내곤 한다(2026-10-07 우진: "문단도 안 나뉘어 있어").
-// 지시로는 잘 안 고쳐져서 서버가 나눈다: 붙은 줄이 다섯 줄을 넘으면 문장이 끝나는 줄(. ? ! 로 끝)에서 끊는다.
-// 세 줄쯤 모였을 때 끊고, 끊은 뒤 한 줄만 남게 되면 끊지 않는다(외톨이 한 줄 문단은 뚝뚝 끊겨 보인다).
-const 특별줄 = (l) => /^(#{1,4}\s|\[사진|#[^#\s]|제목:)/.test(l.trim());
-const 문장끝줄 = (l) => /[.?!…][)"'”’]*\s*$/.test(l.trim());
-// 당부("~하셔야 합니다")로 끝나는 줄 뒤에서는 끊지 않는다 — 문단 끝 당부가 늘면 '훈계문' 권장이 새로 생긴다(config.당부)
-const 당부줄 = (l) => (CONFIG.당부?.어미 || []).some((e) => l.trim().replace(/[.?!…)"'”’\s]+$/, "").endsWith(e));
-function 문단나누기(body) {
-  const 줄 = String(body).split("\n");
-  const 나온 = [];
-  let 덩이 = [];
-  const 털기 = () => {
-    if (덩이.length <= 5) { 나온.push(...덩이); 덩이 = []; return; }
-    let 모음 = [];
-    덩이.forEach((l, i) => {
-      모음.push(l);
-      const 남은 = 덩이.length - i - 1;
-      if (모음.length >= 3 && 문장끝줄(l) && !당부줄(l) && 남은 >= 2) { 나온.push(...모음, ""); 모음 = []; }
-    });
-    나온.push(...모음);
-    덩이 = [];
-  };
-  for (const l of 줄) {
-    if (!l.trim() || 특별줄(l)) { 털기(); 나온.push(l); }
-    else 덩이.push(l);
-  }
-  털기();
-  return 나온.join("\n");
-}
-
+// AI가 문단을 안 나누고 덩어리로 낸 것은 여기서 한 번 나눈다 (규칙은 rules.js 문단나누기, 숫자는 config.문단)
 function parseDraftOutput(text, keyword) {
   const p = 초안풀기(text, keyword);
-  return { ...p, body: 문단나누기(p.body) };
+  return { ...p, body: 문단나누기(p.body, CONFIG) };
 }
 function 초안풀기(text, keyword) {
   const m = text.match(/^\s*제목:\s*(.+)\n+([\s\S]*)$/);
@@ -1556,8 +1503,11 @@ ${기준프롬프트(유형)}
 // AI는 칸 이름을 조금씩 틀린다("<바꾼 부분>", 코드 울타리로 감싸기, 끝에서 안 닫기). 뜻이 분명한 것은 받는다.
 // 받지 않는 것: 끝에서 안 닫힌 <수정본> — 글이 잘린 것일 수 있다. 짧은 <바꾼부분>은 잘릴 일이 드물어 받는다.
 // 칸 없이 </답> 뒤에 쓴 글은 '남은글'로 따로 돌려준다 — 부르는 쪽이 그 글이 쓸 만한지 판단한다.
+// AI가 답을 코드 울타리(```)로 감싸 보내곤 한다 — 대화 답과 덧붙이기 답이 같이 쓴다
+const 울타리벗기기 = (text) => String(text || "").replace(/```[a-z]*\n?/gi, "");
+
 function 대화답풀기(text) {
-  const 원 = (text || "").replace(/```[a-z]*\n?/gi, "");
+  const 원 = 울타리벗기기(text);
   const 칸 = { 답: "답", 바꾼부분: "바꾼\\s*부분", 수정본: "수정\\s*본" };
   // 닫힘없어도: 끝에서 안 닫힌 칸도 받는다(끝까지가 그 칸)
   const 꺼내 = (이름, 닫힘없어도 = false) => {
@@ -1603,10 +1553,12 @@ async function 대화판정준비(원문, keyword, ctx) {
   return { 유형, 재기 };
 }
 
-// 0 이면 제한 없음 — 2026-10-07 우진 "대화제한은 일단 빼줘". 숫자를 다시 넣으면 그대로 막힌다.
-const 대화최대 = () => CONFIG.대화수정?.초안당최대 || 0;
-const 남은횟수 = (쓴) => Math.max(0, 대화최대() - 쓴);
-const 대화제한없음 = (ctx) => ctx.unlimited || !대화최대();
+// 이 초안에서 대화를 몇 번까지 하나 — null 이면 제한 없음. '제한 없음'을 판단하는 곳은 여기 하나다.
+// 설정 0 = 제한 없음 (2026-10-07 우진 "대화제한은 일단 빼줘" — 숫자를 다시 넣으면 그대로 막힌다).
+// 관리자는 자기 초안에 무제한. 남의 초안을 열람할 때(readOnly)는 그 원장 기준으로 보여 준다.
+const 대화한도 = (ctx, readOnly = false) =>
+  (ctx.unlimited && !readOnly) || !CONFIG.대화수정?.초안당최대 ? null : CONFIG.대화수정.초안당최대;
+const 남은횟수 = (한도, 쓴) => (한도 == null ? null : Math.max(0, 한도 - 쓴));
 
 // 대화는 초안 '이름'(날짜_키워드)에 붙는데, 초안을 지워도 대화는 남는다(관리자 대화 기록에 쓴다).
 // 그래서 같은 날 같은 키워드로 다시 만든 초안에 지운 초안의 대화가 이어져 보였다 — 2026-10-07 우진:
@@ -1625,26 +1577,35 @@ async function 대화센수(userId, name) {
   return count || 0;
 }
 
+// 이 초안의 최근 대화 몇 개(시간순). 초안 시각과 대화를 함께 받아 거른다 — 차례로 물으면 왕복이 두 번이다.
+// 최신순으로 몇 개 받은 뒤 걸러도 '거른 뒤 몇 개'와 같다(오래된 줄부터 떨어져 나가므로).
+async function 이초안대화(주인, name, 칸, 몇개) {
+  const [시작, { data, error }] = await Promise.all([
+    초안시작(주인, name),
+    supaAdmin.from("draft_chats").select(`${칸}, created_at`).eq("user_id", 주인).eq("draft_name", name)
+      .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(몇개),
+  ]);
+  if (error) return { error };
+  return { data: (data || []).filter((r) => Date.parse(r.created_at) >= Date.parse(시작)).reverse() };
+}
+
 // AI에게 앞 대화를 몇 차례 같이 보여 준다 — "아까 그거 다시"가 통하게. 짝이 맞게 user 로 시작시킨다.
 async function 지난대화(userId, name) {
-  const { data } = await supaAdmin.from("draft_chats").select("role, content")
-    .eq("user_id", userId).eq("draft_name", name).gte("created_at", await 초안시작(userId, name)).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(6);
-  const 차례 = (data || []).reverse().map((r) => ({ role: r.role, content: r.content }));
+  const { data } = await 이초안대화(userId, name, "role, content", 6);
+  const 차례 = (data || []).map((r) => ({ role: r.role, content: r.content }));
   while (차례.length && 차례[0].role !== "user") 차례.shift();
   return 차례;
 }
 
 async function 대화보기(ctx, 주인, name, readOnly) {
   if (!ctx.authOn) return { 준비됨: true, 대화: [], 남은: null, 최대: null };
-  const { data, error } = await supaAdmin.from("draft_chats").select("id, role, content, selection, applied, created_at")
-    .eq("user_id", 주인).eq("draft_name", name).gte("created_at", await 초안시작(주인, name)).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(60);
+  // 최근 60개를 시간순으로 — 오래된 60개만 보이면 새 대화가 화면에서 사라진다.
+  // 한 차례의 부탁·답은 한 번에 저장돼 created_at 이 같다 — id 로 한 번 더 줄 세워야 순서가 안 뒤집힌다(이초안대화).
+  const { data, error } = await 이초안대화(주인, name, "id, role, content, selection, applied", 60);
   if (error) return { 준비됨: false, 대화: [], 남은: null, 최대: null };
-  data.reverse();   // 최근 60개를 시간순으로 — 오래된 60개만 보이면 새 대화가 화면에서 사라진다
-  // 한 차례의 부탁·답은 한 번에 저장돼 created_at 이 같다 — id 로 한 번 더 줄 세워야 순서가 안 뒤집힌다
   const 쓴 = data.filter((r) => r.role === "user").length;   // 제한이 있을 때만 쓰는 값. 제한을 다시 걸 때 60줄(30번)을 넘기면 이 셈이 모자라진다
-  // 관리자가 자기 초안을 볼 때는 무제한. 남의 초안을 열람할 때는 그 원장의 남은 횟수를 보여 준다.
-  const 무제한 = (ctx.unlimited && !readOnly) || !대화최대();
-  return { 준비됨: true, 대화: data, 남은: 무제한 ? null : 남은횟수(쓴), 최대: 무제한 ? null : 대화최대() };
+  const 한도 = 대화한도(ctx, readOnly);
+  return { 준비됨: true, 대화: data, 남은: 남은횟수(한도, 쓴), 최대: 한도 };
 }
 
 // AI 답을 원장님께 보이기 전에 다듬는다 — 지시문으로 시켜도 모델이 안 지키는 두 가지를 확실하게.
@@ -1667,12 +1628,13 @@ async function handleChat(res, body, ctx, name) {
   if (선택 && 머리끝 >= 0 && 선택.start < 머리끝 + 5) return json(res, 400, { error: "본문 안에서 드래그해 주세요" });
 
   const 기록함 = ctx.authOn;   // 로컬 단독 모드에는 대화를 남길 표가 없다
+  const 한도 = 기록함 ? 대화한도(ctx) : null;
   let 쓴횟수 = 0;
-  if (기록함 && !대화제한없음(ctx)) {   // 제한이 없으면 세지 않는다
+  if (한도 != null) {   // 제한이 없으면 세지 않는다
     try { 쓴횟수 = await 대화센수(ctx.userId, name); }
     catch { return json(res, 503, { error: "대화 수정은 곧 열립니다. 조금만 기다려 주세요." }); }
-    if (쓴횟수 >= 대화최대())
-      return json(res, 429, { error: `이 초안의 대화 수정 ${대화최대()}번을 모두 쓰셨어요. 나머지는 편집기에서 직접 고쳐 주세요.`, 남은: 0 });
+    if (쓴횟수 >= 한도)
+      return json(res, 429, { error: `이 초안의 대화 수정 ${한도}번을 모두 쓰셨어요. 나머지는 편집기에서 직접 고쳐 주세요.`, 남은: 0 });
   }
 
   const { engine, client } = await 엔진준비();
@@ -1752,7 +1714,7 @@ async function handleChat(res, body, ctx, name) {
   }
   return json(res, 200, {
     답, 새글, 대화id, 막힘,
-    남은: 대화제한없음(ctx) || !기록함 ? null : 남은횟수(쓴횟수 + 1),
+    남은: 남은횟수(한도, 쓴횟수 + 1),
   });
 }
 
@@ -1980,4 +1942,4 @@ if (process.argv[1] && NFC(path.resolve(process.argv[1])) === NFC(fileURLToPath(
   server.listen(PORT, () => console.log(`블로그봇 대시보드: http://localhost:${PORT}`));
 
 // 테스트에서만 쓴다 — 가짜 구글 서버를 세워 놓고 한도·스트리밍 동작을 확인하려고
-export const __test = { 같은키워드글, 문단나누기, 덧붙일자리, 덧붙여넣기, 덧붙이기지시, streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, 기준프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기, 답다듬기 };
+export const __test = { 같은키워드글, 덧붙일자리, 덧붙여넣기, 덧붙이기지시, streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, 기준프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기, 답다듬기 };
