@@ -1543,10 +1543,19 @@ const 대화최대 = () => CONFIG.대화수정?.초안당최대 || 0;
 const 남은횟수 = (쓴) => Math.max(0, 대화최대() - 쓴);
 const 대화제한없음 = (ctx) => ctx.unlimited || !대화최대();
 
+// 대화는 초안 '이름'(날짜_키워드)에 붙는데, 초안을 지워도 대화는 남는다(관리자 대화 기록에 쓴다).
+// 그래서 같은 날 같은 키워드로 다시 만든 초안에 지운 초안의 대화가 이어져 보였다 — 2026-10-07 우진:
+// "하나의 초안에만 AI 대화를 쓰자. 다른 초안에는 처음부터". 이 초안이 만들어진 뒤의 대화만 이 초안 것이다.
+async function 초안시작(주인, name) {
+  const { data } = await supaAdmin.from("drafts").select("created_at").eq("user_id", 주인).eq("name", name).maybeSingle();
+  return data?.created_at || "1970-01-01T00:00:00Z";
+}
+
 // 표가 아직 없으면(우진이 SQL을 안 돌렸으면) 오류를 던진다 — 부르는 쪽이 "곧 열립니다"로 바꾼다.
 async function 대화센수(userId, name) {
   const { count, error } = await supaAdmin.from("draft_chats")
-    .select("id", { count: "exact", head: true }).eq("user_id", userId).eq("draft_name", name).eq("role", "user");
+    .select("id", { count: "exact", head: true }).eq("user_id", userId).eq("draft_name", name).eq("role", "user")
+    .gte("created_at", await 초안시작(userId, name));
   if (error) throw error;
   return count || 0;
 }
@@ -1554,7 +1563,7 @@ async function 대화센수(userId, name) {
 // AI에게 앞 대화를 몇 차례 같이 보여 준다 — "아까 그거 다시"가 통하게. 짝이 맞게 user 로 시작시킨다.
 async function 지난대화(userId, name) {
   const { data } = await supaAdmin.from("draft_chats").select("role, content")
-    .eq("user_id", userId).eq("draft_name", name).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(6);
+    .eq("user_id", userId).eq("draft_name", name).gte("created_at", await 초안시작(userId, name)).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(6);
   const 차례 = (data || []).reverse().map((r) => ({ role: r.role, content: r.content }));
   while (차례.length && 차례[0].role !== "user") 차례.shift();
   return 차례;
@@ -1563,7 +1572,7 @@ async function 지난대화(userId, name) {
 async function 대화보기(ctx, 주인, name, readOnly) {
   if (!ctx.authOn) return { 준비됨: true, 대화: [], 남은: null, 최대: null };
   const { data, error } = await supaAdmin.from("draft_chats").select("id, role, content, selection, applied, created_at")
-    .eq("user_id", 주인).eq("draft_name", name).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(60);
+    .eq("user_id", 주인).eq("draft_name", name).gte("created_at", await 초안시작(주인, name)).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(60);
   if (error) return { 준비됨: false, 대화: [], 남은: null, 최대: null };
   data.reverse();   // 최근 60개를 시간순으로 — 오래된 60개만 보이면 새 대화가 화면에서 사라진다
   // 한 차례의 부탁·답은 한 번에 저장돼 created_at 이 같다 — id 로 한 번 더 줄 세워야 순서가 안 뒤집힌다
