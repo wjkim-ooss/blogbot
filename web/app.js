@@ -1093,11 +1093,18 @@ async function 샵열기(회원id, 회원표시 = "") {
     : shop.확인일 ? `마지막 확인: ${shop.확인일}` : "아직 채우지 않았습니다";
   $("#shop-msg").style.color = shop.확인일 || 잠금 ? "var(--muted, #8a91a0)" : "";
   $("#shop-overlay").classList.remove("hidden");
+  샵처음 = 샵적힌값();
 }
 
+// 적다가 창 바깥을 잘못 누르면 창이 닫히며 적던 것이 다 사라졌다(2026-10-12 한 원장님: "다른 곳을 선택하면 싹 지워지는 불편함").
+// 바깥을 눌러서는 닫히지 않게 하고, 「닫기」도 저장 안 한 내용이 있으면 한 번 묻는다.
+let 샵처음 = "";   // 창을 열었을 때(또는 마지막으로 저장했을 때)의 값 — 지금 값과 다르면 저장 안 한 내용이 있다
+const 샵적힌값 = () => JSON.stringify([$("#shop-type")?.value, ...[...$("#shop-fields").querySelectorAll("[data-k]")].map((el) => el.value.trim())]);
 $("#shop-btn").addEventListener("click", () => 샵열기().catch((e) => alert(e.message)));
-$("#shop-close").addEventListener("click", () => $("#shop-overlay").classList.add("hidden"));
-$("#shop-overlay").addEventListener("click", (e) => { if (e.target.id === "shop-overlay") $("#shop-overlay").classList.add("hidden"); });
+$("#shop-close").addEventListener("click", () => {
+  if (샵적힌값() !== 샵처음 && !confirm("저장하지 않은 내용이 있어요.\n닫으면 적으신 내용이 지워집니다. 닫을까요?")) return;
+  $("#shop-overlay").classList.add("hidden");
+});
 
 $("#shop-save").addEventListener("click", async (e) => {
   e.target.disabled = true;
@@ -1109,6 +1116,7 @@ $("#shop-save").addEventListener("click", async (e) => {
     });
     SHOP = shop; // 화면 검증도 바로 새 값을 쓴다
     runValidation();
+    샵처음 = 샵적힌값();
     $("#shop-msg").textContent = `저장했습니다 (${shop.확인일})`;
     $("#shop-msg").style.color = "var(--go, #1c8c3c)";
   } catch (err) {
