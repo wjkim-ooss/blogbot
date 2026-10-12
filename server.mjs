@@ -9,7 +9,7 @@ import { resolveDraftView } from "./permissions.mjs";
 // 보관함 읽기는 한 곳(scripts/보관함.mjs)에서 한다 — 발행검증과 같은 목록을 봐야 한다.
 import { 보관함읽기 } from "./scripts/보관함.mjs";
 // 초안 판정 규칙은 브라우저와 한 파일을 함께 쓴다 (web/rules.js). 두 벌로 두면 반드시 갈라진다.
-import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 압축찾기, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형, 원장글보관함, 원장글고르기, 문장길이범위, 깨진기준, 초안본문, 적힌목표, 적힌유형, 문단나누기, 본문문장, 소제목줄, 키워드꼬리, 이름꼬리 } from "./web/rules.js";
+import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형, 원장글보관함, 원장글고르기, 문장길이범위, 깨진기준, 초안본문, 적힌목표, 적힌유형, 문단나누기, 본문문장, 소제목줄, 키워드꼬리, 이름꼬리 } from "./web/rules.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
@@ -164,30 +164,6 @@ async function 샵쓰기(ctx, 값) {
   const { error } = await supaAdmin.from("profiles").update({ shop: 정리 }).eq("id", ctx.userId);
   if (error) throw Object.assign(new Error("샵 정보를 저장할 자리가 아직 없습니다"), { 안내: "Supabase SQL 편집기에서 supabase_setup.sql의 shop 컬럼 한 줄을 실행하세요" });
   return 정리;
-}
-
-// 저장된 초안에서 값을 초벌로 뽑아 본다 — 빈 칸 5개를 내미는 대신 "맞나요?"로 묻기 위해.
-// 원장이 손으로 고쳐 넣은 자리가 곧 진짜 값이다.
-function 초벌뽑기(글들) {
-  const 전부 = 글들.join("\n");
-  // 초안은 AI가 쓴 글이다. 거기서 뽑은 값에는 지어낸 숫자가 섞여 있을 수 있고,
-  // 그걸 그대로 저장하면 '원장이 준 값'이 되어 출처 검사가 영영 못 잡는다.
-  // 그래서 압축 규칙에 걸리는 후보(= 뭉뚱그린 말)는 아예 제안하지 않는다.
-  const 첫줄 = (re) => {
-    for (const m of 전부.match(new RegExp(re, "g")) || []) {
-      const t = m.trim();
-      if (t && !압축찾기(t, CONFIG).걸림.length) return t;
-    }
-    return "";
-  };
-  return {
-    관리구성: 첫줄(/[^\n.]*\d+\s*분[^\n.]*\d+\s*분[^\n.]*/),          // 분이 두 번 이상 나오는 줄 = 단계별 시간
-    가격: 첫줄(/[^\n.]*\d[\d,]*\s*(?:만\s?원|원)[^\n.]*/),
-    // 이력은 '맡았던 자리'가 실제로 적힌 줄만 뽑는다. "8년째 운영하며…" 같은 줄을 제안하면
-    // 원장이 그대로 저장하고, AI가 지어낸 연차가 '원장이 준 값'으로 둔갑한다.
-    이력: 첫줄(new RegExp(`[^\\n.]*\\d+\\s*년[^\\n.]*(?:${(CONFIG.압축표현?.유형?.경력압축?.직무 || []).join("|")})[^\\n.]*`)),
-    운영: 첫줄(/[^\n.]*(?:1인샵|베드|예약제|하루\s*\d+\s*명)[^\n.]*/),
-  };
 }
 
 // ---------- 초안 저장소 ----------
@@ -1913,16 +1889,6 @@ const server = http.createServer(async (req, res) => {
       if (url.searchParams.get("user")) return json(res, 403, { error: "다른 회원의 샵 정보는 고칠 수 없습니다 (읽기만 됩니다)" });
       try { return json(res, 200, { shop: await 샵쓰기(ctx, await readBody(req)) }); }
       catch (e) { return json(res, 400, { error: e.message, 안내: e.안내 || "" }); }
-    }
-    // 빈 칸을 내미는 대신, 원장이 이미 고쳐 저장한 초안에서 값을 뽑아 "맞나요?"로 묻는다
-    if (p === "/api/shop/추천" && req.method === "GET") {
-      // 로컬 store.get은 동기, 배포는 비동기라 await로 둘 다 받는다
-      // 5편을 줄세워 부르면 배포 모드에서 왕복이 5번이다 — 함께 보낸다
-      const 목록 = await store.list(ctx.userId);
-      const 글들 = (await Promise.all(
-        목록.slice(0, 5).map((d) => Promise.resolve(store.get(ctx.userId, d.name)).catch(() => null))
-      )).filter(Boolean);
-      return json(res, 200, { 추천: 초벌뽑기(글들), 본글수: 글들.length });
     }
     if (p === "/api/generate" && req.method === "POST") {
       const body = await readBody(req);

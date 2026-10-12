@@ -1083,11 +1083,7 @@ async function 샵열기(회원id, 회원표시 = "") {
         : `<input data-k="${esc(x.key)}" placeholder="${esc(x.예시)}" ${잠금 ? "readonly" : ""} />`}
     </label>`).join("");
     $("#shop-type").addEventListener("change", (e) => 그리기(e.target.value));
-    for (const el of 칸.querySelectorAll("[data-k]")) {
-      el.value = shop[el.dataset.k] || "";
-      el.addEventListener("input", () => el.classList.remove("뽑은값"), { once: true }); // 고치면 확인된 값이다
-    }
-    $("#shop-suggest").classList.toggle("hidden", 잠금 || 고른유형 === "정보"); // 초안에서 뽑는 값은 샵 사실이다
+    for (const el of 칸.querySelectorAll("[data-k]")) el.value = shop[el.dataset.k] || "";
     $("#shop-save").classList.toggle("hidden", 잠금);
   };
   그리기(유형);
@@ -1104,13 +1100,6 @@ $("#shop-close").addEventListener("click", () => $("#shop-overlay").classList.ad
 $("#shop-overlay").addEventListener("click", (e) => { if (e.target.id === "shop-overlay") $("#shop-overlay").classList.add("hidden"); });
 
 $("#shop-save").addEventListener("click", async (e) => {
-  // 초안에서 뽑은 값은 AI가 지어낸 숫자일 수 있다. 손대지 않은 채 저장하면
-  // 그 숫자가 '원장이 준 값'이 되어 출처 검사가 영영 못 잡는다 — 한 번 묻는다.
-  const 안고친것 = [...$("#shop-fields").querySelectorAll(".뽑은값")].filter((el) => el.value.trim());
-  if (안고친것.length && !confirm(
-    `초안에서 뽑은 값 ${안고친것.length}칸을 그대로 저장합니다.\n\n` +
-    "이 값은 AI가 지어낸 숫자일 수 있습니다.\n실제 값이 맞는지 확인하셨나요?"
-  )) return;
   e.target.disabled = true;
   try {
     const 값 = { 유형: $("#shop-type").value };
@@ -1125,33 +1114,5 @@ $("#shop-save").addEventListener("click", async (e) => {
   } catch (err) {
     $("#shop-msg").textContent = err.message;
     $("#shop-msg").style.color = "";
-  } finally { e.target.disabled = false; }
-});
-
-// 빈 칸 4개를 내미는 대신, 이미 쓴 초안에서 값을 뽑아 "맞나요?"로 묻는다.
-// 원장이 손으로 고쳐 넣은 자리가 곧 진짜 값이다.
-$("#shop-suggest").addEventListener("click", async (e) => {
-  // 뽑아 넣는 칸은 넷(관리구성·가격·이력·운영)이고 빈 칸에만 넣는다. 넷이 다 차 있으면 넣을 자리가 없는데,
-  // 예전엔 그때도 "뽑을 값을 못 찾았습니다. 직접 채워 주세요"가 빨갛게 떠서 고장처럼 보였다(2026-10-12 우진).
-  const 뽑는칸 = ["관리구성", "가격", "이력", "운영"].map((k) => $(`#shop-fields [data-k="${k}"]`)).filter(Boolean);
-  if (뽑는칸.length && 뽑는칸.every((el) => el.value.trim())) {
-    $("#shop-msg").textContent = "뽑아 넣는 네 칸(관리 구성, 가격, 이력, 운영 형태)이 이미 채워져 있어 바꿀 것이 없습니다";
-    $("#shop-msg").style.color = "var(--muted, #8a91a0)";
-    return;
-  }
-  e.target.disabled = true;
-  try {
-    const { 추천, 본글수 } = await api("/api/shop/추천");
-    let 채움 = 0;
-    for (const el of $("#shop-fields").querySelectorAll("[data-k]")) {
-      const v = 추천[el.dataset.k];
-      if (v && !el.value.trim()) { el.value = v; el.classList.add("뽑은값"); 채움++; }
-    }
-    $("#shop-msg").textContent = 채움
-      ? `초안 ${본글수}편에서 ${채움}칸을 뽑았습니다 — AI가 지어낸 숫자일 수 있으니 실제 값으로 고쳐 주세요`
-      : `초안 ${본글수}편을 봤지만 뽑을 값을 못 찾았습니다. 직접 채워 주세요`;
-    $("#shop-msg").style.color = "";
-  } catch (err) {
-    $("#shop-msg").textContent = err.message;
   } finally { e.target.disabled = false; }
 });
