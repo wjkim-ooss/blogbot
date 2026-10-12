@@ -1066,14 +1066,16 @@ function 덧붙일자리(body) {
   const 글끝 = 태그 >= 0 ? 태그 : 줄.length;
   const 소제목 = 줄.map((l, i) => (소제목줄.test(l) ? i : -1)).filter((i) => i >= 0);
   const 자리 = [];
+  // 자리마다 번호를 붙인다 — AI가 긴 소제목을 한 글자만 다르게 옮겨도 못 찾던 것을 번호로 찾는다
+  const 넣기 = (설명, 시작, 끝, 소제목글 = "") => 자리.push({ 번호: 자리.length + 1, 이름: `자리 ${자리.length + 1} — ${설명}`, 소제목: 소제목글, 시작, 끝 });
   if (소제목.length) {
-    소제목.forEach((h, k) => 자리.push({ 이름: 줄[h].replace(/^#+\s*/, "").trim(), 시작: h, 끝: k + 1 < 소제목.length ? 소제목[k + 1] : 글끝 }));
+    소제목.forEach((h, k) => { const 글 = 줄[h].replace(/^#+\s*/, "").trim(); 넣기(`소제목 "${글}" 아래`, h, k + 1 < 소제목.length ? 소제목[k + 1] : 글끝, 글); });
   } else {
     let 시작 = 0;
     const 끊기 = 줄.map((l, i) => (/^\[사진/.test(l.trim()) && i < 글끝 ? i : -1)).filter((i) => i > 0);
     for (const 끝 of [...끊기, 글끝]) {
       const 첫줄 = 줄.slice(시작, 끝).find((l) => l.trim() && 본문문장(l.trim()));
-      if (첫줄) 자리.push({ 이름: `구간 ${자리.length + 1} — "${첫줄.trim().slice(0, 20)}"로 시작하는 부분`, 짧은이름: `구간 ${자리.length + 1}`, 시작, 끝 });
+      if (첫줄) 넣기(`"${첫줄.trim().slice(0, 20)}"로 시작하는 부분`, 시작, 끝);
       시작 = 끝 + 1;
     }
   }
@@ -1088,9 +1090,12 @@ function 덧붙이기지시(body, v) {
     `대신 아래 자리들 끝에 덧붙일 새 문단만 써라 — 모두 합쳐 짧은 문장 ${더쓸문장(v)}개 이상.`,
     "자리마다 2~4문장. 그 자리에 이어지는 새 내용(관리 과정·순서, 고객이 집에서 흔히 하는 실수, 그 자리에서 고객이 하는 말)을 쓴다. 앞 내용을 되풀이하지 마라.",
     `지켜 온 것은 그대로: 한 문장은 짧게(${CONFIG.문장길이.하한}~${CONFIG.문장길이.상한}자), 금액·지어낸 숫자·지어낸 사례 금지, 키워드는 더 넣지 않는다.`,
+    "성분이나 관리의 효능을 새로 주장하지 마라(논문 번호 없이 \"개선된다\", \"완화된다\"고 쓰지 않는다). 영어 낱말·쓰지 않는 문장도 그대로 금지다. 어긴 문단은 버려진다.",
     "",
     "형식 — 이것 말고 아무것도 쓰지 마라:",
-    "### 자리 이름(아래 목록 글자 그대로 — 구간이면 \"구간 1\"처럼 번호까지만 써도 된다)",
+    "### 자리 1",
+    "덧붙일 문단",
+    "### 자리 2",
     "덧붙일 문단",
     "",
     "자리 목록:",
@@ -1098,9 +1103,11 @@ function 덧붙이기지시(body, v) {
   ].join("\n");
 }
 
-// AI가 준 '### 자리 + 문단'을 그 자리 끝(다음 소제목 앞, 마지막이면 해시태그 앞)에 끼운다. 문단은 parseDraftOutput 이 나눈다.
-// 이름이 조금 달라도(띄어쓰기·문장부호) 맞춰 보고, 못 찾은 덩이는 버린다 — 엉뚱한 자리에 넣느니 안 넣는다.
-function 덧붙여넣기(body, 답) {
+// AI가 준 '### 자리 N + 문단'을 그 자리 끝(다음 소제목 앞, 마지막이면 해시태그 앞)에 끼운다. 문단은 parseDraftOutput 이 나눈다.
+// 번호로 찾고, 소제목을 그대로 적어 왔으면 그것으로도 찾는다. 못 찾은 덩이는 버린다 — 엉뚱한 자리에 넣느니 안 넣는다.
+// 받을까(새 본문): 문단 하나를 넣을 때마다 묻는다. 한 문단이 기준을 어겼다고 나머지까지 버리지 않으려는 것이다
+// (2026-10-12 실제 초안: 덧붙이기를 불렀는데 통째로 버려져 1,456/1,700자로 저장됐다).
+function 덧붙여넣기(body, 답, 받을까 = null) {
   const 정규 = (t) => String(t).replace(/[^\p{L}\p{N}]/gu, "");
   const 덩이들 = [];
   for (const 덩이 of 울타리벗기기(답).split(/^#{2,4}\s*/m).slice(1)) {
@@ -1109,17 +1116,19 @@ function 덧붙여넣기(body, 답) {
     if (글) 덩이들.push({ 머리: 정규(첫), 글 });
   }
   const 자리 = 덧붙일자리(body);
-  // 이름이 같으면 그 자리. 구간은 "구간 3"까지만 써도 받는다(다음 글자가 숫자가 아닐 때 — 구간 1 과 구간 12 를 가른다)
-  const 맞나 = (머리, x) => 머리 === 정규(x.이름)
-    || (x.짧은이름 && 머리.startsWith(정규(x.짧은이름)) && !/^\d/.test(머리.slice(정규(x.짧은이름).length)));
-  const 줄 = String(body).split("\n");
-  let 붙인 = 0;
+  const 맞나 = (머리, x) => {
+    for (const 앞 of [`자리${x.번호}`, `구간${x.번호}`]) if (머리.startsWith(앞) && !/^\d/.test(머리.slice(앞.length))) return true;   // 자리 1 과 자리 12 를 가른다
+    return !!x.소제목 && 머리 === 정규(x.소제목);
+  };
+  let 줄 = String(body).split("\n"), 붙인 = 0;
   for (let k = 자리.length - 1; k >= 0; k--) {   // 뒤에서부터 넣어야 앞 자리의 줄 번호가 안 밀린다
     const 덩 = 덩이들.find((d) => 맞나(d.머리, 자리[k]));
     if (!덩) continue;
     let 끝 = 자리[k].끝;
     while (끝 > 자리[k].시작 + 1 && !줄[끝 - 1].trim()) 끝--;
-    줄.splice(끝, 0, "", 덩.글, ...(줄[끝]?.trim() ? [""] : []));
+    const 넣은 = [...줄.slice(0, 끝), "", 덩.글, ...(줄[끝]?.trim() ? [""] : []), ...줄.slice(끝)];
+    if (받을까 && !받을까(넣은.join("\n"))) continue;
+    줄 = 넣은;
     붙인 += 1;
   }
   return 붙인 ? 줄.join("\n").replace(/\n{3,}/g, "\n\n") : null;
@@ -1277,7 +1286,7 @@ async function handleGenerate(res, body, ctx) {
     const 다듬을까 = (v) => {
       if (!CONFIG.말투?.다듬기?.켜짐) return false;
       const m = v.말투;
-      return !!(m && (m.비율 < m.최소 || m.연속단정 > m.연속허용 || m.반복어미?.length)) || v.kwOver || v.첫문단키워드 === false;
+      return !!(m && (m.비율 < m.최소 || m.연속단정 > m.연속허용 || m.반복어미?.length)) || v.kwOver || v.첫문단키워드 === false || !!v.AI티?.length;
     };
     // AI를 한 번 더 부른다: 지금 제일 좋은 글 + 지시만 보내고(앞 차례는 버린다), 답을 받기(답)로 넘긴다. 실패하면 null.
     const 한번더 = async (알림, 지시) => {
@@ -1302,10 +1311,12 @@ async function handleGenerate(res, body, ctx) {
     // 받는 기준은 대화 수정과 같다 — 늘었고, 전에 통과하던 기준이 깨지지 않았으면(깨진기준).
     while (부른 < 최대 && 짧음(validation) && validation.chars >= 100) {
       const 답 = await 한번더(`글자수가 ${(validation.targetChars - validation.chars).toLocaleString()}자 모자라 문단을 덧붙이는 중`, 덧붙이기지시(parsed.body, validation));
-      const 새몸 = 답 && 덧붙여넣기(parsed.body, 답);
-      const 이번 = 새몸 && check(`제목: ${parsed.title}\n\n${새몸}`);
+      // 문단 하나씩 넣어 보고, 전에 통과하던 기준을 깨는 문단만 버린다
+      const 글로 = (몸) => `제목: ${parsed.title}\n\n${몸}`;
+      const 새몸 = 답 && 덧붙여넣기(parsed.body, 답, (몸) => !깨진기준(validation, check(글로(몸)).validation).length);
+      const 이번 = 새몸 && check(글로(새몸));
       if (이번 && 이번.validation.chars > validation.chars && !깨진기준(validation, 이번.validation).length) 받기(이번);
-      else { if (답) send({ type: "status", message: "덧붙인 글이 다른 곳을 어긋나게 해서 쓰지 않았습니다" }); break; }
+      else { if (답) send({ type: "status", message: "덧붙일 문단을 못 썼습니다 (AI가 형식을 안 지켰거나, 문단마다 다른 기준을 어겼습니다)" }); break; }
     }
 
     send({

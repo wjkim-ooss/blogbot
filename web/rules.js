@@ -699,7 +699,9 @@ export function 영어섞임찾기(text, config) {
   const 허용 = new Set((config.영어섞임.허용 || []).map((w) => w.toLowerCase()));
   // 소제목도 본다(실제로 소제목에 "thick하게"가 들어갔다). 해시태그 줄과 주소가 든 줄만 뺀다.
   const 본 = stripPhotos(text || "").split("\n").filter((l) => !/^#[^#\s]/.test(l.trim()) && !/https?:|www\./.test(l)).join("\n").replace(/\([^)]*\)/g, " ");
-  return [...new Set(본.match(영어붙음) || [])].filter((w) => !허용.has(w.toLowerCase()));
+  // 사진 설명 안의 영어("피부 surface")도 본다 — 원장님이 보고 사진을 고르는 자리다
+  const 사진속 = ((text || "").match(/\[사진:[^\]]*\]/g) || []).join(" ").match(/(?<![A-Za-z])[A-Za-z]*[a-z][A-Za-z]{2,}/g) || [];
+  return [...new Set([...(본.match(영어붙음) || []), ...사진속])].filter((w) => !허용.has(w.toLowerCase()));
 }
 
 // ---------- 쓰지 않기로 한 문장 ----------
@@ -892,6 +894,7 @@ const 문구 = {
     첫문단키워드: (v) => `첫 문단(${v.첫문단문장수}문장 안)에 "${v.keyword}"가 없다 — 도입 문장 하나에 자연스럽게 넣어라. 검색이 글 초반에서 주제를 읽는다.`,
     소제목키워드: (v) => `소제목(###) 어디에도 "${v.keyword}"가 없다 — 소제목 하나에 키워드나 그 일부를 넣어라. 나머지는 그대로 둔다.`,
     가격: (v) => `금액을 적었다: ${v.가격.join(", ")} — 금액은 전부 빼라. 비용 이야기가 꼭 필요하면 "${v.가격대신}" 한 줄이면 된다.`,
+    AI티: (v) => `기계가 쓴 글처럼 읽히는 말을 썼다: ${v.AI티.map((w) => `"${w}"`).join(", ")} — 그 말을 빼고 평범한 말로 다시 써라.`,
     영어섞임: (v) => `문장에 영어 낱말을 섞어 썼다: ${v.영어섞임.map((w) => `"${w}"`).join(", ")} — 한글로 바꿔 써라. 성분 원어가 필요하면 한글 뒤 괄호 안에만 쓴다.`,
     금지문구: (v) =>
       `쓰지 않기로 한 문장이 있다: ${v.금지문구.map((x) => `"${자르기(x.문장, 40)}"(${x.이름})`).join(", ")} — ` +
@@ -947,6 +950,7 @@ const 문구 = {
     첫문단키워드: (v) => `첫 문단에 "${v.keyword}"가 없습니다 — 도입 ${v.첫문단문장수}문장 안에 한 번 (네이버가 초반에서 주제를 읽습니다)`,
     소제목키워드: (v) => `소제목에 "${v.keyword}"가 없습니다 — 소제목 하나에 키워드를 넣으면 노출에 유리합니다`,
     가격: (v) => `금액 표기 ${v.가격.length}곳: ${v.가격.join(", ")} — 가격이 박히면 비교용으로만 읽힙니다. 빼는 편이 낫습니다`,
+    AI티: (v) => `기계가 쓴 글처럼 읽히는 말: ${v.AI티.map((w) => `"${w}"`).join(", ")} — 빼거나 평범한 말로 바꾸세요`,
     영어섞임: (v) => `영어 낱말이 섞임: ${v.영어섞임.map((w) => `"${w}"`).join(", ")} — 한글로 바꿔 주세요`,
     금지문구: (v) => `쓰지 않기로 한 문장 ${v.금지문구.length}곳: ${v.금지문구.map((x) => `"${자르기(x.문장, 28)}"`).join(", ")} — 이 문장은 빼 주세요`,
     베낀문장: (v) =>
@@ -1068,6 +1072,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const 가격 = 검사켜짐(검사설정, "가격금지") ? 가격찾기(text, config) : [];
   const 금지문구 = 금지문구찾기(text, config, 검사설정);
   const 영어섞임 = 영어섞임찾기(text, config);
+  const AI티 = 문구뽑기(본문만(text, 문장들).join("\n"), config.사람처럼?.잡는말);
   // 베끼기는 유형과 무관하다. 파는 사람이든 아니든 남의 문장을 옮기면 네이버가 원본을 위로 올린다.
   // 원장글 본보기를 프롬프트에 보여주므로 거기서 옮겨 온 문장도 같이 잡는다.
   const 겹침 = 겹침찾기(text, [ref, 원장글], config);
@@ -1117,7 +1122,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const 태그 = 해시태그수(text);
 
   const v = {
-    주의낱말, 금지문구, 영어섞임,
+    주의낱말, 금지문구, 영어섞임, AI티,
     keyword, chars, photos, kwCount, 목표글자수: 목표, targetPhotos: 목표사진, claims,
     abstractFound, medicalFound, overclaimFound,
     최소횟수: config.키워드횟수.min, 최대횟수: config.키워드횟수.max,
@@ -1219,6 +1224,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   // 3회로 좁히면서 같이 내렸다(그 전엔 7회 상한에 불합격이었다).
   if (kwOver && !kwLack) advice.push(말.키워드과다(v));
   if (주의낱말.length) advice.push(말.주의표현(v));
+  if (AI티.length) advice.push(말.AI티(v));
 
   return {
     chars, photos, kwCount, kwParts, tokens, kwLack, kwOver,
@@ -1226,7 +1232,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
     abstractFound, abstractByKind, medicalFound, overclaimFound, pmids, claims, needsEvidence,
     구체, 구체밀도, 구체최소, 구체권장, 구체권장미달, 정도부사, 정도부사횟수, 압축, 채움, 출처없음,
     // 아래는 화면에 따로 칸을 두지 않는다(전부 권장이라 advice 줄로 나간다) — 시험이 읽는 자리다
-    문장길이: 문장길이값, 말투: 말투값, 반박, 가격, 금지문구, 영어섞임, 겹침, 약속, 태그, 가짜PMID, 본보기베낌, 지어낸경험, 당부문단,
+    문장길이: 문장길이값, 말투: 말투값, 반박, 가격, 금지문구, 영어섞임, AI티, 겹침, 약속, 태그, 가짜PMID, 본보기베낌, 지어낸경험, 당부문단,
     targetChars: 목표, targetPhotos: 목표사진, 지정목표: 목표글자수,
     꺼진검사,
     // pass 하나로는 두 가지가 같아 보인다: '다 재서 통과'와 '몇 개는 못 재서 걸린 게 없음'.
