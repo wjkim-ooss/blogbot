@@ -340,6 +340,24 @@ const 말투흐름 = (유형) => {
 // 같은 스위치를 반대로 읽으면 "쓰지 말라고 해 놓고 안 잡는" 상태가 조용히 생긴다.
 // 산문은 블록마다 다르므로 손으로 쓰고, 게이트만 공유한다.
 const 유형블록 = (U, 키, 만들기) => (CONFIG[키] && 검사켜짐(U.검사, 키) ? 만들기(CONFIG[키]) : "");
+// 우진이 쓰지 말라고 못박은 문장(config.금지문구) — 그 유형에서 켜진 것만 보여 준다. 검사기도 같은 목록으로 잡는다.
+const 금지문구블록 = (U) => {
+  const 목록 = (CONFIG.금지문구?.목록 || []).filter((x) => !x.검사 || 검사켜짐(U.검사, x.검사));
+  return 목록.length ? `
+[쓰지 않는 문장 — 검증기가 잡는다]
+아래 같은 문장은 쓰지 않는다. 낱말만 바꾼 같은 뜻의 문장도 쓰지 않는다.
+${목록.map((x) => `- ${x.이름}: "${x.예}"`).join("\n")}
+` : "";
+};
+// AI가 쓴 티가 나는 버릇 (config.사람처럼)
+const 사람처럼블록 = () => {
+  const H = CONFIG.사람처럼;
+  return H ? `
+[사람이 쓴 글처럼]
+${H.줄.map((x) => `- ${x}`).join("\n")}
+- 이런 말은 쓰지 않는다: ${H.쓰지않는말.map((x) => `"${x}"`).join(", ")}
+` : "";
+};
 // 사진은 장수를 채우는 일이 아니다. 원장이 실제로 찍어 둘 수 있는 자리만 지목한다 —
 // 숫자만 주면 AI가 만든 그림으로 칸을 채우게 되고, 고객은 그걸 알아본다.
 const 사진지시 = () => {
@@ -425,7 +443,7 @@ ${R.심는법.map((x) => `- ${x}`).join("\n")}
 `)}${유형블록(U, "가격금지", (P) => `
 [가격은 적지 않는다]
 ${P.설명}
-금액(원·만원)을 본문에 쓰지 마라. 대신 비용 걱정만 지운다 — 예: "${P.대신}".
+금액(원·만원)을 본문에 쓰지 마라. 비용 이야기는 이 글의 질문이 비용일 때만 한 줄 쓴다 — 쓴다면 "${P.대신}" 정도로. 글마다 넣지 마라.
 `)}
 ${유형블록(U, "진료권유", (D) => `
 [병원으로 넘기지 않는다]
@@ -435,7 +453,6 @@ ${D.지시}
 [끝맺음 — 지금 할 행동 하나]
 ${M.설명}
 ${M.행동}
-본보기: "${M.본보기}"
 ${M.금지}
 글 맨 끝에 해시태그 ${M.해시태그.개수[0]}~${M.해시태그.개수[1]}개를 붙인다.
 ${M.해시태그.규칙.map((x) => `- ${x}`).join("\n")}
@@ -444,7 +461,7 @@ ${M.해시태그.규칙.map((x) => `- ${x}`).join("\n")}
 ${CONFIG.스타일변주.설명}
 ${CONFIG.스타일변주.바꿀것.map((x) => `- ${x}`).join("\n")}
 ${CONFIG.스타일변주.금지}
-
+${금지문구블록(U)}${사람처럼블록()}
 [형식 규칙]
 - 사진 자리는 [사진: 무엇이 보이는지] 로 표시한다. "사진 삽입"처럼 비워 두지 마라.
 ${사진지시()}
@@ -554,12 +571,15 @@ function 원장본보기블록(원장본보기) {
   return lines;
 }
 
-function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = null, 사례 = "", 원장본보기 = [], 각도 = "", 이미쓴글 = []) {
+function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = null, 사례 = "", 원장본보기 = [], 각도 = "", 이미쓴글 = [], 도입 = "", 마무리 = "") {
   const lines = [`키워드: ${keyword}`];
   if (region) lines.push(`지역: ${region} (본문에 자연스럽게 반영)`);
   if (point) lines.push(`강조 포인트: ${point} (이 말이 수식어를 겹친 명사구라면 그대로 쓰지 말고, 뜻은 살리되 '누가·어디부터 어디까지·몇 분'을 넣은 문장으로 펴서 쓸 것)`);
   // 같은 키워드로 다시 만들어도 다른 글이 나오게 (config.글각도)
   if (각도) lines.push(`이번 글의 각도: ${각도} — 글 전체의 뼈대를 이 각도로 잡는다.`);
+  // 도입과 마무리는 서버가 골라 준다 — "지난 글과 다르게"라고만 시키면 AI는 지난 글을 몰라 늘 같은 것을 고른다
+  if (도입) lines.push(`이번 글의 도입: ${도입}`);
+  if (마무리) lines.push(`이번 글의 마무리: ${마무리}`);
   if (이미쓴글.length) {
     lines.push("", "[같은 키워드로 이미 쓴 글 — 제목·소제목·첫 문장·예시가 이것과 겹치지 않게 다른 내용으로 쓸 것]");
     for (const g of 이미쓴글) lines.push(`- ${g}`);
@@ -1219,11 +1239,14 @@ async function handleGenerate(res, body, ctx) {
     const 원장본보기 = 원장글 ? 원장글고르기([원장글], keyword, CONFIG) : [];
     if (원장본보기.length) send({ type: "status", message: `원장이 직접 쓴 글 ${원장본보기.length}편을 말투 본보기로 같이 보여줍니다` });
     // 같은 키워드로 다시 만들면 거의 같은 글이 나왔다 — 각도를 고르고, 이미 쓴 같은 키워드 초안을 피하게 한다
-    const 각도목록 = CONFIG.글각도?.목록 || [];
-    const 각도 = !String(body.point || "").trim() && 각도목록.length ? 각도목록[Math.floor(Math.random() * 각도목록.length)] : "";
+    // 도입·마무리도 같은 까닭으로 서버가 고른다(2026-10-12 우진: 첫 문단과 마지막 문단이 글마다 똑같다).
+    const 하나 = (목록) => (목록?.length ? 목록[Math.floor(Math.random() * 목록.length)] : "");
+    const 각도 = String(body.point || "").trim() ? "" : 하나(CONFIG.글각도?.목록);   // 강조 포인트를 적었으면 그게 각도다
+    const 도입 = 하나(CONFIG.스타일변주?.도입);
+    const 마무리 = 검사켜짐(유형정보(글쓴이유형).검사, "마무리") ? 하나(CONFIG.마무리?.종류) : "";   // 예약으로 닫는 글에만
     if (각도) send({ type: "status", message: `이번 글은 "${각도}"로 씁니다` });
     const 이미쓴글 = await 같은키워드글(ctx, keyword);
-    const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례, 원장본보기, 각도, 이미쓴글) }];
+    const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례, 원장본보기, 각도, 이미쓴글, 도입, 마무리) }];
     const check = (d) => {
       const p = parseDraftOutput(d, keyword);
       return { parsed: p, validation: validateDraft(`${p.title}\n${p.body}`, keyword, targetChars, p.title, ref, { ...shop, 사례 }, 글쓴이유형, 원장글) };
