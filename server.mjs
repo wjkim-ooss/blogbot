@@ -9,7 +9,7 @@ import { resolveDraftView } from "./permissions.mjs";
 // 보관함 읽기는 한 곳(scripts/보관함.mjs)에서 한다 — 발행검증과 같은 목록을 봐야 한다.
 import { 보관함읽기 } from "./scripts/보관함.mjs";
 // 초안 판정 규칙은 브라우저와 한 파일을 함께 쓴다 (web/rules.js). 두 벌로 두면 반드시 갈라진다.
-import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형, 원장글보관함, 원장글고르기, 문장길이범위, 깨진기준, 초안본문, 적힌목표, 적힌유형, 문단나누기, 본문문장, 소제목줄, 키워드꼬리, 이름꼬리 } from "./web/rules.js";
+import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형, 원장글보관함, 원장글고르기, 문장길이범위, 깨진기준, 초안본문, 적힌목표, 적힌유형, 문단나누기, 줄나누기, 본문문장, 소제목줄, 키워드꼬리, 이름꼬리 } from "./web/rules.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
@@ -1382,7 +1382,8 @@ function describeError(e, ctx) {
 // AI가 문단을 안 나누고 덩어리로 낸 것은 여기서 한 번 나눈다 (규칙은 rules.js 문단나누기, 숫자는 config.문단)
 function parseDraftOutput(text, keyword) {
   const p = 초안풀기(text, keyword);
-  return { ...p, body: 문단나누기(p.body, CONFIG) };
+  // 긴 줄을 먼저 두 줄로 나누고(config.문장길이.줄나누기), 그다음 덩어리를 문단으로 나눈다
+  return { ...p, body: 문단나누기(줄나누기(p.body, CONFIG, keyword), CONFIG) };
 }
 function 초안풀기(text, keyword) {
   const m = text.match(/^\s*제목:\s*(.+)\n+([\s\S]*)$/);

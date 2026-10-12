@@ -293,8 +293,9 @@ export function claimSentences(text, config, 문장들 = null) {
   const 주장 = 논문.효능주장패턴 || [];
   const 관찰 = 논문.관찰예외?.신호 || [];
   if (!부위.length || !주장.length) return [];
+  // 본문 문장만 본다 — 해시태그 줄("#결개선")이나 소제목을 효능 주장으로 잡아 PMID를 요구한 적이 있다(2026-10-12)
   return (문장들 || 문장나누기(text)).filter(
-    (s) => 부위.some((w) => s.includes(w)) && 주장.some((w) => s.includes(w)) && !관찰.some((w) => s.includes(w))
+    (s) => 본문문장(s) && 부위.some((w) => s.includes(w)) && 주장.some((w) => s.includes(w)) && !관찰.some((w) => s.includes(w))
   );
 }
 
@@ -482,6 +483,36 @@ export const 소제목줄 = /^#{2,4}\s+\S/;
 export const 당부끝 = (줄, config) =>
   (config.당부?.어미 || []).some((e) => stripPhotos(줄).trim().replace(어미꼬리, "").endsWith(e));
 
+// 상한을 넘는 줄을 두 줄로 나눈다 (config.문장길이.줄나누기). 글자는 그대로, 띄어쓰기 하나를 줄바꿈으로 바꿀 뿐이다.
+// 끊는 자리: 두 쪽이 다 상한 안이고 길이가 비슷한 곳. 쉼표 뒤·조사나 이음말 뒤면 더 좋다(숨 쉬는 자리).
+// 괄호·대괄호·따옴표 안과 키워드 한가운데는 끊지 않는다. 한 번 나눠도 긴 쪽은 한 번 더 나눈다.
+const 숨자리 = /(?:[,，、]|은|는|이|가|을|를|에|에서|에게|로|으로|와|과|도|만|면|고|며|서|지만|는데|인데|니|때|뒤|후|전|채|처럼|때문에|위해|대로)$/;
+function 줄하나나누기(줄, 상한, 키워드, 깊이 = 0) {
+  if (noSpace(줄) <= 상한 || 깊이 > 2) return [줄];
+  let 최고 = null, 속 = 0, 따옴 = false;
+  for (let i = 0; i < 줄.length; i++) {
+    const c = 줄[i];
+    if ("([".includes(c)) 속 += 1; else if (")]".includes(c)) 속 = Math.max(0, 속 - 1);
+    else if (c === '"' || c === "“" || c === "”") 따옴 = c === "“" ? true : c === "”" ? false : !따옴;
+    if (c !== " " || 속 || 따옴) continue;
+    const 앞 = 줄.slice(0, i).trim(), 뒤 = 줄.slice(i + 1).trim();
+    if (키워드 && despace(줄).includes(despace(키워드)) && !despace(앞).includes(despace(키워드)) && !despace(뒤).includes(despace(키워드))) continue;
+    const a = noSpace(앞), b = noSpace(뒤);
+    if (a < 4 || b < 4) continue;
+    const 점 = Math.abs(a - b) + (a > 상한 ? 100 : 0) + (b > 상한 ? 100 : 0) + (Math.min(a, b) < 8 ? 20 : 0) - (숨자리.test(앞) ? 6 : 0);
+    if (!최고 || 점 < 최고.점) 최고 = { 점, 앞, 뒤 };
+  }
+  if (!최고) return [줄];
+  return [...줄하나나누기(최고.앞, 상한, 키워드, 깊이 + 1), ...줄하나나누기(최고.뒤, 상한, 키워드, 깊이 + 1)];
+}
+export function 줄나누기(body, config, 키워드 = "") {
+  const { 상한 = 0, 줄나누기: 켜짐 } = config.문장길이 || {};
+  if (!켜짐 || !상한) return String(body);
+  return String(body).split("\n")
+    .flatMap((l) => (l.trim() && 본문문장(l.trim()) && !/^\[/.test(l.trim()) ? 줄하나나누기(l.trim(), 상한, 키워드) : [l]))
+    .join("\n");
+}
+
 // AI가 문단을 안 나누고 낸 덩어리를 문장이 끝나는 줄에서 나눈다 (config.문단). 글자는 그대로, 빈 줄만 더한다.
 export function 문단나누기(body, config) {
   const { 최대줄 = 5, 묶음 = 3, 끝남은최소 = 2 } = config.문단 || {};
@@ -574,6 +605,21 @@ const 한숫자반복 = /^(\d)\1+$/;
 // 앞은 원장이 고객 쪽을 한 번 보는 것이고, 뒤는 글 전체가 가벼워지는 것이라 따로 센다.
 // 비율이 기준 안이어도 ~입니다가 대여섯 문장씩 줄지어 서면 안내문처럼 읽힌다 —
 // 제일 길게 이어진 줄(연속단정)과 그 첫 문장(연속자리)도 같이 돌려준다.
+// 줄을 문장으로 잇는다 — 한 문장을 두세 줄로 나눠 쓰는 글이라(문장길이 규칙), 줄을 그대로 세면 문장 수가 두 배 넘게 부풀고
+// 앞줄은 '어미 없는 문장'이 된다. 원장글 127편을 재 보니 평균 150줄이 문장으로는 61개였다(2026-10-12).
+// 말 거는 비율·연달아 선 ~입니다·첫 문단은 문장으로 세야 맞다. 문장부호 없이 이어지는 줄(목록 등)은 넉 줄에서 끊는다.
+const 문장끝 = /[.?!…][)"'”’\]]*$/;
+export function 문장잇기(줄들) {
+  const 나온 = [];
+  let 모음 = [];
+  for (const 줄 of 줄들) {
+    모음.push(줄);
+    if (문장끝.test(줄) || 모음.length >= 4) { 나온.push(모음.join(" ")); 모음 = []; }
+  }
+  if (모음.length) 나온.push(모음.join(" "));
+  return 나온;
+}
+
 export function 말투재기(본문들, config, 범위 = null) {
   const { 공감어미 = [], 약속신호 = [], 부드러운어미 = [], 단정어미 = [], 기본비율,
     연속허용 = Infinity, 같은어미상한 = Infinity } = config.말투 || {};
@@ -644,6 +690,18 @@ export function 품질점수(text, config) {
 
 // ---------- 가격 표기 ----------
 // 금액이 박히는 순간 그 글은 가격 비교용으로만 소비된다.
+// ---------- 영어 섞어 쓰기 ----------
+// "진정 크림을 thick하게", "magnifier로 확인" — 소문자가 든 영어 낱말이 한글에 바로 붙은 꼴(config.영어섞임).
+// 괄호 안 원어와 대문자 약어(BHA·PMID)는 괜찮다. 주소·해시태그·사진 설명은 보지 않는다. 소제목은 본다.
+const 영어붙음 = /(?<![A-Za-z])[A-Za-z]*[a-z][A-Za-z]{2,}(?=[가-힣])/g;
+export function 영어섞임찾기(text, config) {
+  if (!config.영어섞임) return [];
+  const 허용 = new Set((config.영어섞임.허용 || []).map((w) => w.toLowerCase()));
+  // 소제목도 본다(실제로 소제목에 "thick하게"가 들어갔다). 해시태그 줄과 주소가 든 줄만 뺀다.
+  const 본 = stripPhotos(text || "").split("\n").filter((l) => !/^#[^#\s]/.test(l.trim()) && !/https?:|www\./.test(l)).join("\n").replace(/\([^)]*\)/g, " ");
+  return [...new Set(본.match(영어붙음) || [])].filter((w) => !허용.has(w.toLowerCase()));
+}
+
 // ---------- 쓰지 않기로 한 문장 ----------
 // 우진이 못박은 문장 꼴(config.금지문구) — "방문 후 결정하셔도 늦지 않습니다", "피부과를 먼저 가 보세요".
 // 한 문장을 여러 줄로 나눠 쓰는 글이라, 문단 안의 줄바꿈을 이어 붙이고 찾는다(안 그러면 "결정하셔도\n늦지"를 놓친다).
@@ -834,6 +892,7 @@ const 문구 = {
     첫문단키워드: (v) => `첫 문단(${v.첫문단문장수}문장 안)에 "${v.keyword}"가 없다 — 도입 문장 하나에 자연스럽게 넣어라. 검색이 글 초반에서 주제를 읽는다.`,
     소제목키워드: (v) => `소제목(###) 어디에도 "${v.keyword}"가 없다 — 소제목 하나에 키워드나 그 일부를 넣어라. 나머지는 그대로 둔다.`,
     가격: (v) => `금액을 적었다: ${v.가격.join(", ")} — 금액은 전부 빼라. 비용 이야기가 꼭 필요하면 "${v.가격대신}" 한 줄이면 된다.`,
+    영어섞임: (v) => `문장에 영어 낱말을 섞어 썼다: ${v.영어섞임.map((w) => `"${w}"`).join(", ")} — 한글로 바꿔 써라. 성분 원어가 필요하면 한글 뒤 괄호 안에만 쓴다.`,
     금지문구: (v) =>
       `쓰지 않기로 한 문장이 있다: ${v.금지문구.map((x) => `"${자르기(x.문장, 40)}"(${x.이름})`).join(", ")} — ` +
       [...new Set(v.금지문구.map((x) => x.대신).filter(Boolean))].join(". ") + ". 같은 뜻의 다른 문장으로 바꿔 쓰지도 마라.",
@@ -888,6 +947,7 @@ const 문구 = {
     첫문단키워드: (v) => `첫 문단에 "${v.keyword}"가 없습니다 — 도입 ${v.첫문단문장수}문장 안에 한 번 (네이버가 초반에서 주제를 읽습니다)`,
     소제목키워드: (v) => `소제목에 "${v.keyword}"가 없습니다 — 소제목 하나에 키워드를 넣으면 노출에 유리합니다`,
     가격: (v) => `금액 표기 ${v.가격.length}곳: ${v.가격.join(", ")} — 가격이 박히면 비교용으로만 읽힙니다. 빼는 편이 낫습니다`,
+    영어섞임: (v) => `영어 낱말이 섞임: ${v.영어섞임.map((w) => `"${w}"`).join(", ")} — 한글로 바꿔 주세요`,
     금지문구: (v) => `쓰지 않기로 한 문장 ${v.금지문구.length}곳: ${v.금지문구.map((x) => `"${자르기(x.문장, 28)}"`).join(", ")} — 이 문장은 빼 주세요`,
     베낀문장: (v) =>
       `보관함 글(상위글·원장 글) 문장을 그대로 옮긴 곳 ${v.겹침.토막.length}군데 (가장 길게 ${v.겹침.최장}어절): ` +
@@ -1000,12 +1060,14 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
     .map((p) => p.trim().split("\n").at(-1).trim())
     .filter((s) => 본문문장(s) && 당부끝(s, config))
     .map((s) => stripPhotos(s).trim().replace(어미꼬리, ""));
-  const 말투값 = 말투재기(본문들, config, 공감범위(config, 글유형));
+  const 문장단위 = 문장잇기(본문들);   // 줄이 아니라 문장 — 길이는 줄로(긴문장), 말투는 문장으로 잰다
+  const 말투값 = 말투재기(문장단위, config, 공감범위(config, 글유형));
   // 반박제거·가격은 파는 사람에게만 해당한다 — 정보형은 예약을 받지도, 가격을 숨길 것도 없다
   const 반박 = 검사켜짐(검사설정, "반박제거") ? 반박제거찾기(text, config) : [];
   const 반박최소 = 검사켜짐(검사설정, "반박제거") ? config.반박제거?.최소 ?? 0 : 0;
   const 가격 = 검사켜짐(검사설정, "가격금지") ? 가격찾기(text, config) : [];
   const 금지문구 = 금지문구찾기(text, config, 검사설정);
+  const 영어섞임 = 영어섞임찾기(text, config);
   // 베끼기는 유형과 무관하다. 파는 사람이든 아니든 남의 문장을 옮기면 네이버가 원본을 위로 올린다.
   // 원장글 본보기를 프롬프트에 보여주므로 거기서 옮겨 온 문장도 같이 잡는다.
   const 겹침 = 겹침찾기(text, [ref, 원장글], config);
@@ -1032,8 +1094,8 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const titleHasNum = /\d/.test(제목);
   // 네이버는 글 초반과 소제목에서 주제를 읽는다(config.네이버형식) — 둘 다 권장이지 불합격이 아니다.
   const 첫문단문장수 = config.네이버형식?.첫문단문장수 ?? 0;
-  const 첫문단키워드 = !첫문단문장수 || !keyword || 본문들.length < 첫문단문장수
-    || countLoose(본문들.slice(0, 첫문단문장수).join(" "), keyword) > 0;
+  const 첫문단키워드 = !첫문단문장수 || !keyword || 문장단위.length < 첫문단문장수
+    || countLoose(문장단위.slice(0, 첫문단문장수).join(" "), keyword) > 0;
   const 소제목들 = (text.match(/^#{2,4}\s+\S.*$/gm) || []);
   const 소제목키워드 = !첫문단문장수 || !keyword || !소제목들.length
     || 소제목들.some((s) => countLoose(s, keyword) > 0 || tokens.some((w) => w.length >= 2 && s.includes(w)));
@@ -1055,7 +1117,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const 태그 = 해시태그수(text);
 
   const v = {
-    주의낱말, 금지문구,
+    주의낱말, 금지문구, 영어섞임,
     keyword, chars, photos, kwCount, 목표글자수: 목표, targetPhotos: 목표사진, claims,
     abstractFound, medicalFound, overclaimFound,
     최소횟수: config.키워드횟수.min, 최대횟수: config.키워드횟수.max,
@@ -1104,7 +1166,8 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   if (구체최소 && 구체밀도 < 구체최소) 걸림("구체성");
   if (medicalFound.length) 걸림("의료법");
   if (overclaimFound.length) 걸림("과장");
-  if (금지문구.length) 걸림("금지문구");   // 우진이 못박은 문장이라 불합격이다 — 다시 쓰게 한다
+  if (금지문구.length) 걸림("금지문구");
+  if (영어섞임.length) 걸림("영어섞임");   // 우진이 못박은 문장이라 불합격이다 — 다시 쓰게 한다
   if (needsEvidence && !pmids.length) 걸림("근거없음");
   if (가짜PMID.length) 걸림("가짜PMID");
   // 남의 문장을 문장째로 옮긴 것은 불합격이다. 상위글끼리 재어 보니 서로 베끼지 않은 글이
@@ -1163,7 +1226,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
     abstractFound, abstractByKind, medicalFound, overclaimFound, pmids, claims, needsEvidence,
     구체, 구체밀도, 구체최소, 구체권장, 구체권장미달, 정도부사, 정도부사횟수, 압축, 채움, 출처없음,
     // 아래는 화면에 따로 칸을 두지 않는다(전부 권장이라 advice 줄로 나간다) — 시험이 읽는 자리다
-    문장길이: 문장길이값, 말투: 말투값, 반박, 가격, 금지문구, 겹침, 약속, 태그, 가짜PMID, 본보기베낌, 지어낸경험, 당부문단,
+    문장길이: 문장길이값, 말투: 말투값, 반박, 가격, 금지문구, 영어섞임, 겹침, 약속, 태그, 가짜PMID, 본보기베낌, 지어낸경험, 당부문단,
     targetChars: 목표, targetPhotos: 목표사진, 지정목표: 목표글자수,
     꺼진검사,
     // pass 하나로는 두 가지가 같아 보인다: '다 재서 통과'와 '몇 개는 못 재서 걸린 게 없음'.
