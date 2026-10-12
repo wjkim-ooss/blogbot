@@ -1131,6 +1131,14 @@ $("#shop-save").addEventListener("click", async (e) => {
 // 빈 칸 4개를 내미는 대신, 이미 쓴 초안에서 값을 뽑아 "맞나요?"로 묻는다.
 // 원장이 손으로 고쳐 넣은 자리가 곧 진짜 값이다.
 $("#shop-suggest").addEventListener("click", async (e) => {
+  // 뽑아 넣는 칸은 넷(관리구성·가격·이력·운영)이고 빈 칸에만 넣는다. 넷이 다 차 있으면 넣을 자리가 없는데,
+  // 예전엔 그때도 "뽑을 값을 못 찾았습니다. 직접 채워 주세요"가 빨갛게 떠서 고장처럼 보였다(2026-10-12 우진).
+  const 뽑는칸 = ["관리구성", "가격", "이력", "운영"].map((k) => $(`#shop-fields [data-k="${k}"]`)).filter(Boolean);
+  if (뽑는칸.length && 뽑는칸.every((el) => el.value.trim())) {
+    $("#shop-msg").textContent = "뽑아 넣는 네 칸(관리 구성, 가격, 이력, 운영 형태)이 이미 채워져 있어 바꿀 것이 없습니다";
+    $("#shop-msg").style.color = "var(--muted, #8a91a0)";
+    return;
+  }
   e.target.disabled = true;
   try {
     const { 추천, 본글수 } = await api("/api/shop/추천");
