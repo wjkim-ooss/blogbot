@@ -9,7 +9,7 @@ import { resolveDraftView } from "./permissions.mjs";
 // 보관함 읽기는 한 곳(scripts/보관함.mjs)에서 한다 — 발행검증과 같은 목록을 봐야 한다.
 import { 보관함읽기 } from "./scripts/보관함.mjs";
 // 초안 판정 규칙은 브라우저와 한 파일을 함께 쓴다 (web/rules.js). 두 벌로 두면 반드시 갈라진다.
-import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형, 원장글보관함, 원장글고르기, 문장길이범위, 깨진기준, 초안본문, 적힌목표, 적힌유형, 문단나누기, 줄나누기, 본문문장, 소제목줄, 키워드꼬리, 이름꼬리 } from "./web/rules.js";
+import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형, 원장글보관함, 원장글고르기, 문장길이범위, 깨진기준, 초안본문, 적힌목표, 적힌유형, 초안다듬기, 줄나누기, 본문문장, 소제목줄, 해시태그줄, 켜진금지문구, 키워드꼬리, 이름꼬리 } from "./web/rules.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
@@ -342,7 +342,7 @@ const 말투흐름 = (유형) => {
 const 유형블록 = (U, 키, 만들기) => (CONFIG[키] && 검사켜짐(U.검사, 키) ? 만들기(CONFIG[키]) : "");
 // 우진이 쓰지 말라고 못박은 문장(config.금지문구) — 그 유형에서 켜진 것만 보여 준다. 검사기도 같은 목록으로 잡는다.
 const 금지문구블록 = (U) => {
-  const 목록 = (CONFIG.금지문구?.목록 || []).filter((x) => !x.검사 || 검사켜짐(U.검사, x.검사));
+  const 목록 = 켜진금지문구(CONFIG, U.검사);
   return 목록.length ? `
 [쓰지 않는 문장 — 검증기가 잡는다]
 아래 같은 문장은 쓰지 않는다. 낱말만 바꾼 같은 뜻의 문장도 쓰지 않는다.
@@ -355,7 +355,7 @@ const 사람처럼블록 = () => {
   return H ? `
 [사람이 쓴 글처럼]
 ${H.줄.map((x) => `- ${x}`).join("\n")}
-- 이런 말은 쓰지 않는다: ${H.쓰지않는말.map((x) => `"${x}"`).join(", ")}
+- 이런 말은 쓰지 않는다: ${[...H.지시만, ...H.잡는말].map((x) => `"${x}"`).join(", ")}
 ` : "";
 };
 // 사진은 장수를 채우는 일이 아니다. 원장이 실제로 찍어 둘 수 있는 자리만 지목한다 —
@@ -571,7 +571,8 @@ function 원장본보기블록(원장본보기) {
   return lines;
 }
 
-function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = null, 사례 = "", 원장본보기 = [], 각도 = "", 이미쓴글 = [], 도입 = "", 마무리 = "") {
+// 이번글: 만들 때마다 서버가 고르는 것 — 각도·도입·마무리, 그리고 같은 키워드로 이미 쓴 글(피할 것)
+function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = null, 사례 = "", 원장본보기 = [], { 각도 = "", 이미쓴글 = [], 도입 = "", 마무리 = "" } = {}) {
   const lines = [`키워드: ${keyword}`];
   if (region) lines.push(`지역: ${region} (본문에 자연스럽게 반영)`);
   if (point) lines.push(`강조 포인트: ${point} (이 말이 수식어를 겹친 명사구라면 그대로 쓰지 말고, 뜻은 살리되 '누가·어디부터 어디까지·몇 분'을 넣은 문장으로 펴서 쓸 것)`);
@@ -1062,20 +1063,21 @@ function fixInstruction(v, keyword) {
 // 끝: 덧붙인 문단이 들어갈 줄 번호(그 앞에 넣는다). 마지막 자리는 해시태그 앞.
 function 덧붙일자리(body) {
   const 줄 = String(body).split("\n");
-  const 태그 = 줄.findIndex((l) => /^#[^#\s]/.test(l.trim()));
+  const 태그 = 줄.findIndex((l) => 해시태그줄.test(l.trim()));
   const 글끝 = 태그 >= 0 ? 태그 : 줄.length;
   const 소제목 = 줄.map((l, i) => (소제목줄.test(l) ? i : -1)).filter((i) => i >= 0);
   const 자리 = [];
-  // 자리마다 번호를 붙인다 — AI가 긴 소제목을 한 글자만 다르게 옮겨도 못 찾던 것을 번호로 찾는다
-  const 넣기 = (설명, 시작, 끝, 소제목글 = "") => 자리.push({ 번호: 자리.length + 1, 이름: `자리 ${자리.length + 1} — ${설명}`, 소제목: 소제목글, 시작, 끝 });
   if (소제목.length) {
-    소제목.forEach((h, k) => { const 글 = 줄[h].replace(/^#+\s*/, "").trim(); 넣기(`소제목 "${글}" 아래`, h, k + 1 < 소제목.length ? 소제목[k + 1] : 글끝, 글); });
+    소제목.forEach((h, k) => {
+      const 글 = 줄[h].replace(/^#+\s*/, "").trim();
+      자리.push({ 설명: `소제목 "${글}" 아래`, 소제목: 글, 시작: h, 끝: k + 1 < 소제목.length ? 소제목[k + 1] : 글끝 });
+    });
   } else {
     let 시작 = 0;
     const 끊기 = 줄.map((l, i) => (/^\[사진/.test(l.trim()) && i < 글끝 ? i : -1)).filter((i) => i > 0);
     for (const 끝 of [...끊기, 글끝]) {
       const 첫줄 = 줄.slice(시작, 끝).find((l) => l.trim() && 본문문장(l.trim()));
-      if (첫줄) 넣기(`"${첫줄.trim().slice(0, 20)}"로 시작하는 부분`, 시작, 끝);
+      if (첫줄) 자리.push({ 설명: `"${첫줄.trim().slice(0, 20)}"로 시작하는 부분`, 소제목: "", 시작, 끝 });
       시작 = 끝 + 1;
     }
   }
@@ -1099,39 +1101,44 @@ function 덧붙이기지시(body, v) {
     "덧붙일 문단",
     "",
     "자리 목록:",
-    ...덧붙일자리(body).map((x) => `- ${x.이름}`),
+    // 자리마다 번호를 붙인다 — AI가 긴 소제목을 한 글자만 다르게 옮겨도 못 찾던 것을 번호로 찾는다
+    ...덧붙일자리(body).map((x, i) => `- 자리 ${i + 1} — ${x.설명}`),
   ].join("\n");
 }
 
 // AI가 준 '### 자리 N + 문단'을 그 자리 끝(다음 소제목 앞, 마지막이면 해시태그 앞)에 끼운다. 문단은 parseDraftOutput 이 나눈다.
 // 번호로 찾고, 소제목을 그대로 적어 왔으면 그것으로도 찾는다. 못 찾은 덩이는 버린다 — 엉뚱한 자리에 넣느니 안 넣는다.
-// 받을까(새 본문): 문단 하나를 넣을 때마다 묻는다. 한 문단이 기준을 어겼다고 나머지까지 버리지 않으려는 것이다
-// (2026-10-12 실제 초안: 덧붙이기를 불렀는데 통째로 버려져 1,456/1,700자로 저장됐다).
-function 덧붙여넣기(body, 답, 받을까 = null) {
+// 받을까(새 본문): 받을 만하면 참인 값(판정 결과)을, 아니면 거짓을 돌려준다. 먼저 다 넣어 보고(대개 이걸로 끝난다),
+// 안 되면 하나씩 넣어 보며 기준을 어긴 문단만 뺀다 — 한 문단 때문에 나머지까지 버리면 글자수가 안 찬다
+// (2026-10-12 실제 초안: 덧붙이기를 불러 놓고 통째로 버려 1,456/1,700자로 저장됐다).
+// 돌려주는 것: { body, 결과: 받을까가 마지막으로 준 값 } 또는 null.
+function 덧붙여넣기(body, 답, 받을까 = () => true) {
   const 정규 = (t) => String(t).replace(/[^\p{L}\p{N}]/gu, "");
   const 덩이들 = [];
   for (const 덩이 of 울타리벗기기(답).split(/^#{2,4}\s*/m).slice(1)) {
     const [첫, ...나머지] = 덩이.split("\n");
     const 글 = 나머지.join("\n").trim();
-    if (글) 덩이들.push({ 머리: 정규(첫), 글 });
+    if (글) 덩이들.push({ 번호: Number(/^\s*자리\s*(\d+)/.exec(첫)?.[1] ?? 0), 머리: 정규(첫), 글 });
   }
-  const 자리 = 덧붙일자리(body);
-  const 맞나 = (머리, x) => {
-    for (const 앞 of [`자리${x.번호}`, `구간${x.번호}`]) if (머리.startsWith(앞) && !/^\d/.test(머리.slice(앞.length))) return true;   // 자리 1 과 자리 12 를 가른다
-    return !!x.소제목 && 머리 === 정규(x.소제목);
-  };
-  let 줄 = String(body).split("\n"), 붙인 = 0;
-  for (let k = 자리.length - 1; k >= 0; k--) {   // 뒤에서부터 넣어야 앞 자리의 줄 번호가 안 밀린다
-    const 덩 = 덩이들.find((d) => 맞나(d.머리, 자리[k]));
-    if (!덩) continue;
-    let 끝 = 자리[k].끝;
-    while (끝 > 자리[k].시작 + 1 && !줄[끝 - 1].trim()) 끝--;
-    const 넣은 = [...줄.slice(0, 끝), "", 덩.글, ...(줄[끝]?.trim() ? [""] : []), ...줄.slice(끝)];
-    if (받을까 && !받을까(넣은.join("\n"))) continue;
-    줄 = 넣은;
-    붙인 += 1;
+  const 원 = String(body).split("\n");
+  const 넣을것 = 덧붙일자리(body)
+    .map((x, i) => ({ x, 글: 덩이들.find((d) => d.번호 === i + 1 || (x.소제목 && d.머리 === 정규(x.소제목)))?.글 }))
+    .filter((y) => y.글);
+  // 뒤 자리부터 넣어야 앞 자리의 줄 번호가 안 밀린다 (넣을것은 앞에서부터 차례다)
+  const 합치기 = (목록) => 목록.reduceRight((줄, { x, 글 }) => {
+    let 끝 = x.끝;
+    while (끝 > x.시작 + 1 && !줄[끝 - 1].trim()) 끝--;
+    return 줄.toSpliced(끝, 0, "", 글, ...(줄[끝]?.trim() ? [""] : []));
+  }, 원).join("\n").replace(/\n{3,}/g, "\n\n");
+  let 받은 = 넣을것, 결과 = 받은.length ? 받을까(합치기(받은)) : null;
+  if (!결과) {
+    받은 = [];
+    for (const y of 넣을것.toReversed()) {
+      const r = 받을까(합치기([y, ...받은]));
+      if (r) { 받은 = [y, ...받은]; 결과 = r; }
+    }
   }
-  return 붙인 ? 줄.join("\n").replace(/\n{3,}/g, "\n\n") : null;
+  return 받은.length ? { body: 합치기(받은), 결과 } : null;
 }
 
 // 같은 키워드로 이미 쓴 초안(최근 3편)의 제목·소제목·첫 문장 — 새 글이 이것과 겹치지 않게 프롬프트에 싣는다.
@@ -1255,7 +1262,7 @@ async function handleGenerate(res, body, ctx) {
     const 마무리 = 검사켜짐(유형정보(글쓴이유형).검사, "마무리") ? 하나(CONFIG.마무리?.종류) : "";   // 예약으로 닫는 글에만
     if (각도) send({ type: "status", message: `이번 글은 "${각도}"로 씁니다` });
     const 이미쓴글 = await 같은키워드글(ctx, keyword);
-    const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례, 원장본보기, 각도, 이미쓴글, 도입, 마무리) }];
+    const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례, 원장본보기, { 각도, 이미쓴글, 도입, 마무리 }) }];
     const check = (d) => {
       const p = parseDraftOutput(d, keyword);
       return { parsed: p, validation: validateDraft(`${p.title}\n${p.body}`, keyword, targetChars, p.title, ref, { ...shop, 사례 }, 글쓴이유형, 원장글) };
@@ -1282,11 +1289,13 @@ async function handleGenerate(res, body, ctx) {
     let 부른 = 1;
     const 짧음 = (v) => v.걸린기준.includes("글자수");
     const 다른걸림 = (v) => v.걸린기준.some((n) => n !== "글자수");
-    // 고쳐 쓰기를 부를 만한 권장 — 말투·어미·키워드 자리처럼 다시 쓰면 고쳐지는 것만 (원장확인 자리·제목 숫자는 다시 써도 그대로다)
+    // 고쳐 쓰기를 부를 만한 권장 — 말투·어미·키워드 자리처럼 다시 쓰면 고쳐지는 것만 (원장확인 자리·제목 숫자는 다시 써도 그대로다).
+    // '다양한' 같은 말(AI티)은 부르는 까닭으로 치지 않는다 — 사람 글의 절반에도 나오는 말이라 AI를 거의 매번 한 번 더 부르게 된다.
+    // 다른 까닭으로 고쳐 쓸 때 권장 목록에 실려 같이 고쳐진다.
     const 다듬을까 = (v) => {
       if (!CONFIG.말투?.다듬기?.켜짐) return false;
       const m = v.말투;
-      return !!(m && (m.비율 < m.최소 || m.연속단정 > m.연속허용 || m.반복어미?.length)) || v.kwOver || v.첫문단키워드 === false || !!v.AI티?.length;
+      return !!(m && (m.비율 < m.최소 || m.연속단정 > m.연속허용 || m.반복어미?.length)) || v.kwOver || v.첫문단키워드 === false;
     };
     // AI를 한 번 더 부른다: 지금 제일 좋은 글 + 지시만 보내고(앞 차례는 버린다), 답을 받기(답)로 넘긴다. 실패하면 null.
     const 한번더 = async (알림, 지시) => {
@@ -1294,11 +1303,12 @@ async function handleGenerate(res, body, ctx) {
       send({ type: "status", message: `${알림} (AI ${부른}/${최대}번째)` });
       send({ type: "reset" });
       messages.splice(1);
-      messages.push({ role: "assistant", content: `제목: ${parsed.title}\n\n${parsed.body}` }, { role: "user", content: 지시 });
+      messages.push({ role: "assistant", content: 글로() }, { role: "user", content: 지시 });
       try { return await streamOnce(client, messages, send, 글쓴이유형, 기록); }
       catch (e) { send({ type: "status", message: `이번 차례는 건너뜁니다 (${e.message})` }); return null; }
     };
     const 받기 = (이번) => { best = { ...이번, 모델: 기록.모델 }; ({ parsed, validation } = best); };
+    const 글로 = (몸 = parsed.body) => `제목: ${parsed.title}\n\n${몸}`;   // check()가 읽는 모양
 
     if (부른 < 최대 && validation.chars >= 100 && (다른걸림(validation) || 다듬을까(validation))) {
       const 답 = await 한번더(`한 번에 고쳐 쓰는 중: ${validation.issues.length + validation.advice.length}가지`, 고쳐쓰기지시(validation, keyword));
@@ -1311,11 +1321,11 @@ async function handleGenerate(res, body, ctx) {
     // 받는 기준은 대화 수정과 같다 — 늘었고, 전에 통과하던 기준이 깨지지 않았으면(깨진기준).
     while (부른 < 최대 && 짧음(validation) && validation.chars >= 100) {
       const 답 = await 한번더(`글자수가 ${(validation.targetChars - validation.chars).toLocaleString()}자 모자라 문단을 덧붙이는 중`, 덧붙이기지시(parsed.body, validation));
-      // 문단 하나씩 넣어 보고, 전에 통과하던 기준을 깨는 문단만 버린다
-      const 글로 = (몸) => `제목: ${parsed.title}\n\n${몸}`;
-      const 새몸 = 답 && 덧붙여넣기(parsed.body, 답, (몸) => !깨진기준(validation, check(글로(몸)).validation).length);
-      const 이번 = 새몸 && check(글로(새몸));
-      if (이번 && 이번.validation.chars > validation.chars && !깨진기준(validation, 이번.validation).length) 받기(이번);
+      const 넣음 = 답 && 덧붙여넣기(parsed.body, 답, (몸) => {
+        const 이번 = check(글로(몸));
+        return 이번.validation.chars > validation.chars && !깨진기준(validation, 이번.validation).length && 이번;
+      });
+      if (넣음) 받기(넣음.결과);
       else { if (답) send({ type: "status", message: "덧붙일 문단을 못 썼습니다 (AI가 형식을 안 지켰거나, 문단마다 다른 기준을 어겼습니다)" }); break; }
     }
 
@@ -1393,8 +1403,7 @@ function describeError(e, ctx) {
 // AI가 문단을 안 나누고 덩어리로 낸 것은 여기서 한 번 나눈다 (규칙은 rules.js 문단나누기, 숫자는 config.문단)
 function parseDraftOutput(text, keyword) {
   const p = 초안풀기(text, keyword);
-  // 긴 줄을 먼저 두 줄로 나누고(config.문장길이.줄나누기), 그다음 덩어리를 문단으로 나눈다
-  return { ...p, body: 문단나누기(줄나누기(p.body, CONFIG, keyword), CONFIG) };
+  return { ...p, body: 초안다듬기(p.body, CONFIG, keyword) };
 }
 function 초안풀기(text, keyword) {
   const m = text.match(/^\s*제목:\s*(.+)\n+([\s\S]*)$/);
@@ -1692,7 +1701,9 @@ async function handleChat(res, body, ctx, name) {
       const 원답 = await streamOnce(client, messages, () => {}, 유형, {}, 시스템, 1);   // 대화 답은 짧아도 된다
       const 풀림 = 대화답풀기(원답);
       답 = 풀림.답 || 답;   // 다시 시킨 차례에 답이 비면 처음 답을 쓴다
-      새글 = 풀림.바꾼부분 != null && 선택 ? 끼워넣기(원문, 선택, 풀림.바꾼부분)
+      // 드래그한 자리에 들어갈 글은 긴 줄을 나눠 넣는다 — 안 그러면 줄 길이 하나 때문에 AI에게 다시 시키게 된다.
+      // 글 전체를 받은 경우(수정본)는 손대지 않는다: 원장님이 직접 쓴 다른 줄까지 줄바꿈이 바뀐다.
+      새글 = 풀림.바꾼부분 != null && 선택 ? 끼워넣기(원문, 선택, 줄나누기(풀림.바꾼부분, CONFIG, keyword))
         : 풀림.수정본 != null ? 본문갈기(원문, 풀림.수정본) : null;
       let 다시말 = null;
       if (!새글 && 풀림.남은글 && !재촉함) { 재촉함 = true; 다시말 = 형식재촉(); }

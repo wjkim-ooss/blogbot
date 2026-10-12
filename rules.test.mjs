@@ -380,7 +380,8 @@ const 구체글 = (n = 1400) =>
   "가".repeat(n);
 
 test("추상어를 갈래별로 잡고, 무엇으로 바꿀지까지 알려준다", () => {
-  const v = 평가(구체글() + "\n정성껏 최고의 프리미엄 관리를 해드립니다.", { keyword: "여드름", config: CONFIG, 말투: "지시" });
+  // 문단을 띄운다 — 문장부호 없이 끝난 앞줄에 이어 쓰면 한 문장으로 이어져(문장으로) 보여 주는 앞머리에서 잘린다
+  const v = 평가(구체글() + "\n\n정성껏 최고의 프리미엄 관리를 해드립니다.", { keyword: "여드름", config: CONFIG, 말투: "지시" });
   assert.equal(v.pass, false);
   const 말 = v.issues.find((i) => i.startsWith("추상어"));
   assert.ok(말.includes("부풀린 수식"), "어느 갈래에 걸렸는지 말해야 한다");

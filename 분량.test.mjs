@@ -2,9 +2,14 @@
 // AI 호출은 시험하지 않는다. 받은 답을 어디에 끼우는지만 못 박는다 — 틀리면 글이 조용히 뒤섞인다.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { __test } from "./server.mjs";
+import { 약속숫자, 평가, 문단나누기 as 나누기, 줄나누기, 문장으로, noSpace } from "./web/rules.js";
 
-const { 덧붙여넣기, 덧붙이기지시 } = __test;
+const { 덧붙일자리, 덧붙이기지시, 시스템프롬프트, buildUserPrompt } = __test;
+const 덧붙여넣기 = (...a) => __test.덧붙여넣기(...a)?.body ?? null;   // 대부분의 시험은 본문만 본다
+const CONFIG = JSON.parse(fs.readFileSync(new URL("./config.json", import.meta.url), "utf8"));
+const 문단나누기 = (t) => 나누기(t, CONFIG);
 
 const 본문 = [
   "첫 문단입니다.",
@@ -47,8 +52,6 @@ test("덧붙이기 지시는 글을 다시 쓰지 말라고 하고 소제목 목
 });
 
 // ---------- 2026-10-07 실제 초안: 소제목 0개, 사진 사이 14줄이 한 덩어리 ----------
-const { 덧붙일자리 } = __test;
-const 문단나누기 = (t) => 나누기(t, CONFIG);
 const 덩어리 = [
   "[사진: 턱]",
   "",
@@ -74,16 +77,13 @@ test("붙은 줄이 다섯 줄을 넘으면 문장이 끝나는 줄에서 나눈
 test("소제목이 없으면 사진 사이 구간을 덧붙일 자리로 쓰고, '자리 2'처럼 번호로 찾는다", () => {
   const 자리 = 덧붙일자리(덩어리);
   assert.equal(자리.length, 2);
-  assert.ok(자리[0].이름.includes("얼굴에 돌기가 생기면"));
+  assert.ok(자리[0].설명.includes("얼굴에 돌기가 생기면"));
   const 새 = 덧붙여넣기(덩어리, "### 자리 2\n덧붙인 클렌저 이야기.\n이어지는 문장.\n### 자리 12\n없는 자리.");
   assert.ok(새.indexOf("덧붙인 클렌저 이야기.") > 새.indexOf("클렌저를 쓰시나요?"));
   assert.ok(!새.includes("없는 자리."), "자리 12 는 자리 1 로 잘못 붙지 않는다");
 });
 
 // ---------- 2026-10-07 실제 초안: 남은 문구가 검사기 잘못이었던 것 ----------
-import { 약속숫자, 평가, 문단나누기 as 나누기 } from "./web/rules.js";
-import fs from "node:fs";
-const CONFIG = JSON.parse(fs.readFileSync(new URL("./config.json", import.meta.url), "utf8"));
 
 test("제목 '3가지'는 번호 붙은 소제목 수와 맞춘다 — 들어가는 말·샵 소개 소제목은 항목이 아니다", () => {
   const 글 = "### 1. 하나\n가\n### 2. 둘\n나\n### 3. 셋\n다\n### 80분 관리 순서\n라\n### 마치며\n마";
@@ -102,7 +102,6 @@ test("초안 하나에 AI는 많아야 3번 (2026-10-07 우진: 1~3번 안에)",
 });
 
 // ---------- 2026-10-12 우진: 첫 문단·마지막 문단이 글마다 똑같다, 이런 문장은 쓰지 마 ----------
-const { 시스템프롬프트, buildUserPrompt } = __test;
 const 초안 = (x) => `제목: 마곡 모낭염 관리\n\n턱에 자꾸 올라오시죠?\n${x}\n손으로 누르면 번집니다.`;
 const 걸린금지 = (x, 유형 = "원장") => 평가(초안(x), { keyword: "모낭염", config: CONFIG, 유형 }).금지문구.map((m) => m.이름);
 
@@ -131,7 +130,7 @@ test("지시문: 박혀 있던 본보기 문장은 빠지고, 금지 문장과 �
 
 test("도입과 마무리는 서버가 골라 요청에 적는다 — AI는 지난 글을 모른다", () => {
   assert.ok(CONFIG.스타일변주.도입.length >= 4 && CONFIG.마무리.종류.length >= 3);
-  const p = buildUserPrompt("모낭염", "마곡", "", null, 0, null, "", [], "", [], CONFIG.스타일변주.도입[0], CONFIG.마무리.종류[1]);
+  const p = buildUserPrompt("모낭염", "마곡", "", null, 0, null, "", [], { 도입: CONFIG.스타일변주.도입[0], 마무리: CONFIG.마무리.종류[1] });
   assert.ok(p.includes(`이번 글의 도입: ${CONFIG.스타일변주.도입[0]}`));
   assert.ok(p.includes(`이번 글의 마무리: ${CONFIG.마무리.종류[1]}`));
 });
@@ -149,8 +148,6 @@ test("해시태그와 소제목은 효능 주장으로 세지 않는다 — '#�
 });
 
 // ---------- 2026-10-12: 줄과 문장 ----------
-import { 줄나누기, 문장잇기 } from "./web/rules.js";
-import { noSpace } from "./web/rules.js";
 
 test("20자를 넘는 줄은 두 줄로 나눈다 — 글자는 그대로, 괄호·따옴표 안과 키워드 한가운데는 안 끊는다", () => {
   const 글 = [
@@ -172,15 +169,20 @@ test("20자를 넘는 줄은 두 줄로 나눈다 — 글자는 그대로, 괄�
 });
 
 test("말투는 줄이 아니라 문장으로 센다 — 두 줄로 쓴 문장의 앞줄을 '어미 없는 문장'으로 세면 비율이 반 토막 난다", () => {
-  assert.deepEqual(문장잇기(["얼마 전 마곡 샵을 찾은 20대", "남성 고객님의 첫 마디입니다.", "속상하지 않으셨나요?"]),
+  assert.deepEqual(문장으로("얼마 전 마곡 샵을 찾은 20대\n남성 고객님의 첫 마디입니다.\n속상하지 않으셨나요?"),
     ["얼마 전 마곡 샵을 찾은 20대 남성 고객님의 첫 마디입니다.", "속상하지 않으셨나요?"]);
+  assert.deepEqual(문장으로("문장부호 없이 끝난 줄\n\n### 소제목\n다음 문단의 첫 줄\n둘째 줄입니다."),
+    ["문장부호 없이 끝난 줄", "### 소제목", "다음 문단의 첫 줄 둘째 줄입니다."], "빈 줄과 소제목은 늘 문장을 끝낸다");
   const 두줄 = Array.from({ length: 10 }, (_, i) => (i % 2 ? `턱에 자꾸 올라오는\n트러블이 신경 쓰이시죠?` : `손으로 누르면 옆으로\n번지는 일이 생깁니다.`)).join("\n\n");
   const v = 평가(`제목: 가\n\n${두줄}`, { config: CONFIG, 유형: "원장" });
   assert.equal(v.말투.전체, 10, "문장 열 개");
   assert.equal(v.말투.비율, 50);
 });
 
-test("덧붙이기: 기준을 어긴 문단만 버리고 나머지는 받는다 (예전엔 하나만 어겨도 통째로 버렸다)", () => {
+test("덧붙이기: 먼저 다 넣어 보고, 안 되면 기준을 어긴 문단만 버린다 (예전엔 하나만 어겨도 통째로 버렸다)", () => {
+  let 물은 = 0;
+  __test.덧붙여넣기(본문, "### 자리 1\n괜찮은 문단.\n### 자리 2\n또 괜찮은 문단.", () => (물은 += 1));
+  assert.equal(물은, 1, "다 괜찮으면 한 번만 잰다");
   const 새 = 덧붙여넣기(본문, "### 자리 1\n괜찮은 문단.\n### 자리 2\n나쁜 문단.", (몸) => !몸.includes("나쁜 문단."));
   assert.ok(새.includes("괜찮은 문단.") && !새.includes("나쁜 문단."));
   assert.equal(덧붙여넣기(본문, "### 자리 2\n나쁜 문단.", () => false), null, "다 버려지면 아무것도 안 넣는다");
@@ -192,4 +194,12 @@ test("기계 글처럼 읽히는 말은 권장으로 짚고, 사진 설명 안�
   assert.ok(v.advice.some((a) => a.includes("다양한")));
   assert.deepEqual(v.영어섞임, ["surface"]);
   assert.deepEqual(평가(초안("염증이 번질 수 있습니다."), { keyword: "모낭염", config: CONFIG, 유형: "원장" }).AI티, [], "'수 있습니다'는 잡지 않는다");
+});
+
+test("두 줄에 걸친 말도 뜻을 보는 검사에 걸린다 — 긴 줄을 나눈 뒤에도 (2026-10-12: 줄로 보다가 놓쳤다)", () => {
+  const 재 = (x) => 평가(초안(x), { keyword: "모낭염", config: CONFIG, 유형: "원장" });
+  assert.deepEqual(재("꾸준히 바르면 여드름이 뿐만\n아니라 흉터까지 줄어듭니다.").AI티, ["뿐만 아니라"]);
+  const 긴줄 = "콜라겐 크림을 아침저녁으로 꾸준히 바르면 눈가 주름이 확실히 개선됩니다.";
+  assert.equal(재(줄나누기(긴줄, CONFIG)).claims.length, 재(긴줄).claims.length, "줄을 나눠도 효능 주장은 그대로 잡는다");
+  assert.equal(재(긴줄).claims.length, 1);
 });

@@ -13,7 +13,8 @@
 
 // ---------- 글자 세기 ----------
 export const noSpace = (t) => (t || "").replace(/\s/g, "").length;
-export const stripPhotos = (t) => (t || "").replace(/\[사진:[^\]]*\]/g, "");
+const 사진표시 = /\[사진:[^\]]*\]/g;
+export const stripPhotos = (t) => (t || "").replace(사진표시, "");
 export const countWord = (text, w) => (w ? text.split(w).length - 1 : 0);
 // 네이버는 검색어의 띄어쓰기를 무시하고 매칭한다 — 세는 쪽도 양쪽 공백을 지우고 비교해야
 // "여드름 피부관리"로 넣든 "여드름피부관리"로 넣든 같은 결과가 나온다.
@@ -274,6 +275,29 @@ export function 쓴사람셈(posts, config) {
   return 셈;
 }
 
+// ---------- 줄과 문장 ----------
+// 이 글들은 한 문장을 두세 줄에 나눠 쓴다(문장길이 규칙). 그래서 단위가 둘이다.
+//   줄   — 길이를 재는 단위. 문장나누기()가 준다(줄바꿈과 문장부호에서 끊는다).
+//   문장 — 뜻을 보는 단위. 문장으로()가 준다(같은 문단 안에서 문장부호가 나올 때까지 줄을 잇는다).
+// 줄을 문장으로 세면 문장 수가 두 배 넘게 부풀고(원장글 127편: 평균 150줄 = 문장 61개), 두 줄에 걸친 말은
+// 어느 검사에도 안 걸린다 — 2026-10-12에 서버가 긴 줄을 나누기 시작하자 효능 주장·본보기 문구 검사가 그 문장을 놓쳤다.
+// 빈 줄·소제목·사진·해시태그 줄은 늘 문장을 끝내고, 그 줄들은 그대로 한 항목으로 남는다.
+const 문장끝 = /[.?!…][)"'”’\]]*$/;
+export function 문장으로(text) {
+  const 나온 = [];
+  let 모음 = [];
+  const 털기 = () => { if (모음.length) { 나온.push(모음.join(" ")); 모음 = []; } };
+  for (const 문단 of (text || "").split(문단경계)) {
+    for (const 줄 of 문장나누기(문단)) {
+      if (!본문문장(줄)) { 털기(); 나온.push(줄); continue; }
+      모음.push(줄);
+      if (문장끝.test(stripPhotos(줄).trim())) 털기();
+    }
+    털기();
+  }
+  return 나온;
+}
+
 // ---------- 문장 쪼개기 ----------
 // claimSentences·추상문장·압축찾기가 같은 자리에서 끊어야 같은 문장을 가리킨다.
 export const 문장나누기 = (text) =>
@@ -479,44 +503,58 @@ export const 공감범위 = (config, 유형) => 유형정보(config, 유형).공
 const 머리말줄 = new RegExp(`^-\\s*(?:${머리말키.join("|")}):`);
 export const 본문문장 = (s) => !/^(#|제목:|제목후보:|\[사진:|근거\s*[:：])/.test(s) && !머리말줄.test(s);
 export const 소제목줄 = /^#{2,4}\s+\S/;
+export const 해시태그줄 = /^#[^#\s]/;
 // 당부·교훈으로 끝나는 줄인가 (config.당부.어미) — 평가의 '문단 끝 당부'와 문단나누기가 같이 쓴다
 export const 당부끝 = (줄, config) =>
   (config.당부?.어미 || []).some((e) => stripPhotos(줄).trim().replace(어미꼬리, "").endsWith(e));
 
 // 상한을 넘는 줄을 두 줄로 나눈다 (config.문장길이.줄나누기). 글자는 그대로, 띄어쓰기 하나를 줄바꿈으로 바꿀 뿐이다.
-// 끊는 자리: 두 쪽이 다 상한 안이고 길이가 비슷한 곳. 쉼표 뒤·조사나 이음말 뒤면 더 좋다(숨 쉬는 자리).
-// 괄호·대괄호·따옴표 안과 키워드 한가운데는 끊지 않는다. 한 번 나눠도 긴 쪽은 한 번 더 나눈다.
-const 숨자리 = /(?:[,，、]|은|는|이|가|을|를|에|에서|에게|로|으로|와|과|도|만|면|고|며|서|지만|는데|인데|니|때|뒤|후|전|채|처럼|때문에|위해|대로)$/;
-function 줄하나나누기(줄, 상한, 키워드, 깊이 = 0) {
-  if (noSpace(줄) <= 상한 || 깊이 > 2) return [줄];
+// 끊는 자리: 두 쪽이 다 상한 안인 곳 가운데 길이가 비슷한 곳. 쉼표 뒤·조사나 이음말 뒤(config.문장길이.숨자리)면 더 좋다.
+// 괄호·대괄호·따옴표 안과 키워드 한가운데는 끊지 않는다. 나눈 쪽이 아직 길면 그쪽을 다시 나눈다.
+const 최소쪽 = 4, 숨자리덤 = 6, 짧은쪽벌 = 20;   // 끊는 자리를 고르는 셈 — 판정 기준이 아니라 이 함수 안의 저울이다
+const 숨자리캐시 = new WeakMap();
+const 숨자리식 = (길이설정) => {
+  let re = 숨자리캐시.get(길이설정);
+  if (!re) 숨자리캐시.set(길이설정, (re = new RegExp(`(?:[,，、]|${(길이설정.숨자리 || []).map(정규식몫).join("|") || "$^"})$`)));
+  return re;
+};
+function 줄하나나누기(줄, 길이설정, 키) {
+  const { 상한, 하한 = 0 } = 길이설정;
+  if (noSpace(줄) <= 상한) return [줄];
+  const 숨자리 = 숨자리식(길이설정), 키든줄 = !!키 && despace(줄).includes(키);
   let 최고 = null, 속 = 0, 따옴 = false;
   for (let i = 0; i < 줄.length; i++) {
     const c = 줄[i];
-    if ("([".includes(c)) 속 += 1; else if (")]".includes(c)) 속 = Math.max(0, 속 - 1);
-    else if (c === '"' || c === "“" || c === "”") 따옴 = c === "“" ? true : c === "”" ? false : !따옴;
+    if ("([“".includes(c)) 속 += 1; else if (")]”".includes(c)) 속 = Math.max(0, 속 - 1); else if (c === '"') 따옴 = !따옴;
     if (c !== " " || 속 || 따옴) continue;
     const 앞 = 줄.slice(0, i).trim(), 뒤 = 줄.slice(i + 1).trim();
-    if (키워드 && despace(줄).includes(despace(키워드)) && !despace(앞).includes(despace(키워드)) && !despace(뒤).includes(despace(키워드))) continue;
+    if (키든줄 && !despace(앞).includes(키) && !despace(뒤).includes(키)) continue;   // 키워드 한가운데
     const a = noSpace(앞), b = noSpace(뒤);
-    if (a < 4 || b < 4) continue;
-    const 점 = Math.abs(a - b) + (a > 상한 ? 100 : 0) + (b > 상한 ? 100 : 0) + (Math.min(a, b) < 8 ? 20 : 0) - (숨자리.test(앞) ? 6 : 0);
-    if (!최고 || 점 < 최고.점) 최고 = { 점, 앞, 뒤 };
+    if (a < 최소쪽 || b < 최소쪽) continue;
+    const 맞음 = a <= 상한 && b <= 상한;
+    const 점 = Math.abs(a - b) + (Math.min(a, b) < 하한 - 2 ? 짧은쪽벌 : 0) - (숨자리.test(앞) ? 숨자리덤 : 0);
+    if (!최고 || (맞음 && !최고.맞음) || (맞음 === 최고.맞음 && 점 < 최고.점)) 최고 = { 점, 맞음, 앞, 뒤 };
   }
   if (!최고) return [줄];
-  return [...줄하나나누기(최고.앞, 상한, 키워드, 깊이 + 1), ...줄하나나누기(최고.뒤, 상한, 키워드, 깊이 + 1)];
+  return [...줄하나나누기(최고.앞, 길이설정, 키), ...줄하나나누기(최고.뒤, 길이설정, 키)];
 }
 export function 줄나누기(body, config, 키워드 = "") {
-  const { 상한 = 0, 줄나누기: 켜짐 } = config.문장길이 || {};
-  if (!켜짐 || !상한) return String(body);
-  return String(body).split("\n")
-    .flatMap((l) => (l.trim() && 본문문장(l.trim()) && !/^\[/.test(l.trim()) ? 줄하나나누기(l.trim(), 상한, 키워드) : [l]))
-    .join("\n");
+  const 길이설정 = config.문장길이 || {};
+  if (!길이설정.줄나누기 || !길이설정.상한) return String(body);
+  const 키 = despace(키워드);
+  return String(body).split("\n").flatMap((l) => {
+    const t = l.trim();
+    return t && 본문문장(t) && !t.startsWith("[") ? 줄하나나누기(t, 길이설정, 키) : [l];
+  }).join("\n");
 }
+
+// AI가 쓴 본문을 초안에 넣기 전에 고르게 한다 — 긴 줄을 나누고, 덩어리를 문단으로 나눈다. 글자는 그대로다.
+export const 초안다듬기 = (body, config, 키워드 = "") => 문단나누기(줄나누기(body, config, 키워드), config);
 
 // AI가 문단을 안 나누고 낸 덩어리를 문장이 끝나는 줄에서 나눈다 (config.문단). 글자는 그대로, 빈 줄만 더한다.
 export function 문단나누기(body, config) {
   const { 최대줄 = 5, 묶음 = 3, 끝남은최소 = 2 } = config.문단 || {};
-  const 끝줄 = (l) => /[.?!…][)"'”’]*\s*$/.test(l.trim()) && !당부끝(l, config);
+  const 끝줄 = (l) => 문장끝.test(l.trim()) && !당부끝(l, config);
   const 나온 = [];
   let 덩이 = [];
   const 털기 = () => {
@@ -605,21 +643,6 @@ const 한숫자반복 = /^(\d)\1+$/;
 // 앞은 원장이 고객 쪽을 한 번 보는 것이고, 뒤는 글 전체가 가벼워지는 것이라 따로 센다.
 // 비율이 기준 안이어도 ~입니다가 대여섯 문장씩 줄지어 서면 안내문처럼 읽힌다 —
 // 제일 길게 이어진 줄(연속단정)과 그 첫 문장(연속자리)도 같이 돌려준다.
-// 줄을 문장으로 잇는다 — 한 문장을 두세 줄로 나눠 쓰는 글이라(문장길이 규칙), 줄을 그대로 세면 문장 수가 두 배 넘게 부풀고
-// 앞줄은 '어미 없는 문장'이 된다. 원장글 127편을 재 보니 평균 150줄이 문장으로는 61개였다(2026-10-12).
-// 말 거는 비율·연달아 선 ~입니다·첫 문단은 문장으로 세야 맞다. 문장부호 없이 이어지는 줄(목록 등)은 넉 줄에서 끊는다.
-const 문장끝 = /[.?!…][)"'”’\]]*$/;
-export function 문장잇기(줄들) {
-  const 나온 = [];
-  let 모음 = [];
-  for (const 줄 of 줄들) {
-    모음.push(줄);
-    if (문장끝.test(줄) || 모음.length >= 4) { 나온.push(모음.join(" ")); 모음 = []; }
-  }
-  if (모음.length) 나온.push(모음.join(" "));
-  return 나온;
-}
-
 export function 말투재기(본문들, config, 범위 = null) {
   const { 공감어미 = [], 약속신호 = [], 부드러운어미 = [], 단정어미 = [], 기본비율,
     연속허용 = Infinity, 같은어미상한 = Infinity } = config.말투 || {};
@@ -688,40 +711,39 @@ export function 품질점수(text, config) {
   return { score, ...축 };
 }
 
-// ---------- 가격 표기 ----------
-// 금액이 박히는 순간 그 글은 가격 비교용으로만 소비된다.
 // ---------- 영어 섞어 쓰기 ----------
 // "진정 크림을 thick하게", "magnifier로 확인" — 소문자가 든 영어 낱말이 한글에 바로 붙은 꼴(config.영어섞임).
-// 괄호 안 원어와 대문자 약어(BHA·PMID)는 괜찮다. 주소·해시태그·사진 설명은 보지 않는다. 소제목은 본다.
-const 영어붙음 = /(?<![A-Za-z])[A-Za-z]*[a-z][A-Za-z]{2,}(?=[가-힣])/g;
+// 괄호 안 원어와 대문자 약어(BHA·PMID)는 괜찮다. 주소·해시태그 줄은 보지 않는다. 소제목과 사진 설명은 본다
+// (실제로 소제목에 "thick하게", 사진 설명에 "피부 surface"가 들어갔다 — 사진 설명은 원장님이 보고 사진을 고르는 자리다).
+const 영어낱말 = "(?<![A-Za-z])[A-Za-z]*[a-z][A-Za-z]{2,}";
+const 영어붙음 = new RegExp(`${영어낱말}(?=[가-힣])`, "g"), 영어하나 = new RegExp(영어낱말, "g");
 export function 영어섞임찾기(text, config) {
   if (!config.영어섞임) return [];
-  const 허용 = new Set((config.영어섞임.허용 || []).map((w) => w.toLowerCase()));
-  // 소제목도 본다(실제로 소제목에 "thick하게"가 들어갔다). 해시태그 줄과 주소가 든 줄만 뺀다.
-  const 본 = stripPhotos(text || "").split("\n").filter((l) => !/^#[^#\s]/.test(l.trim()) && !/https?:|www\./.test(l)).join("\n").replace(/\([^)]*\)/g, " ");
-  // 사진 설명 안의 영어("피부 surface")도 본다 — 원장님이 보고 사진을 고르는 자리다
-  const 사진속 = ((text || "").match(/\[사진:[^\]]*\]/g) || []).join(" ").match(/(?<![A-Za-z])[A-Za-z]*[a-z][A-Za-z]{2,}/g) || [];
-  return [...new Set([...(본.match(영어붙음) || []), ...사진속])].filter((w) => !허용.has(w.toLowerCase()));
+  const 허용 = (config.영어섞임.허용 || []).map((w) => w.toLowerCase());
+  const 본 = stripPhotos(text || "").split("\n").filter((l) => !해시태그줄.test(l.trim()) && !/https?:|www\./.test(l)).join("\n").replace(/\([^)]*\)/g, " ");
+  const 사진속 = ((text || "").match(사진표시) || []).join(" ");
+  return [...new Set([...(본.match(영어붙음) || []), ...(사진속.match(영어하나) || [])])].filter((w) => !허용.includes(w.toLowerCase()));
 }
 
 // ---------- 쓰지 않기로 한 문장 ----------
 // 우진이 못박은 문장 꼴(config.금지문구) — "방문 후 결정하셔도 늦지 않습니다", "피부과를 먼저 가 보세요".
-// 한 문장을 여러 줄로 나눠 쓰는 글이라, 문단 안의 줄바꿈을 이어 붙이고 찾는다(안 그러면 "결정하셔도\n늦지"를 놓친다).
+// 문장(문장으로)마다 본다 — 줄로 보면 "결정하셔도\n늦지"를 놓친다.
 // 항목마다 '검사' 스위치가 있다 — 그 유형에서 그 검사가 꺼져 있으면 걸지 않는다(정보 전달 글).
+// 지시문(server.mjs)도 같은 함수로 고른다 — 보여 준 것과 잡는 것이 갈리지 않게.
+export const 켜진금지문구 = (config, 검사설정) => (config.금지문구?.목록 || []).filter((x) => !x.검사 || 검사켜짐(검사설정, x.검사));
 const 금지캐시 = new WeakMap();
-export function 금지문구찾기(text, config, 검사설정) {
-  const 목록 = (config.금지문구?.목록 || []).filter((x) => !x.검사 || 검사켜짐(검사설정, x.검사));
-  if (!목록.length) return [];
-  const 이은글 = stripPhotos(text || "").replace(/\n(?!\s*\n)/g, " ");
+const 금지식 = (x) => 금지캐시.get(x) ?? (금지캐시.set(x, new RegExp(x.꼴.join("|"))), 금지캐시.get(x));
+export function 금지문구찾기(문장들, config, 검사설정) {
   const 걸린 = [];
-  for (const x of 목록) {
-    let re = 금지캐시.get(x);
-    if (!re) 금지캐시.set(x, (re = new RegExp(`[^.?!\\n]{0,24}(?:${x.꼴.join("|")})[^.?!\\n]{0,12}[.?!]?`, "g")));
-    for (const m of 이은글.match(re) || []) 걸린.push({ 이름: x.이름, 문장: m.trim(), 대신: x.대신 || "" });
+  for (const x of 켜진금지문구(config, 검사설정)) {
+    const re = 금지식(x);
+    for (const 문장 of 문장들) if (re.test(문장)) 걸린.push({ 이름: x.이름, 문장, 대신: x.대신 || "" });
   }
   return 걸린;
 }
 
+// ---------- 가격 표기 ----------
+// 금액이 박히는 순간 그 글은 가격 비교용으로만 소비된다.
 // 출처검사와 겹쳐 보이지만 묻는 것이 다르다 — 저쪽은 "그 숫자 어디서 났나",
 // 이쪽은 "원장이 준 값이라도 금액은 쓰지 마라"다.
 // 금액 정규식을 따로 두지 않고 숫자꼴을 돌려쓴다 — 세 벌이 되면 반드시 갈라진다.
@@ -1027,13 +1049,13 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   // "1234567890 안에 들어가나"로 보던 때는 23456789 같은 진짜 번호까지 가짜로 몰았다.
   const 자리표시 = new Set(논문.자리표시PMID || []);
   const 가짜PMID = [...new Set(pmids.map((s) => s.match(/\d+/)[0]).filter((n) => 한숫자반복.test(n) || 자리표시.has(n)))];
-  // 지시문의 예시 문장을 그대로 옮긴 것 — "얼굴을 8곳으로 나눠 순서대로"가 정보 글 끝에 실제로 나왔다
-  const 본보기베낌 = 문구뽑기(text, config.본보기문구?.목록);
   // 1,000자당 몇 개인가 — 글이 길수록 더 많이 요구하는 게 맞다
   const 구체밀도 = chars ? Number(((구체 / chars) * 1000).toFixed(1)) : 0;
   // 권장에 거의 닿았으면(권장안내비율) 짚지 않는다 — 7.7개에 "8개까지"는 잔소리다. 화면 색도 이 값을 따른다.
   const 구체권장미달 = !!구체권장 && 구체밀도 >= 구체최소 && 구체밀도 < 구체권장 * (config.구체성?.권장안내비율 ?? 1);
-  const 문장들 = 문장나누기(text); // 아래 검사들이 같은 쪼갬을 돌려쓴다
+  const 문장들 = 문장으로(text);   // 뜻을 보는 단위 — 아래 검사들이 같은 쪼갬을 돌려쓴다 ('줄과 문장' 참고)
+  // 지시문의 예시 문장을 그대로 옮긴 것 — "얼굴을 8곳으로 나눠 순서대로"가 정보 글 끝에 실제로 나왔다
+  const 본보기베낌 = 문구뽑기(문장들.join("\n"), config.본보기문구?.목록);   // 줄바꿈에 걸친 문구도 잡게 문장으로 이어서 본다
   // 글에 적힌 유형이 먼저다. 남의 초안을 열어봐도 그 글의 기준으로 잰다.
   const 글유형 = 유형 || 원장값?.유형;
   const 검사설정 = 유형검사(config, 글유형);
@@ -1050,7 +1072,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   // 모바일 가독성·말투는 유형과 무관하게 잰다. 다만 공감 어미를 얼마나 섞을지는 유형마다 다르다
   // — 원장은 고객에게 말을 걸고, 정보 전달자는 담백해야 한다.
   const 본문들 = 본문만(text, 문장들);
-  const 문장길이값 = 긴문장(본문들, config);
+  const 문장길이값 = 긴문장(본문만(text), config);   // 길이만 줄로 잰다
   // 글쓴이가 '직접 해본 것'을 안 줬는데 직접 관찰·측정한 것처럼 쓴 문장 — 지어낸 경험이다.
   // 켜고 끄는 것은 다른 검사와 같은 자리다(config.글쓴이유형.*.검사.지어낸경험).
   // 원장값이 없을 때(남의 초안 열람)는 판단할 근거가 없으니 조용히 넘어간다.
@@ -1064,15 +1086,14 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
     .map((p) => p.trim().split("\n").at(-1).trim())
     .filter((s) => 본문문장(s) && 당부끝(s, config))
     .map((s) => stripPhotos(s).trim().replace(어미꼬리, ""));
-  const 문장단위 = 문장잇기(본문들);   // 줄이 아니라 문장 — 길이는 줄로(긴문장), 말투는 문장으로 잰다
-  const 말투값 = 말투재기(문장단위, config, 공감범위(config, 글유형));
+  const 말투값 = 말투재기(본문들, config, 공감범위(config, 글유형));
   // 반박제거·가격은 파는 사람에게만 해당한다 — 정보형은 예약을 받지도, 가격을 숨길 것도 없다
   const 반박 = 검사켜짐(검사설정, "반박제거") ? 반박제거찾기(text, config) : [];
   const 반박최소 = 검사켜짐(검사설정, "반박제거") ? config.반박제거?.최소 ?? 0 : 0;
   const 가격 = 검사켜짐(검사설정, "가격금지") ? 가격찾기(text, config) : [];
-  const 금지문구 = 금지문구찾기(text, config, 검사설정);
+  const 금지문구 = 금지문구찾기(본문들, config, 검사설정);
   const 영어섞임 = 영어섞임찾기(text, config);
-  const AI티 = 문구뽑기(본문만(text, 문장들).join("\n"), config.사람처럼?.잡는말);
+  const AI티 = 문구뽑기(본문들.join("\n"), config.사람처럼?.잡는말);
   // 베끼기는 유형과 무관하다. 파는 사람이든 아니든 남의 문장을 옮기면 네이버가 원본을 위로 올린다.
   // 원장글 본보기를 프롬프트에 보여주므로 거기서 옮겨 온 문장도 같이 잡는다.
   const 겹침 = 겹침찾기(text, [ref, 원장글], config);
@@ -1099,8 +1120,8 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const titleHasNum = /\d/.test(제목);
   // 네이버는 글 초반과 소제목에서 주제를 읽는다(config.네이버형식) — 둘 다 권장이지 불합격이 아니다.
   const 첫문단문장수 = config.네이버형식?.첫문단문장수 ?? 0;
-  const 첫문단키워드 = !첫문단문장수 || !keyword || 문장단위.length < 첫문단문장수
-    || countLoose(문장단위.slice(0, 첫문단문장수).join(" "), keyword) > 0;
+  const 첫문단키워드 = !첫문단문장수 || !keyword || 본문들.length < 첫문단문장수
+    || countLoose(본문들.slice(0, 첫문단문장수).join(" "), keyword) > 0;
   const 소제목들 = (text.match(/^#{2,4}\s+\S.*$/gm) || []);
   const 소제목키워드 = !첫문단문장수 || !keyword || !소제목들.length
     || 소제목들.some((s) => countLoose(s, keyword) > 0 || tokens.some((w) => w.length >= 2 && s.includes(w)));
@@ -1171,8 +1192,8 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   if (구체최소 && 구체밀도 < 구체최소) 걸림("구체성");
   if (medicalFound.length) 걸림("의료법");
   if (overclaimFound.length) 걸림("과장");
-  if (금지문구.length) 걸림("금지문구");
-  if (영어섞임.length) 걸림("영어섞임");   // 우진이 못박은 문장이라 불합격이다 — 다시 쓰게 한다
+  if (금지문구.length) 걸림("금지문구");   // 우진이 못박은 문장이라 불합격이다 — 다시 쓰게 한다
+  if (영어섞임.length) 걸림("영어섞임");   // 지시문이 처음부터 막은 것이다
   if (needsEvidence && !pmids.length) 걸림("근거없음");
   if (가짜PMID.length) 걸림("가짜PMID");
   // 남의 문장을 문장째로 옮긴 것은 불합격이다. 상위글끼리 재어 보니 서로 베끼지 않은 글이
