@@ -1133,3 +1133,12 @@ test("재생·회복은 고칠 점이 아니다 — 회복은 권장(주의)으�
   assert.ok(v.advice.some((a) => a.includes("회복")), "회복은 주의로 짚는다");
   assert.ok(재기("제목: 여드름\n\n여드름 치료를 합니다.").medicalFound.includes("치료"), "치료는 그대로 막는다");
 });
+
+// [지도: 샵 위치]는 원장이 에디터에서 지도를 붙이는 표시다 — 사진 표시처럼 글자수·문장에 넣지 않는다 (2026-10-17)
+test("지도 자리 표시는 글자수와 문장에서 빠진다", () => {
+  const 글 = 구체글();
+  const 그냥 = 평가(글, { keyword: "여드름", config: CONFIG, 말투: "요약" });
+  const 지도 = 평가(`${글}\n\n[지도: 샵 위치]`, { keyword: "여드름", config: CONFIG, 말투: "요약" });
+  assert.equal(지도.chars, 그냥.chars);
+  assert.equal(지도.photos, 그냥.photos, "지도를 사진으로 세면 안 된다");
+});

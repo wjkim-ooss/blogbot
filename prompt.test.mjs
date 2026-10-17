@@ -112,3 +112,39 @@ test("프롬프트와 검증기가 같은 스위치를 본다", () => {
     assert.equal(p.includes("[가격은 적지 않는다]"), 켜짐, `${유형} 프롬프트`);
   }
 });
+
+// 2026-10-17 우진: 초사고 글쓰기·네이버 공식 자료에서 빠진 것을 넣었다.
+// 제목 방법은 여섯 가지 중 만들 때마다 셋 — 추천(손실 회피)이 늘 맨 앞이고, 샵 정보가 없으면
+// 경력·관리 이름이 드는 방법은 고르지 않는다(빈칸으로 시키면 지어낸다).
+test("제목 방법은 추천 하나에 나머지 둘을 고르고, 빈 샵 정보로는 권위·이름 제목을 시키지 않는다", () => {
+  const { 제목방법고르기 } = __test;
+  const U = CONFIG.글쓴이유형.원장;
+  const 본것 = new Set();
+  for (let i = 0; i < 200; i++) {
+    const 셋 = 제목방법고르기(U, {});
+    assert.equal(셋.length, 3);
+    assert.equal(셋[0], "손실 회피");
+    assert.equal(new Set(셋).size, 3, "같은 방법을 두 번 고르지 않는다");
+    셋.forEach((x) => 본것.add(x));
+  }
+  assert.ok(!본것.has("권위 부여") && !본것.has("이름 붙이기"), "이력·관리구성이 비었는데 골랐다");
+  assert.ok(본것.has("상식 파괴") && 본것.has("자아 흠집"), "새로 넣은 방법이 한 번도 안 나왔다");
+  const 채움 = new Set();
+  for (let i = 0; i < 200; i++) 제목방법고르기(U, { 이력: "피부과 10년", 관리구성: "70분" }).forEach((x) => 채움.add(x));
+  assert.ok(채움.has("권위 부여") && 채움.has("이름 붙이기"));
+});
+
+test("고른 제목 방법이 요청에 적히고, 지시문은 여섯 방법을 다 설명한다", () => {
+  const u = __test.buildUserPrompt("마곡 여드름", "", "", null, 0, null, "", [], { 제목방법: ["손실 회피", "상식 파괴", "자아 흠집"] });
+  assert.ok(u.includes("이번 글의 제목 방법: 손실 회피(추천 제목) · 상식 파괴 · 자아 흠집"));
+  for (const m of CONFIG.글쓴이유형.원장.제목전략) assert.ok(원장.includes(`${m.이름}: `), `${m.이름} 이 지시문에 없다`);
+  assert.ok(원장.includes("손실 회피를 추천 제목으로"), "조사가 받침을 따라가야 한다(회피을 X)");
+});
+
+test("끝까지 읽히게 — 공통 줄은 두 유형에, 원장 설득 줄과 지도 자리는 원장에게만 간다", () => {
+  for (const 줄 of CONFIG.글쓰기원리.줄) { assert.ok(원장.includes(줄)); assert.ok(정보.includes(줄)); }
+  for (const 줄 of CONFIG.글쓴이유형.원장.설득) { assert.ok(원장.includes(줄)); assert.ok(!정보.includes(줄), "정보 전달자는 예약을 받지 않는다"); }
+  assert.ok(원장.includes("[지도: 샵 위치]") && !정보.includes("[지도:"));
+  // 원장님께 출처를 드러내지 않는다 — 출처 이름이 지시문에 들어가면 AI가 글에 옮긴다
+  for (const p of [원장, 정보]) for (const 말 of ["자청", "프드프", "초사고 글쓰기"]) assert.ok(!p.includes(말), `${말} 이 지시문에 들어갔다`);
+});
