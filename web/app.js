@@ -29,7 +29,7 @@ let 시작됨 = false;   // 로그인 창·승인 대기·본 화면 가운데 �
 setTimeout(() => { if (!시작됨) 알림띠("화면을 불러오는 데 오래 걸립니다. 새로고침(F5) 해 주세요 — 계속되면 크롬으로 열어 주세요."); }, 20000);
 
 // ---------- 탭 (주소 #drafts 처럼 붙여 특정 탭으로 바로 들어올 수 있게) ----------
-const DEFAULT_TAB = "refs";
+const DEFAULT_TAB = "drafts";   // 로그인하면 초안 작성부터 (2026-10-17 우진)
 
 function showTab(name) {
   const btn = document.querySelector(`.tab-btn[data-tab="${name}"]`);
@@ -804,7 +804,7 @@ function updateQuota() {
   const el = $("#gen-quota");
   if (ME && ME.authOn && !ME.isAdmin && ME.limit != null) {
     el.textContent = `이번 달 남은 생성: ${ME.remaining}/${ME.limit}회`;
-    el.style.color = ME.remaining <= 0 ? "#d8483b" : "#8a91a0";
+    el.style.color = ME.remaining <= 0 ? "var(--bad)" : "var(--muted)";
   } else {
     el.textContent = "";
   }
@@ -845,7 +845,7 @@ async function authAction(mode) {
   const email = $("#auth-email").value.trim();
   const pw = $("#auth-pw").value;
   const msg = $("#auth-msg");
-  msg.style.color = "#d8483b";
+  msg.style.color = "var(--bad)";
   msg.textContent = "";
   if (!email || pw.length < 6) return (msg.textContent = "이메일과 6자 이상 비밀번호를 입력하세요");
   try {
@@ -855,7 +855,7 @@ async function authAction(mode) {
       if (칸.classList.contains("hidden")) {
         칸.classList.remove("hidden");
         $("#auth-shop").focus();
-        msg.style.color = "#3b4bd8";
+        msg.style.color = "var(--accent)";
         return (msg.textContent = "에스테틱 이름과 성함을 적고 회원가입을 한 번 더 눌러 주세요");
       }
       const 샵이름 = $("#auth-shop").value.trim(), 이름 = $("#auth-name").value.trim();
@@ -865,7 +865,7 @@ async function authAction(mode) {
       if (error) throw error;
       const { data } = await supa.auth.getSession();
       if (!data.session) {
-        msg.style.color = "#1c8c3c";
+        msg.style.color = "var(--go)";
         return (msg.textContent = "가입 완료. 이메일 확인 후 로그인해 주세요.");
       }
       열쇠받기(data.session);

@@ -4,15 +4,25 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>블로그봇 대시보드</title>
+  <!-- 글꼴: 본문 Pretendard, 이름·제목 Gowun Batang. 못 받아도 기본 글꼴로 뜬다 -->
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&display=swap" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <header>
-    <h1>📝 블로그봇</h1>
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">B</span>
+      <div class="brand-text"><h1>블로그봇</h1><span class="brand-sub">원장님 블로그 초안 작업실</span></div>
+    </div>
     <nav>
-      <button class="tab-btn active" data-tab="refs">레퍼런스 보관함</button>
+      <!-- 초안 작성이 맨 앞이고 로그인하면 여기부터 뜬다 (2026-10-17 우진) -->
+      <button class="tab-btn active" data-tab="drafts">초안 작성</button>
+      <button class="tab-btn" data-tab="refs">레퍼런스 보관함</button>
       <button class="tab-btn" data-tab="insights">인사이트</button>
-      <button class="tab-btn" data-tab="drafts">초안 작성</button>
       <button class="tab-btn hidden" data-tab="admin" id="admin-tab-btn">회원 관리</button>
     </nav>
     <div id="user-chip" class="hidden">
@@ -25,7 +35,9 @@
   <!-- 로그인 / 회원가입 오버레이 (인증 ON일 때만) -->
   <div id="auth-overlay" class="overlay hidden">
     <div class="auth-card card">
-      <h2>📝 블로그봇</h2>
+      <span class="brand-mark big" aria-hidden="true">B</span>
+      <h2>블로그봇</h2>
+      <p class="auth-tag">원장님 블로그 초안 작업실</p>
       <p class="muted">에스테틱 원장 전용 · 로그인 후 관리자 승인이 필요합니다</p>
       <input id="auth-email" type="email" placeholder="이메일" autocomplete="username" />
       <input id="auth-pw" type="password" placeholder="비밀번호 (6자 이상)" autocomplete="current-password" />
@@ -54,7 +66,7 @@
   </div>
 
   <!-- 탭 1: 레퍼런스 보관함 -->
-  <section id="tab-refs" class="tab active">
+  <section id="tab-refs" class="tab">
     <div class="split">
       <div id="ref-list" class="side-list"></div>
       <div id="ref-detail" class="detail card"><p class="muted">왼쪽에서 레퍼런스를 선택하세요</p></div>
@@ -84,8 +96,12 @@
   </section>
 
   <!-- 탭 3: 초안 작성 -->
-  <section id="tab-drafts" class="tab">
+  <section id="tab-drafts" class="tab active">
     <div class="gen-bar card">
+      <div class="gen-head">
+        <h2>오늘 쓸 글</h2>
+        <p class="muted">키워드 하나만 넣으면 AI가 초안을 씁니다. 지역·강조 포인트·사례는 아는 것만 적으세요.</p>
+      </div>
       <input id="gen-keyword" placeholder="키워드 *" />
       <input id="gen-region" placeholder="지역 (선택)" />
       <input id="gen-point" placeholder="강조 포인트 (선택)" />
