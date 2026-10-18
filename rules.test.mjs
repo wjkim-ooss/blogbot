@@ -1140,5 +1140,5 @@ test("지도 자리 표시는 글자수와 문장에서 빠진다", () => {
   const 그냥 = 평가(글, { keyword: "여드름", config: CONFIG, 말투: "요약" });
   const 지도 = 평가(`${글}\n\n[지도: 샵 위치]`, { keyword: "여드름", config: CONFIG, 말투: "요약" });
   assert.equal(지도.chars, 그냥.chars);
-  assert.equal(지도.photos, 그냥.photos, "지도를 사진으로 세면 안 된다");
+  assert.equal(지도.photos, 그냥.photos, "지도를 사진으로 세면 안 된다");   // 사진 수를 자리표시 전체로 세게 바꾸면 여기서 걸린다
 });

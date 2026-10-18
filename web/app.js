@@ -29,7 +29,7 @@ let 시작됨 = false;   // 로그인 창·승인 대기·본 화면 가운데 �
 setTimeout(() => { if (!시작됨) 알림띠("화면을 불러오는 데 오래 걸립니다. 새로고침(F5) 해 주세요 — 계속되면 크롬으로 열어 주세요."); }, 20000);
 
 // ---------- 탭 (주소 #drafts 처럼 붙여 특정 탭으로 바로 들어올 수 있게) ----------
-const DEFAULT_TAB = "drafts";   // 로그인하면 초안 작성부터 (2026-10-17 우진)
+const DEFAULT_TAB = "drafts";   // 로그인하면 초안 작성부터 (2026-10-17 우진). 바꾸면 index.html 의 처음 active 탭·버튼도 같이
 
 function showTab(name) {
   const btn = document.querySelector(`.tab-btn[data-tab="${name}"]`);
@@ -804,7 +804,7 @@ function updateQuota() {
   const el = $("#gen-quota");
   if (ME && ME.authOn && !ME.isAdmin && ME.limit != null) {
     el.textContent = `이번 달 남은 생성: ${ME.remaining}/${ME.limit}회`;
-    el.style.color = ME.remaining <= 0 ? "var(--bad)" : "var(--muted)";
+    el.style.color = ME.remaining <= 0 ? "var(--bad)" : "";   // 평소 색은 class="muted"
   } else {
     el.textContent = "";
   }
@@ -1091,7 +1091,7 @@ async function 샵열기(회원id, 회원표시 = "") {
   $("#shop-msg").textContent = 잠금
     ? `읽기 전용 — 이 회원의 저장된 값입니다${shop.확인일 ? ` (마지막 확인 ${shop.확인일})` : ""}`
     : shop.확인일 ? `마지막 확인: ${shop.확인일}` : "아직 채우지 않았습니다";
-  $("#shop-msg").style.color = shop.확인일 || 잠금 ? "var(--muted, #8a91a0)" : "";
+  $("#shop-msg").style.color = shop.확인일 || 잠금 ? "var(--muted)" : "";
   $("#shop-overlay").classList.remove("hidden");
   샵처음 = 샵적힌값();
 }
@@ -1119,7 +1119,7 @@ $("#shop-save").addEventListener("click", async (e) => {
     runValidation();
     샵처음 = 보낸값;
     $("#shop-msg").textContent = `저장했습니다 (${shop.확인일})`;
-    $("#shop-msg").style.color = "var(--go, #1c8c3c)";
+    $("#shop-msg").style.color = "var(--go)";
   } catch (err) {
     $("#shop-msg").textContent = err.message;
     $("#shop-msg").style.color = "";
