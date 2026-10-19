@@ -845,7 +845,7 @@ async function authAction(mode) {
   const email = $("#auth-email").value.trim();
   const pw = $("#auth-pw").value;
   const msg = $("#auth-msg");
-  msg.style.color = "var(--bad)";
+  msg.style.color = ""; // 기본 색은 .auth-msg 가 var(--bad) 로 준다
   msg.textContent = "";
   if (!email || pw.length < 6) return (msg.textContent = "이메일과 6자 이상 비밀번호를 입력하세요");
   try {

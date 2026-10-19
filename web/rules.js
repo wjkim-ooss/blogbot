@@ -725,23 +725,25 @@ const 가운데 = (수들) => {
   return s.length ? s[Math.floor(s.length / 2)] : 0;
 };
 const 꼴캐시 = new Map();
-const 꼴 = (s) => {
+const 꼴 = (s, f = "") => {
   if (!s) return null;
-  if (!꼴캐시.has(s)) 꼴캐시.set(s, new RegExp(s));
-  return 꼴캐시.get(s);
+  const 키 = `${s}/${f}`;
+  if (!꼴캐시.has(키)) 꼴캐시.set(키, new RegExp(s, f));
+  return 꼴캐시.get(키);
 };
+const 질문끝 = /\?\s*\S{0,3}$/;
 export function 글짜임({ title = "", text = "", images = 0 } = {}, config) {
   const Z = config.짜임 || {};
   const 잡음 = 꼴(Z.잡음줄), 소제목꼴 = 꼴(Z.소제목꼴), 최대 = Z.소제목최대글자 ?? 22;
   // 네이버 편집기 글을 긁으면 줄마다 사이에 빈 줄이 끼고, 글쓴이가 띄운 빈 줄은 보이지 않는 글자(​)만 든 줄로 온다.
   // 그런 줄이 있으면 그것만 문단 경계로 본다. 없는 글(다른 편집기)은 빈 줄이 경계다.
   const 원줄 = String(text).split("\n").filter((l) => !잡음?.test(l.trim()));
-  const 보이지않는줄 = (l) => /[​ ]/.test(l) && !l.replace(/[​ \s]/g, "");
+  const 보이지않는줄 = (l) => /[\u200B\u00A0]/.test(l) && !l.replace(/[\u200B\s]/g, "");
   const 경계 = 원줄.some(보이지않는줄) ? 보이지않는줄 : (l) => !l.trim();
   const 문단 = [];
   let 덩이 = [];
   for (const 날줄 of 원줄) {
-    const l = 날줄.replace(/[​ \t]/g, " ").trim();
+    const l = 날줄.replace(/[\u200B\u00A0\t]/g, " ").trim();
     if (경계(날줄)) { if (덩이.length) { 문단.push(덩이); 덩이 = []; } }
     else if (l) 덩이.push(l);
   }
@@ -758,14 +760,14 @@ export function 글짜임({ title = "", text = "", images = 0 } = {}, config) {
     문단줄수: 가운데(문단.filter((d) => !d.every(소제목인가)).map((d) => d.length)), // 소제목만 든 덩이는 문단이 아니다
     문단수: 문단.length,
     소제목: 글줄.filter(소제목인가).length,
-    질문비율: 본줄.length ? Math.round((본줄.filter((l) => /\?\s*\S{0,3}$/.test(l)).length / 본줄.length) * 100) : 0,
+    질문비율: 본줄.length ? Math.round((본줄.filter((l) => 질문끝.test(l)).length / 본줄.length) * 100) : 0,
     사진간격: images ? Math.round(chars / images) : 0,
     후기: !!꼴(Z.후기꼴)?.test(title),
     초사고: {
       제목방법: Object.entries(Z.제목방법 || {}).filter(([, s]) => 꼴(s).test(title)).map(([이름]) => 이름),
       제목숫자: /\d/.test(title),
-      첫줄: 꼴(Z.인사말)?.test(첫) ? "인사" : /\?\s*\S{0,3}$/.test(첫) ? "질문" : "장면·고민",
-      간접증명: (String(text).match(new RegExp(Z.간접증명꼴 || "$^", "g")) || []).length,
+      첫줄: 꼴(Z.인사말)?.test(첫) ? "인사" : 질문끝.test(첫) ? "질문" : "장면·고민",
+      간접증명: (String(text).match(꼴(Z.간접증명꼴 || "$^", "g")) || []).length,
       예약횟수: 예약자리.length,
       // 예약 안내가 글 끝 4분의 1 안에만 있으면 '끝에 한 번'이다
       예약끝에만: 예약자리.length > 0 && 예약자리.every((i) => i >= 글줄.length * 0.75),

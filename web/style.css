@@ -25,6 +25,8 @@
   --warn-ink: #7a5410;
   --bad-ink: #8a3329;
   --bad-line: #ecc4bd;
+  --go-line: #cfe0d2;
+  --warn-line: #ecd3a3;
   /* 그림자·포커스 링에 쓰는 주색 (투명도만 자리마다 다르다) */
   --accent-rgb: 168 102 90;
   --accent-strong-rgb: 142 82 71;
@@ -71,7 +73,8 @@ header {
 }
 .brand-mark.big { width: 52px; height: 52px; font-size: 25px; margin-bottom: 12px; }
 .brand-text { display: flex; flex-direction: column; line-height: 1.2; }
-h1 { font-family: var(--serif); font-size: 19px; font-weight: 700; color: var(--ink); }
+h1, h2, h3 { font-family: var(--serif); }
+h1 { font-size: 19px; font-weight: 700; color: var(--ink); }
 .brand-sub { font-size: 11px; color: var(--muted); letter-spacing: 0.02em; }
 
 nav {
@@ -96,7 +99,7 @@ nav {
 
 /* ---------- 공용 ---------- */
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); }
-.card h3 { font-family: var(--serif); font-size: 17px; margin-bottom: 6px; }
+.card h3 { font-size: 17px; margin-bottom: 6px; }
 .muted { color: var(--muted); }
 .hidden { display: none !important; }
 
@@ -142,7 +145,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   border-top: 3px solid var(--accent-line);
 }
 .gen-head { flex: 1 1 100%; margin-bottom: 2px; }
-.gen-head h2 { font-family: var(--serif); font-size: 20px; color: var(--ink); }
+.gen-head h2 { font-size: 20px; color: var(--ink); }
 .gen-head p { font-size: 13px; margin-top: 2px; }
 .gen-bar input { flex: 1; min-width: 160px; }
 #gen-keyword { flex: 1.4; font-weight: 600; border-color: var(--accent-line); }
@@ -189,7 +192,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 #draft-owner { width: 100%; }
 
 .detail { flex: 1; min-width: 0; }
-.detail h2 { font-family: var(--serif); font-size: 18px; margin-bottom: 10px; }
+.detail h2 { font-size: 18px; margin-bottom: 10px; }
 .detail table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 14px; }
 .detail th, .detail td { border-bottom: 1px solid var(--line); padding: 8px 10px; text-align: left; }
 .detail th { background: var(--surface-2); color: var(--ink-2); font-weight: 700; }
@@ -199,7 +202,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ref-title { color: var(--accent-strong); font-weight: 600; }
 .ref-body pre { white-space: pre-wrap; font-family: inherit; font-size: 13px; color: var(--ink-2); margin-top: 8px; max-height: 320px; overflow-y: auto; }
 .ref-body a { font-size: 12px; }
-.ref-body td { background: #fdfbf8; }
+.ref-body td { background: var(--surface-2); }
 
 /* ---------- 인사이트 ---------- */
 .insight-card { margin-bottom: 16px; }
@@ -214,7 +217,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 }
 .stat .num { font-family: var(--serif); font-size: 22px; font-weight: 700; color: var(--accent-strong); }
 .stat .label { font-size: 12px; color: var(--muted); }
-.reco { background: var(--go-soft); border: 1px solid #cfe0d2; border-radius: var(--radius-sm); padding: 11px 14px; font-size: 13px; color: var(--go-ink); }
+.reco { background: var(--go-soft); border: 1px solid var(--go-line); border-radius: var(--radius-sm); padding: 11px 14px; font-size: 13px; color: var(--go-ink); }
 
 /* ---------- 편집기 ---------- */
 .editor-wrap { flex: 1; min-width: 0; }
@@ -236,7 +239,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 #validation { width: 262px; flex-shrink: 0; font-size: 13px; align-self: flex-start; position: sticky; top: 76px; max-height: calc(100vh - 96px); overflow-y: auto; }
 #validation h4 { font-size: 13px; margin: 12px 0 4px; color: var(--ink-2); }
 #validation h4:first-child { margin-top: 0; }
-.v-item { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dashed #f1ebe4; }
+.v-item { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dashed var(--line); }
 .v-ok { color: var(--go); font-weight: 700; }
 .v-bad { color: var(--bad); font-weight: 700; }
 .v-warn { color: var(--warn); font-weight: 700; }
@@ -254,10 +257,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* 관리자가 다른 회원의 초안을 열람할 때 */
 #readonly-banner {
-  background: var(--warn-soft); border: 1px solid #ecd3a3; color: var(--warn-ink);
+  background: var(--warn-soft); border: 1px solid var(--warn-line); color: var(--warn-ink);
   border-radius: var(--radius-sm); padding: 9px 13px; margin-bottom: 12px; font-size: 13px;
 }
-#editor.readonly { background: #f8f5f1; color: var(--ink-2); }
+#editor.readonly { background: var(--surface-2); color: var(--ink-2); }
 
 /* ---------- 로그인 · 승인 대기 · 샵 정보 창 ---------- */
 #user-chip { margin-left: auto; display: flex; align-items: center; gap: 10px; }
@@ -279,7 +282,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     var(--bg);
 }
 .auth-card { width: 380px; max-width: 92vw; text-align: center; padding: 30px 28px; box-shadow: var(--shadow-lift); }
-.auth-card h2 { font-family: var(--serif); font-size: 24px; margin-bottom: 2px; }
+.auth-card h2 { font-size: 24px; margin-bottom: 2px; }
 .auth-card .auth-tag { font-size: 13px; color: var(--accent-strong); margin-bottom: 10px; }
 .auth-card p { margin-bottom: 14px; }
 .auth-card .muted { font-size: 12px; }
@@ -310,7 +313,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .admin-user select { font-size: 13px; }
 /* 누가 몇 번 썼는지 — 관리자에게만 보인다 */
 .admin-user .drafts { font-size: 12px; padding: 2px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-strong); white-space: nowrap; }
-.admin-user .drafts.none { background: #f3eee8; color: var(--muted); }
+.admin-user .drafts.none { background: var(--surface-2); color: var(--muted); }
 /* 회원별 샵 정보 상태 (관리자 전용) — 안 채운 계정은 AI가 숫자를 지어낸다.
    색은 옆의 상태 배지(.st)와 같은 값을 쓴다 — 다른 노란색이 나란히 있으면 버그처럼 보인다. */
 .admin-user .shopst { font-size: 12px; padding: 2px 9px; border-radius: 999px; white-space: nowrap; cursor: pointer; }
