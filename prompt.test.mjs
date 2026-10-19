@@ -153,3 +153,16 @@ test("끝까지 읽히게 — 공통 줄은 두 유형에, 원장 설득 줄과 
 test("말투 본보기와 지시문이 인사말로 열라고 하지 않는다", () => {
   assert.ok(!CONFIG.말투.흐름본보기.줄.some((x) => x.includes("안녕하세요")));
 });
+
+// 2026-10-19 대표님: 상위글의 말투·구조를 참고하게. 문장은 넘기지 않고 짜임만 숫자로 넘긴다
+test("레퍼런스가 있으면 상위글의 짜임이 숫자로 가고, 상위글 본문 문장은 가지 않는다", () => {
+  const 문장 = "생각보다 하나도 안 아프더라고요 신기했어요";
+  const ref = { keyword: "모낭염", avgChars: 1800, avgImages: 12, posts: Array.from({ length: 6 }, (_, i) => ({
+    title: `모낭염 관리 후기 ${i}`, chars: 1800, images: 12, text: `안녕하세요\n\n${문장}\n다음에 또 갈게요\n\n1. 관리 순서\n\n압출이 무서웠는데` })) };
+  const u = __test.buildUserPrompt("모낭염", "", "", ref, 0, { 유형: "원장" }, "", []);
+  assert.ok(u.includes("[상위글의 짜임"));
+  assert.ok(u.includes("6편이 손님이 쓴 후기다"), "후기가 대부분이면 말투는 따르지 말라고 한다");
+  assert.ok(u.includes("인사말로 연 글이 6편"));
+  assert.ok(!u.includes(문장), "상위글 문장이 지시문에 들어가면 원장 글에 그대로 나온다");
+  assert.ok(!__test.buildUserPrompt("모낭염", "", "", null, 0, null, "", []).includes("[상위글의 짜임"));
+});

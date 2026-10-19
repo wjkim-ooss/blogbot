@@ -8,7 +8,7 @@
 import { chromium } from "playwright-core";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import { 품질점수 } from "../web/rules.js";
+import { 품질점수, 글짜임 } from "../web/rules.js";
 import { 화면긁기 } from "./naver-links.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -70,7 +70,7 @@ async function collectTopUrls(page, keyword, { 스크롤 = 0, 개수 = 40 } = {}
 // 수집한 글을 저장 형태로 — 이 모양을 rules.js·ref-report·편집기가 읽는다. 두 크롤러가 같은 것을 쓴다.
 const 정규화 = (p, extra = {}) => ({
   title: p.title, url: p.url, chars: charCountNoSpace(p.text), images: p.images,
-  ...extra, ...scorePost(p.text), text: p.text.slice(0, 4000),
+  ...extra, ...scorePost(p.text), 짜임: 글짜임(p, CONFIG), text: p.text.slice(0, 4000),
 });
 
 // 같은 키워드의 기존 레퍼런스(json) 로드 — append 모드에서 병합·중복제거에 사용

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, noSpace, claimSentences, pickReference, 참고레퍼런스, 본문에서찾기, 원장글고르기, 품질점수, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈 } from "./web/rules.js";
+import { 평가, noSpace, claimSentences, pickReference, 참고레퍼런스, 본문에서찾기, 원장글고르기, 품질점수, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈, 글짜임, 짜임요약 } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
@@ -1141,4 +1141,37 @@ test("지도 자리 표시는 글자수와 문장에서 빠진다", () => {
   const 지도 = 평가(`${글}\n\n[지도: 샵 위치]`, { keyword: "여드름", config: CONFIG, 말투: "요약" });
   assert.equal(지도.chars, 그냥.chars);
   assert.equal(지도.photos, 그냥.photos, "지도를 사진으로 세면 안 된다");   // 사진 수를 자리표시 전체로 세게 바꾸면 여기서 걸린다
+});
+
+// 네이버 글을 긁으면 줄마다 빈 줄이 끼고, 글쓴이가 띄운 자리는 보이지 않는 글자(​)만 든 줄로 온다
+test("짜임 — 보이지 않는 글자 줄이 문단 경계이고, 첫 줄·소제목·제목 방법을 센다", () => {
+  const Z = "\u200b";
+  const text = ["안녕하세요 ○○입니다", "", Z, "", "요즘 볼에 트러블이", "", "계속 올라오더라고요", "", Z, "",
+    "1. 관리 과정", "", Z, "", "압출이 걱정됐는데", "", "생각보다 괜찮았어요", "", "다음엔 언제 갈까요?", "", Z, "", "예약은 톡톡으로 했어요"].join("\n");
+  const z = 글짜임({ title: "여드름 관리 후기, 모르면 후회하는 3가지", text, images: 4 }, CONFIG);
+  assert.equal(z.문단수, 5);
+  assert.equal(z.문단줄수, 2);
+  assert.equal(z.소제목, 1);
+  assert.equal(z.후기, true);
+  assert.equal(z.초사고.첫줄, "인사");
+  assert.deepEqual(z.초사고.제목방법, ["손실 회피", "가치 입증"]);
+  assert.equal(z.초사고.제목숫자, true);
+  assert.equal(z.초사고.예약끝에만, true);
+  assert.ok(z.질문비율 > 0);
+  // 보이지 않는 글자가 없는 글은 빈 줄이 경계다
+  assert.equal(글짜임({ text: "첫 줄\n둘째 줄\n\n셋째 줄" }, CONFIG).문단수, 2);
+});
+
+test("짜임요약 — 저장된 짜임이 없는 옛 글은 그 자리에서 재고, 편수로 센다", () => {
+  const posts = [
+    { title: "모공 관리 후기", text: "안녕하세요\n\n모공이 신경 쓰여서\n다녀왔어요", images: 2 },
+    { title: "모공, 오히려 건드릴수록 커지는 이유", text: "코를 볼 때마다 한숨이 나오시죠?\n\n그 마음 압니다", images: 0 },
+  ];
+  const 요 = 짜임요약(posts, CONFIG);
+  assert.equal(요.편수, 2);
+  assert.equal(요.후기, 1);
+  assert.equal(요.첫줄.인사, 1);
+  assert.equal(요.첫줄.질문, 1);
+  assert.deepEqual(Object.fromEntries(요.제목방법)["상식 파괴"], 1);
+  assert.equal(짜임요약([], CONFIG), null);
 });

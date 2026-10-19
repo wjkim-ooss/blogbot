@@ -716,6 +716,90 @@ export function 품질점수(text, config) {
   return { score, ...축 };
 }
 
+// ---------- 글의 짜임 ----------
+// 상위글이 어떻게 생겼나를 숫자로 잰다: 줄 나눔·문단·소제목·첫 줄·사진 간격, 그리고 초사고 글쓰기 기준
+// (제목 방법·간접증명·예약 안내 자리). 문장은 넘기지 않는다 — 지시문에 문장을 넣으면 글마다 그 문장이 나온다.
+// 크롤러가 수집 때 글마다 `짜임`으로 저장하고, 지시문은 짜임요약()으로 묶어 쓴다. 꼴은 config.짜임에 있다.
+const 가운데 = (수들) => {
+  const s = 수들.filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
+  return s.length ? s[Math.floor(s.length / 2)] : 0;
+};
+const 꼴캐시 = new Map();
+const 꼴 = (s) => {
+  if (!s) return null;
+  if (!꼴캐시.has(s)) 꼴캐시.set(s, new RegExp(s));
+  return 꼴캐시.get(s);
+};
+export function 글짜임({ title = "", text = "", images = 0 } = {}, config) {
+  const Z = config.짜임 || {};
+  const 잡음 = 꼴(Z.잡음줄), 소제목꼴 = 꼴(Z.소제목꼴), 최대 = Z.소제목최대글자 ?? 22;
+  // 네이버 편집기 글을 긁으면 줄마다 사이에 빈 줄이 끼고, 글쓴이가 띄운 빈 줄은 보이지 않는 글자(​)만 든 줄로 온다.
+  // 그런 줄이 있으면 그것만 문단 경계로 본다. 없는 글(다른 편집기)은 빈 줄이 경계다.
+  const 원줄 = String(text).split("\n").filter((l) => !잡음?.test(l.trim()));
+  const 보이지않는줄 = (l) => /[​ ]/.test(l) && !l.replace(/[​ \s]/g, "");
+  const 경계 = 원줄.some(보이지않는줄) ? 보이지않는줄 : (l) => !l.trim();
+  const 문단 = [];
+  let 덩이 = [];
+  for (const 날줄 of 원줄) {
+    const l = 날줄.replace(/[​ \t]/g, " ").trim();
+    if (경계(날줄)) { if (덩이.length) { 문단.push(덩이); 덩이 = []; } }
+    else if (l) 덩이.push(l);
+  }
+  if (덩이.length) 문단.push(덩이);
+  const 글줄 = 문단.flat();
+  const 소제목인가 = (l) => !!소제목꼴?.test(l) && noSpace(l) <= 최대;
+  const 본줄 = 글줄.filter((l) => !소제목인가(l) && noSpace(l) >= 2);
+  const 첫 = 본줄[0] || "";
+  const 예약꼴 = 꼴(Z.예약꼴);
+  const 예약자리 = 글줄.map((l, i) => (예약꼴?.test(l) ? i : -1)).filter((i) => i >= 0);
+  const chars = noSpace(text);
+  return {
+    줄길이: 가운데(본줄.map(noSpace)),
+    문단줄수: 가운데(문단.filter((d) => !d.every(소제목인가)).map((d) => d.length)), // 소제목만 든 덩이는 문단이 아니다
+    문단수: 문단.length,
+    소제목: 글줄.filter(소제목인가).length,
+    질문비율: 본줄.length ? Math.round((본줄.filter((l) => /\?\s*\S{0,3}$/.test(l)).length / 본줄.length) * 100) : 0,
+    사진간격: images ? Math.round(chars / images) : 0,
+    후기: !!꼴(Z.후기꼴)?.test(title),
+    초사고: {
+      제목방법: Object.entries(Z.제목방법 || {}).filter(([, s]) => 꼴(s).test(title)).map(([이름]) => 이름),
+      제목숫자: /\d/.test(title),
+      첫줄: 꼴(Z.인사말)?.test(첫) ? "인사" : /\?\s*\S{0,3}$/.test(첫) ? "질문" : "장면·고민",
+      간접증명: (String(text).match(new RegExp(Z.간접증명꼴 || "$^", "g")) || []).length,
+      예약횟수: 예약자리.length,
+      // 예약 안내가 글 끝 4분의 1 안에만 있으면 '끝에 한 번'이다
+      예약끝에만: 예약자리.length > 0 && 예약자리.every((i) => i >= 글줄.length * 0.75),
+    },
+  };
+}
+
+// 상위글 묶음의 짜임을 한 벌로. 저장된 `짜임`이 없는 옛 글은 그 자리에서 잰다.
+export function 짜임요약(posts, config) {
+  const 것들 = (posts || []).map((p) => p.짜임 || 글짜임(p, config));
+  if (!것들.length) return null;
+  const 셈 = (f) => 것들.filter(f).length;
+  const 제목방법 = {};
+  for (const z of 것들) for (const m of z.초사고.제목방법) 제목방법[m] = (제목방법[m] || 0) + 1;
+  const 소제목글 = 것들.filter((z) => z.소제목 > 0);
+  return {
+    편수: 것들.length,
+    후기: 셈((z) => z.후기),
+    줄길이: 가운데(것들.map((z) => z.줄길이)),
+    문단줄수: 가운데(것들.map((z) => z.문단줄수)),
+    문단수: 가운데(것들.map((z) => z.문단수)),
+    소제목글: 소제목글.length,
+    소제목: 가운데(소제목글.map((z) => z.소제목)),
+    질문비율: 가운데(것들.map((z) => z.질문비율)),
+    사진간격: 가운데(것들.map((z) => z.사진간격).filter(Boolean)),
+    첫줄: { 인사: 셈((z) => z.초사고.첫줄 === "인사"), 질문: 셈((z) => z.초사고.첫줄 === "질문") },
+    제목방법: Object.entries(config.짜임?.제목방법 || {}).map(([이름]) => [이름, 제목방법[이름] || 0]),
+    제목숫자: 셈((z) => z.초사고.제목숫자),
+    간접증명: 셈((z) => z.초사고.간접증명 > 0),
+    예약끝에만: 셈((z) => z.초사고.예약끝에만),
+    예약여러번: 셈((z) => z.초사고.예약횟수 > 1),
+  };
+}
+
 // ---------- 영어 섞어 쓰기 ----------
 // "진정 크림을 thick하게", "magnifier로 확인" — 소문자가 든 영어 낱말이 한글에 바로 붙은 꼴(config.영어섞임).
 // 괄호 안 원어와 대문자 약어(BHA·PMID)는 괜찮다. 주소·해시태그 줄은 보지 않는다. 소제목과 사진 설명은 본다
