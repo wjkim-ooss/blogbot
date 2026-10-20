@@ -1,6 +1,7 @@
 // 블로그봇 웹 대시보드 서버 — 레퍼런스 보관함 · 인사이트 · 초안 작성
 // 실행: node server.mjs (포트 4039)
 import http from "node:http";
+import crypto from "node:crypto";
 import zlib from "node:zlib";
 import fs from "node:fs";
 import path from "node:path";
@@ -1257,6 +1258,33 @@ async function refundQuota(ctx) {
   await supaAdmin.from("profiles").update({ usage_count: data.usage_count - 1 }).eq("id", p.id);
 }
 
+// 원장님 자체 점검 사이트가 본문을 맡기는 입구 (2026-10-20 우진: 글쓰기는 점검 사이트 안에서, 기준·지시문은 블로그봇 한 벌).
+// PARTNER_KEY 환경변수가 있을 때만 열린다. 이 길로 쓴 글은 블로그봇에 저장하지 않고 월 한도도 세지 않는다 — 점검 사이트가 저장하고 횟수를 막는다.
+function 파트너열쇠맞나(req) {
+  const 열쇠 = process.env.PARTNER_KEY || "";
+  const 받은 = String(req.headers["x-partner-key"] || "");
+  return !!열쇠 && 받은.length === 열쇠.length && crypto.timingSafeEqual(Buffer.from(받은), Buffer.from(열쇠));
+}
+function 파트너맥락(shop) {
+  const 정리 = { 유형: 기본유형 };
+  for (const k of 샵항목(기본유형)) if (typeof shop?.[k] === "string" && shop[k].trim()) 정리[k] = shop[k].trim().slice(0, 2000);
+  return { authOn: true, isAdmin: false, approved: true, unlimited: true, needsLogin: false, profile: { shop: 정리 }, userId: null, 파트너: true };
+}
+// 원장님이 점검 사이트에서 쓰기 전에 정리한 것(본능분석·반박제거·정한 제목과 첫 문단)과, 전에 고쳐 달라고 한 방향
+function 파트너지시(body) {
+  const 쓰기전 = body?.쓰기전 || {};
+  const 줄 = [];
+  if (쓰기전.겉 || 쓰기전.속) 줄.push(`- 검색한 고객의 겉 고민: ${String(쓰기전.겉 || "").slice(0, 300)} / 속마음: ${String(쓰기전.속 || "").slice(0, 300)}`);
+  for (const x of (쓰기전.의심 || []).slice(0, 5)) if (x?.의심) 줄.push(`- 고객 속 의심 "${String(x.의심).slice(0, 120)}": ${x.근거 ? `지울 근거 ${String(x.근거).slice(0, 600)}` : "근거 없음. 억지로 지우지 말고 원장님이 채울 자리로 둔다"}`);
+  if (쓰기전.제목) 줄.push(`- 제목은 이것을 그대로 쓴다: ${String(쓰기전.제목).slice(0, 120)}`);
+  if (쓰기전.첫문단) 줄.push(`- 본문 첫 문단은 아래를 그대로 쓰고 이어서 쓴다:\n${String(쓰기전.첫문단).slice(0, 1200)}`);
+  const 기억 = (body?.기억 || []).map((x) => String(x || "").trim()).filter(Boolean).slice(-20);
+  return [
+    줄.length ? `[원장님이 쓰기 전에 정리한 것]\n${줄.join("\n")}` : "",
+    기억.length ? `[원장님이 전에 고쳐 달라고 한 방향. 이번 글에도 그대로 지킨다]\n${기억.map((x) => "- " + x.slice(0, 200)).join("\n")}` : "",
+  ].filter(Boolean).join("\n\n");
+}
+
 async function handleGenerate(res, body, ctx) {
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
@@ -1318,8 +1346,9 @@ async function handleGenerate(res, body, ctx) {
     const 마무리 = 검사켜짐(유형정보(글쓴이유형).검사, "마무리") ? 하나(CONFIG.마무리?.종류) : "";   // 예약으로 닫는 글에만
     const 제목방법 = 제목방법고르기(유형정보(글쓴이유형), shop);
     if (각도) send({ type: "status", message: `이번 글은 "${각도}"로 씁니다` });
-    const 이미쓴글 = await 같은키워드글(ctx, keyword);
-    const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례, 원장본보기, { 각도, 이미쓴글, 도입, 마무리, 제목방법 }) }];
+    const 이미쓴글 = ctx.파트너 ? (body.이미쓴글 || []).map(String).slice(0, 3) : await 같은키워드글(ctx, keyword);
+    const 덧붙임 = ctx.파트너 ? 파트너지시(body) : "";
+    const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례, 원장본보기, { 각도, 이미쓴글, 도입, 마무리, 제목방법 }) + (덧붙임 ? "\n\n" + 덧붙임 : "") }];
     const check = (d) => {
       const p = parseDraftOutput(d, keyword);
       return { parsed: p, validation: validateDraft(`${p.title}\n${p.body}`, keyword, targetChars, p.title, ref, { ...shop, 사례 }, 글쓴이유형, 원장글) };
@@ -1393,9 +1422,9 @@ async function handleGenerate(res, body, ctx) {
         : `일부 기준이 남았습니다: ${validation.issues.join(" / ")} — 편집기에서 직접 고쳐 주세요`,
     });
 
-    const file = await draftCreate(ctx, keyword, parsed.title, parsed.body, validation, parsed.후보, 글쓴이유형, best.모델, 지정);
+    const file = ctx.파트너 ? null : await draftCreate(ctx, keyword, parsed.title, parsed.body, validation, parsed.후보, 글쓴이유형, best.모델, 지정);
     차감함 = false; // 글이 나왔으니 정상 사용
-    send({ type: "done", file, validation, quota });
+    send({ type: "done", file, validation, quota, ...(ctx.파트너 ? { title: parsed.title, body: parsed.body, 모델: best.모델 } : {}) });
   } catch (e) {
     console.error("[generate 실패]", e); // 상세 원인은 서버 로그에 남긴다
     // 글을 못 받았으면 월 한도를 도로 채워 준다 — 실패로 15회가 닳으면 안 된다
@@ -1812,6 +1841,14 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/config")
       return json(res, 200, { ...CONFIG, auth: { enabled: AUTH_ON, supabaseUrl: SUPA_URL, supabaseAnonKey: SUPA_ANON } });
 
+    // --- 점검 사이트 입구: 로그인 대신 PARTNER_KEY 로 연다 (없으면 없는 주소) ---
+    if (p === "/api/partner/generate" && req.method === "POST") {
+      if (!process.env.PARTNER_KEY) return json(res, 404, { error: "not found" });
+      if (!파트너열쇠맞나(req)) return json(res, 401, { error: "열쇠가 맞지 않습니다" });
+      const body = await readBody(req);
+      return handleGenerate(res, body, 파트너맥락(body?.shop));
+    }
+
     // --- 인증 컨텍스트 (API 요청에만 필요 — 정적 파일은 거치지 않는다) ---
     if (!p.startsWith("/api/")) return serveStatic(res, p);
     const ctx = await context(req);
@@ -2018,4 +2055,4 @@ if (process.argv[1] && NFC(path.resolve(process.argv[1])) === NFC(fileURLToPath(
   server.listen(PORT, () => console.log(`블로그봇 대시보드: http://localhost:${PORT}`));
 
 // 테스트에서만 쓴다 — 가짜 구글 서버를 세워 놓고 한도·스트리밍 동작을 확인하려고
-export const __test = { 같은키워드글, 제목방법고르기, 덧붙일자리, 덧붙여넣기, 덧붙이기지시, streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, 기준프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기, 답다듬기 };
+export const __test = { server, 파트너지시, 파트너맥락, 같은키워드글, 제목방법고르기, 덧붙일자리, 덧붙여넣기, 덧붙이기지시, streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, 기준프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기, 답다듬기 };
