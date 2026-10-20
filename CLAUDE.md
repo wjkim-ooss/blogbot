@@ -20,6 +20,7 @@
 | 네이버 검색결과 링크 뽑기 | `scripts/naver-links.mjs`. 크롤러·순위·블로그찾기가 같이 쓴다 |
 | 레퍼런스 보관함 읽기 | `scripts/보관함.mjs`. `보관함읽기()`는 판정용 한 벌(키워드마다 최신), `보관함파일들()`은 점검·재채점용 전부 |
 | 발행 글 가져오기·재채점 | `scripts/recent-posts.mjs`(RSS 목록), `scripts/ego/verify-post.mjs`(`{"blogId":"…"}`로도 된다) |
+| 점검 사이트 입구 | `server.mjs`의 `/api/partner/generate`·`파트너지시`. `PARTNER_KEY`가 있을 때만 열린다. 원장님 자체 점검 사이트가 정체성·이야기·쓰기 전 정리·AI 기억을 넘기면 같은 엔진으로 쓰고 저장·한도 없이 돌려준다(2026-10-20 우진) |
 | AI 대화 수정 | `server.mjs`의 `handleChat`·`대화수정프롬프트`(기준은 `시스템프롬프트`를 통째로 품는다), 화면은 `web/app.js` 「대화 수정」, 기록은 Supabase `draft_chats`(관리자만 `/api/admin/chats`) |
 
 - 규칙을 두 벌로 두지 않는다. 새 검사는 `rules.js`의 `평가()` 안에 넣고 값은 `config.json`에서 읽는다.
