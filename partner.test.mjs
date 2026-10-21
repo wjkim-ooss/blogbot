@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 
 const 받은지시 = [];
+let 끊어보내기 = false; // 고쳐 쓰기 차례(두 번째 부르기)에 답을 중간에서 끊어 보낸다
 const 본문 = Array.from({ length: 60 }, (_, i) => `여드름이 반복되는 분들이 많습니다 ${i + 1}번째 이야기입니다.`).join("\n");
 const 가짜구글 = http.createServer((req, res) => {
   if (req.url.startsWith("/v1beta/models?")) {
@@ -17,7 +18,11 @@ const 가짜구글 = http.createServer((req, res) => {
   req.on("end", () => {
     받은지시.push(몸);
     res.writeHead(200, { "content-type": "text/event-stream" });
-    const 글 = 몸.includes("[원장님 부탁]")
+    const 고쳐쓰기차례 = 끊어보내기 && 받은지시.length >= 2;
+    const 글 = 고쳐쓰기차례 ? `제목: 송도 여드름 관리, 첫날 압출부터 하지 않는 이유\n\n제목후보: 손실 회피 | 송도 여드름 관리, 6년 동안 첫날 압출부터 하지 않은 이유 // 가치 입증 | 송도 여드름 관리, 1회 3단계 과정을 공개하는 이유 // 이름 붙이기 | 송도 여드름 관리, 하루 4명 3단계 순서의 비밀\n\n관리받고 2주가 지나면\n다시 트러블이 올라`
+      // 실서버처럼 처음 글에 걸린 기준이 많아야(의료 표현·추상어) 끊긴 답이 "덜 걸린 글"로 보인다
+      : 끊어보내기 ? `제목: 송도 여드름 관리, 첫날 압출부터 하지 않는 이유\n\n${본문.split("\n").map((l, i) => (i % 3 ? l : `치료로 완치되는 프리미엄 맞춤 힐링 시술입니다 ${l}`)).join("\n")}`
+      : 몸.includes("[원장님 부탁]")
       ? `<답>첫 문장을 고객 말로 바꿨어요.</답>\n<수정본>제목: 송도 여드름 관리, 첫날 압출부터 하지 않는 이유\n\n"또 올라왔어요" 하고 오시는 분이 많습니다.\n${본문}</수정본>`
       : `제목: 송도 여드름 관리, 첫날 압출부터 하지 않는 이유\n\n${본문}`;
     res.end(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: 글 }] }, finishReason: "STOP" }] })}\n\n`);
@@ -86,4 +91,15 @@ test("AI 대화 수정: 점검 사이트가 준 앞 대화와 AI 기억을 싣�
   assert.match(지시, /경력은 둘째 문단에/);
   assert.match(지시, /전에 한 부탁/);
   assert.doesNotMatch(지시, /앞에 잘린 답/, "앞 대화는 원장님 부탁부터 시작한다");
+});
+
+test("고쳐 쓴 답이 중간에 끊겨 짧아지면 처음 글을 그대로 쓴다", async () => {
+  받은지시.length = 0; 끊어보내기 = true;
+  try {
+    const r = await 부르기({ keyword: "송도 여드름 관리", region: "인천 연수구 송도동", shop: {} });
+    const 줄 = (await r.text()).split("\n").filter((l) => l.startsWith("data: ")).map((l) => JSON.parse(l.slice(6)));
+    const 끝 = 줄.find((x) => x.type === "done");
+    assert.ok(받은지시.length >= 2, "고쳐 쓰기 차례까지 갔어야 시험이 된다");
+    assert.ok(끝.validation.chars > 500, `끊긴 답(짧은 글)을 고르면 안 된다: ${끝.validation.chars}자`);
+  } finally { 끊어보내기 = false; }
 });

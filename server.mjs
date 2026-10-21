@@ -1368,8 +1368,12 @@ async function handleGenerate(res, body, ctx) {
     // 고쳐 쓰다 더 나빠질 수도 있으므로 제일 좋았던 것을 들고 간다.
     // 순위: 통과 여부 → 남은 고칠 점이 적은 순 → 남은 권장이 적은 순 → 긴 순.
     let best = { parsed, validation, 모델: 기록.모델 };
+    // 고쳐 쓴 답이 중간에 끊겨 짧아지면 걸린 기준 수가 줄어 "더 나은 글"로 뽑혔다(2026-10-21 점검 사이트 실서버: 42자 글이 뽑힘).
+    // 지금 글의 절반도 안 되게 줄었으면 끊긴 답으로 보고 고르지 않는다. 짧게 고치라는 부탁은 대화 수정이 맡는다.
+    const 끊겼나 = (a, b) => b.validation.chars >= 300 && a.validation.chars < b.validation.chars * 0.5;
     const 더나은가 = (a, b) =>
-      a.validation.pass !== b.validation.pass ? a.validation.pass
+      끊겼나(a, b) ? false
+      : a.validation.pass !== b.validation.pass ? a.validation.pass
       : a.validation.issues.length !== b.validation.issues.length ? a.validation.issues.length < b.validation.issues.length
       : a.validation.advice.length !== b.validation.advice.length ? a.validation.advice.length < b.validation.advice.length
       : a.validation.chars > b.validation.chars;
