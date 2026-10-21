@@ -1278,11 +1278,18 @@ function 파트너지시(body) {
   for (const x of (쓰기전.의심 || []).slice(0, 5)) if (x?.의심) 줄.push(`- 고객 속 의심 "${String(x.의심).slice(0, 120)}": ${x.근거 ? `지울 근거 ${String(x.근거).slice(0, 600)}` : "근거 없음. 억지로 지우지 말고 원장님이 채울 자리로 둔다"}`);
   if (쓰기전.제목) 줄.push(`- 제목은 이것을 그대로 쓴다: ${String(쓰기전.제목).slice(0, 120)}`);
   if (쓰기전.첫문단) 줄.push(`- 본문 첫 문단은 아래를 그대로 쓰고 이어서 쓴다:\n${String(쓰기전.첫문단).slice(0, 1200)}`);
+  return [줄.length ? `[원장님이 쓰기 전에 정리한 것]\n${줄.join("\n")}` : "", 파트너기억(body)].filter(Boolean).join("\n\n");
+}
+function 파트너기억(body) {
   const 기억 = (body?.기억 || []).map((x) => String(x || "").trim()).filter(Boolean).slice(-20);
-  return [
-    줄.length ? `[원장님이 쓰기 전에 정리한 것]\n${줄.join("\n")}` : "",
-    기억.length ? `[원장님이 전에 고쳐 달라고 한 방향. 이번 글에도 그대로 지킨다]\n${기억.map((x) => "- " + x.slice(0, 200)).join("\n")}` : "",
-  ].filter(Boolean).join("\n\n");
+  return 기억.length ? `[원장님이 전에 고쳐 달라고 한 방향. 이번 글에도 그대로 지킨다]\n${기억.map((x) => "- " + x.slice(0, 200)).join("\n")}` : "";
+}
+// 점검 사이트가 들고 있는 이 글의 앞 대화(최근 6개). 블로그봇의 지난대화()와 같은 모양으로, user 부터 시작하게
+function 파트너지난(지난) {
+  const 차례 = (Array.isArray(지난) ? 지난 : []).filter((r) => ["user", "assistant"].includes(r?.role) && String(r.content || "").trim())
+    .slice(-6).map((r) => ({ role: r.role, content: String(r.content).slice(0, 4000) }));
+  while (차례.length && 차례[0].role !== "user") 차례.shift();
+  return 차례;
 }
 
 async function handleGenerate(res, body, ctx) {
@@ -1733,7 +1740,7 @@ async function handleChat(res, body, ctx, name) {
   const 머리끝 = 원문.indexOf("\n---\n");
   if (선택 && 머리끝 >= 0 && 선택.start < 머리끝 + 5) return json(res, 400, { error: "본문 안에서 드래그해 주세요" });
 
-  const 기록함 = ctx.authOn;   // 로컬 단독 모드에는 대화를 남길 표가 없다
+  const 기록함 = ctx.authOn && !ctx.파트너;   // 로컬 단독 모드와 점검 사이트 입구는 대화를 남길 표가 없다(점검 사이트가 저장한다)
   const 한도 = 기록함 ? 대화한도(ctx) : null;
   let 쓴횟수 = 0;
   if (한도 != null) {   // 제한이 없으면 세지 않는다
@@ -1746,7 +1753,7 @@ async function handleChat(res, body, ctx, name) {
   const { engine, client } = await 엔진준비();
   if (!engine) return json(res, 503, { error: "AI 연결이 아직 설정되지 않았습니다" });
 
-  const [{ 유형, 재기 }, 지난] = await Promise.all([대화판정준비(원문, keyword, ctx), 기록함 ? 지난대화(ctx.userId, name) : []]);
+  const [{ 유형, 재기 }, 지난] = await Promise.all([대화판정준비(원문, keyword, ctx), 기록함 ? 지난대화(ctx.userId, name) : ctx.파트너 ? 파트너지난(body.지난) : []]);
   const 전 = 재기(원문);
   const 요청 = [
     지난.length ? "(이미 인사를 나눴다 — '원장님' 호칭 없이 바로 본론을 말한다)" : "(이번이 대화의 첫 답이다 — 처음에 한 번만 '원장님'이라고 불러도 된다)",
@@ -1761,6 +1768,7 @@ async function handleChat(res, body, ctx, name) {
     ] : []),
     ...(선택 ? ["[원장님이 드래그한 부분]", 선택.text.trim(), ""] : ["(드래그한 부분 없음 — 부탁하신 것만 고친다)", ""]),
     "[원장님 부탁]", message,
+    ...(ctx.파트너 && 파트너기억(body) ? ["", 파트너기억(body)] : []),
   ].join("\n");
   const messages = [...지난, { role: "user", content: 요청 }];
   const 시스템 = 대화수정프롬프트(유형);
@@ -1842,11 +1850,20 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ...CONFIG, auth: { enabled: AUTH_ON, supabaseUrl: SUPA_URL, supabaseAnonKey: SUPA_ANON } });
 
     // --- 점검 사이트 입구: 로그인 대신 PARTNER_KEY 로 연다 (없으면 없는 주소) ---
-    if (p === "/api/partner/generate" && req.method === "POST") {
+    // 쓰기(generate) · AI 대화 수정(chat) · 편집하며 바로 재기(check). 셋 다 블로그봇과 같은 엔진·기준이다.
+    const 입구 = p.match(/^\/api\/partner\/(generate|chat|check)$/);
+    if (입구 && req.method === "POST") {
       if (!process.env.PARTNER_KEY) return json(res, 404, { error: "not found" });
       if (!파트너열쇠맞나(req)) return json(res, 401, { error: "열쇠가 맞지 않습니다" });
       const body = await readBody(req);
-      return handleGenerate(res, body, 파트너맥락(body?.shop));
+      const 맥락 = 파트너맥락(body?.shop);
+      if (입구[1] === "generate") return handleGenerate(res, body, 맥락);
+      if (입구[1] === "chat") return handleChat(res, body, 맥락, "partner");
+      const 글 = String(body?.content || "");
+      if (!글.trim()) return json(res, 400, { error: "글이 비어 있습니다" });
+      const { 재기 } = await 대화판정준비(글, String(body?.keyword || "").trim(), 맥락);
+      const v = 재기(글);
+      return json(res, 200, { pass: v.pass, issues: v.issues, advice: v.advice, chars: v.chars, targetChars: v.targetChars, photos: v.photos, kwCount: v.kwCount });
     }
 
     // --- 인증 컨텍스트 (API 요청에만 필요 — 정적 파일은 거치지 않는다) ---
@@ -2055,4 +2072,4 @@ if (process.argv[1] && NFC(path.resolve(process.argv[1])) === NFC(fileURLToPath(
   server.listen(PORT, () => console.log(`블로그봇 대시보드: http://localhost:${PORT}`));
 
 // 테스트에서만 쓴다 — 가짜 구글 서버를 세워 놓고 한도·스트리밍 동작을 확인하려고
-export const __test = { server, 파트너지시, 파트너맥락, 같은키워드글, 제목방법고르기, 덧붙일자리, 덧붙여넣기, 덧붙이기지시, streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, 기준프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기, 답다듬기 };
+export const __test = { server, 파트너지시, 파트너맥락, 파트너지난, 같은키워드글, 제목방법고르기, 덧붙일자리, 덧붙여넣기, 덧붙이기지시, streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, 기준프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기, 답다듬기 };
