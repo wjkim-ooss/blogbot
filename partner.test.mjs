@@ -81,7 +81,7 @@ test("AI 대화 수정: 점검 사이트가 준 앞 대화와 AI 기억을 싣�
   const 원문 = `제목: 송도 여드름 관리, 첫날 압출부터 하지 않는 이유\n\n${본문}`;
   const r = await 부르기({ keyword: "송도 여드름 관리", content: 원문, message: "첫 문장을 고객 말로 바꿔 주세요",
     지난: [{ role: "assistant", content: "앞에 잘린 답" }, { role: "user", content: "전에 한 부탁" }, { role: "assistant", content: "전에 한 답" }],
-    기억: ["경력은 둘째 문단에"] }, "test-partner-key", "chat");
+    기억: ["경력은 둘째 문단에"], 말투: "저는요, 오늘도 손님 얼굴 보면서 생각했어요. 짧게 끊어 말하는 편이에요." }, "test-partner-key", "chat");
   assert.equal(r.status, 200);
   const d = await r.json();
   assert.match(d.답, /고객 말로/);
@@ -91,6 +91,7 @@ test("AI 대화 수정: 점검 사이트가 준 앞 대화와 AI 기억을 싣�
   assert.match(지시, /경력은 둘째 문단에/);
   assert.match(지시, /전에 한 부탁/);
   assert.doesNotMatch(지시, /앞에 잘린 답/, "앞 대화는 원장님 부탁부터 시작한다");
+  assert.match(지시, /짧게 끊어 말하는 편이에요/, "말투 예시 글이 지시에 실린다");
 });
 
 test("고쳐 쓴 답이 중간에 끊겨 짧아지면 처음 글을 그대로 쓴다", async () => {
