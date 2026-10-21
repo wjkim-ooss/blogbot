@@ -1278,7 +1278,12 @@ function 파트너지시(body) {
   for (const x of (쓰기전.의심 || []).slice(0, 5)) if (x?.의심) 줄.push(`- 고객 속 의심 "${String(x.의심).slice(0, 120)}": ${x.근거 ? `지울 근거 ${String(x.근거).slice(0, 600)}` : "근거 없음. 억지로 지우지 말고 원장님이 채울 자리로 둔다"}`);
   if (쓰기전.제목) 줄.push(`- 제목은 이것을 그대로 쓴다: ${String(쓰기전.제목).slice(0, 120)}`);
   if (쓰기전.첫문단) 줄.push(`- 본문 첫 문단은 아래를 그대로 쓰고 이어서 쓴다:\n${String(쓰기전.첫문단).slice(0, 1200)}`);
-  return [줄.length ? `[원장님이 쓰기 전에 정리한 것]\n${줄.join("\n")}` : "", 파트너기억(body), 파트너말투(body)].filter(Boolean).join("\n\n");
+  return [줄.length ? `[원장님이 쓰기 전에 정리한 것]\n${줄.join("\n")}` : "", 파트너기준(body), 파트너기억(body), 파트너말투(body)].filter(Boolean).join("\n\n");
+}
+// 점검 사이트가 넘기는 글쓰기 기준(2026-10-21 대표님: 점검 사이트에서 맡긴 글만). 블로그봇 기준과 부딪히면 블로그봇 기준이 이긴다
+function 파트너기준(body) {
+  const 글 = String(body?.기준 || "").trim().slice(0, 3000);
+  return 글 ? `[이 글을 쓸 때 지킬 글쓰기 기준. 글자수·키워드 횟수·금지 표현·소제목 같은 블로그 기준과 부딪히면 블로그 기준을 따른다]\n${글}` : "";
 }
 // 원장님이 예전에 쓴 글(점검 사이트가 원장님이 붙인 주소로 읽어 보낸다). 내용은 가져오지 않고 말투만 맞춘다
 function 파트너말투(body) {
@@ -1778,6 +1783,7 @@ async function handleChat(res, body, ctx, name) {
     ...(선택 ? ["[원장님이 드래그한 부분]", 선택.text.trim(), ""] : ["(드래그한 부분 없음 — 부탁하신 것만 고친다)", ""]),
     "[원장님 부탁]", message,
     ...(ctx.파트너 && 파트너기억(body) ? ["", 파트너기억(body)] : []),
+    ...(ctx.파트너 && 파트너기준(body) ? ["", 파트너기준(body)] : []),
     ...(ctx.파트너 && 파트너말투(body) ? ["", 파트너말투(body)] : []),
   ].join("\n");
   const messages = [...지난, { role: "user", content: 요청 }];
