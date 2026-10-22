@@ -162,7 +162,19 @@ test("레퍼런스가 있으면 상위글의 짜임이 숫자로 가고, 상위�
   const u = __test.buildUserPrompt("모낭염", "", "", ref, 0, { 유형: "원장" }, "", []);
   assert.ok(u.includes("[상위글의 짜임"));
   assert.ok(u.includes("6편이 손님이 쓴 후기다"), "후기가 대부분이면 말투는 따르지 말라고 한다");
-  assert.ok(u.includes("인사말로 연 글이 6편"));
+  assert.ok(u.includes("6편 중 6편이 인사말로 연다"));
   assert.ok(!u.includes(문장), "상위글 문장이 지시문에 들어가면 원장 글에 그대로 나온다");
   assert.ok(!__test.buildUserPrompt("모낭염", "", "", null, 0, null, "", []).includes("[상위글의 짜임"));
+});
+
+// 2026-10-22: '문장 N개'로 시켰더니 한 줄에 한 문장씩 끊었다 — 분량은 줄로, 한 문장은 2~3줄에 걸쳐
+test("분량 지시는 줄로 세고, 한 문장을 여러 줄에 걸쳐 쓰라고 하며, 소제목을 ###로 쓰게 한다", () => {
+  const u = __test.buildUserPrompt("모낭염", "", "", null, 0, { 유형: "원장" }, "", []);
+  assert.ok(/본문을 적어도 \d+줄 쓴다/.test(u));
+  assert.ok(u.includes("2~3줄에 걸쳐"));
+  assert.ok(!u.includes("본문 문장을 적어도"));
+  assert.ok(u.includes("\"첫째, 둘째\"로 소제목을 대신하지 마라"));
+  // 피부 관리 본보기 숫자가 지시문에 남아 있으면 AI가 그대로 옮긴다("얼굴을 8곳으로 나눠")
+  for (const p of [원장, 정보]) for (const 말 of ["8곳으로 나눠", "앰플 1병", "재등록률이 62%"]) assert.ok(!p.includes(말), `${말} 이 지시문에 남았다`);
+  assert.ok(!Object.values(CONFIG.추상어대체).some((x) => /\d/.test(x)), "바꿔쓰기 예시에 숫자를 넣으면 AI가 그 숫자를 옮긴다");
 });

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, noSpace, claimSentences, pickReference, 참고레퍼런스, 본문에서찾기, 원장글고르기, 품질점수, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈, 글짜임, 짜임요약 } from "./web/rules.js";
+import { 평가, noSpace, claimSentences, pickReference, 참고레퍼런스, 본문에서찾기, 원장글고르기, 품질점수, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈, 글짜임, 짜임요약, 줄끝맺음재기 } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
@@ -1174,4 +1174,18 @@ test("짜임요약 — 저장된 짜임이 없는 옛 글은 그 자리에서 �
   assert.equal(요.첫줄.질문, 1);
   assert.deepEqual(Object.fromEntries(요.제목방법)["상식 파괴"], 1);
   assert.equal(짜임요약([], CONFIG), null);
+});
+
+// 2026-10-22 대표님: acne 계정 초안이 한 줄에 한 문장씩 끊겨 딱딱했다(85%), 잘 나온 초안은 48%
+test("한 줄에 한 문장씩 끊은 글과 소제목 없는 초안을 권장으로 짚는다", () => {
+  const 끊은 = Array.from({ length: 24 }, (_, i) => `압출 자리를 ${i}번 봅니다.`).join("\n");
+  const 이은 = Array.from({ length: 8 }, (_, i) => `세안을 마치고 거울 앞에서\n코끝 피지를 보면 손이\n먼저 올라가실 텐데요. ${i}`).join("\n\n");
+  assert.ok(줄끝맺음재기(끊은, CONFIG).비율 > CONFIG.줄끝맺음.상한);
+  assert.ok(줄끝맺음재기(이은, CONFIG).비율 <= CONFIG.줄끝맺음.상한);
+  assert.equal(줄끝맺음재기("짧은 글\n두 줄", CONFIG), null, "줄이 적은 초안은 재지 않는다");
+  const v = 평가(끊은, { config: CONFIG, 말투: "지시" });
+  assert.ok(v.advice.some((a) => a.includes("한 줄에 한 문장씩")));
+  assert.ok(v.advice.some((a) => a.includes("소제목(###)이 0개")));
+  // 발행 글은 ### 표시가 사라지므로 소제목 수를 따지지 않는다
+  assert.ok(!평가(끊은, { config: CONFIG, 말투: "지시", 사진수: 5 }).advice.some((a) => a.includes("소제목(###)이")));
 });
