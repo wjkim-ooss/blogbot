@@ -5,6 +5,11 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 
+// 서버 로그("인증 OFF …")는 stderr 로 보낸다. 이 파일은 server.mjs 를 시험이 시작된 뒤(before)에 불러와서
+// 한글 로그가 시험 메시지 바로 뒤 stdout 에 붙는다. 부하로 둘이 한 덩이로 읽히면 Node 시험 실행기가 한글 바이트를
+// 메시지 길이로 읽어(음수) "Unable to deserialize cloned data" 로 파일째 떨어졌다(npm test 서너 번에 한 번).
+console.log = console.info = console.error;
+
 const 받은지시 = [];
 let 끊어보내기 = false; // 고쳐 쓰기 차례(두 번째 부르기)에 답을 중간에서 끊어 보낸다
 const 본문 = Array.from({ length: 60 }, (_, i) => `여드름이 반복되는 분들이 많습니다 ${i + 1}번째 이야기입니다.`).join("\n");
