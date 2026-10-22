@@ -178,3 +178,13 @@ test("분량 지시는 줄로 세고, 한 문장을 여러 줄에 걸쳐 쓰라�
   for (const p of [원장, 정보]) for (const 말 of ["8곳으로 나눠", "앰플 1병", "재등록률이 62%"]) assert.ok(!p.includes(말), `${말} 이 지시문에 남았다`);
   assert.ok(!Object.values(CONFIG.추상어대체).some((x) => /\d/.test(x)), "바꿔쓰기 예시에 숫자를 넣으면 AI가 그 숫자를 옮긴다");
 });
+
+// 2026-10-22 대표님: "집에서 이것저것"은 추상적이다 — 실제로 한 행동으로. 위치는 자기소개가 아니라 글 끝 마지막 문단에
+test("첫 고민은 실제로 한 행동으로 쓰고, 자기소개 줄에는 위치를 넣지 않으며 위치는 글 끝에 한 번", () => {
+  assert.ok(!CONFIG.스타일변주.도입.some((d) => d.startsWith("집에서 이것저것")), "도입 지시가 '이것저것'을 시키면 그대로 옮긴다");
+  assert.ok(CONFIG.추상어["정보 없는 상투구"].includes("이것저것"));
+  assert.ok(원장.includes("샵 위치(역·동네)는 넣지 않는다"));
+  assert.ok(원장.includes("마지막 문단에서 한 번만"));
+  const u = __test.buildUserPrompt("모낭염", "마곡", "", null, 0, { 유형: "원장" }, "", []);
+  assert.ok(u.includes("앞쪽 자기소개 줄에는 넣지 않는다"));
+});
