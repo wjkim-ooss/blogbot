@@ -1176,16 +1176,17 @@ test("짜임요약 — 저장된 짜임이 없는 옛 글은 그 자리에서 �
   assert.equal(짜임요약([], CONFIG), null);
 });
 
-// 2026-10-22 대표님: acne 계정 초안이 한 줄에 한 문장씩 끊겨 딱딱했다(85%), 잘 나온 초안은 48%
-test("한 줄에 한 문장씩 끊은 글과 소제목 없는 초안을 권장으로 짚는다", () => {
-  const 끊은 = Array.from({ length: 24 }, (_, i) => `압출 자리를 ${i}번 봅니다.`).join("\n");
-  const 이은 = Array.from({ length: 8 }, (_, i) => `세안을 마치고 거울 앞에서\n코끝 피지를 보면 손이\n먼저 올라가실 텐데요. ${i}`).join("\n\n");
-  assert.ok(줄끝맺음재기(끊은, CONFIG).비율 > CONFIG.줄끝맺음.상한);
-  assert.ok(줄끝맺음재기(이은, CONFIG).비율 <= CONFIG.줄끝맺음.상한);
+// 2026-10-22 대표님: 한 문장은 한 줄에 끝까지(두 사이트 공통). 문장 중간에서 줄을 바꾼 글과 소제목 없는 초안을 권장으로 짚는다
+test("문장 중간에서 줄을 바꾼 글과 소제목 없는 초안을 권장으로 짚는다", () => {
+  const 한줄 = Array.from({ length: 24 }, (_, i) => `압출 자리를 ${i}번 봅니다.`).join("\n");
+  const 끊은 = Array.from({ length: 8 }, (_, i) => `세안을 마치고 거울 앞에서\n코끝 피지를 보면 손이\n먼저 올라가실 텐데요. ${i}`).join("\n\n");
+  assert.ok(줄끝맺음재기(한줄, CONFIG).비율 >= CONFIG.줄끝맺음.하한);
+  assert.ok(줄끝맺음재기(끊은, CONFIG).비율 < CONFIG.줄끝맺음.하한);
   assert.equal(줄끝맺음재기("짧은 글\n두 줄", CONFIG), null, "줄이 적은 초안은 재지 않는다");
-  const v = 평가(끊은, { config: CONFIG, 말투: "지시" });
-  assert.ok(v.advice.some((a) => a.includes("한 줄에 한 문장씩")));
-  assert.ok(v.advice.some((a) => a.includes("소제목(###)이 0개")));
+  assert.ok(평가(끊은, { config: CONFIG, 말투: "지시" }).advice.some((a) => a.includes("문장 중간에서 줄을 바꾼 곳")));
+  assert.ok(!평가(한줄, { config: CONFIG, 말투: "지시" }).advice.some((a) => a.includes("문장 중간에서 줄을")));
+  assert.ok(평가(한줄, { config: CONFIG, 말투: "지시" }).advice.some((a) => a.includes("소제목(###)이 0개")));
   // 발행 글은 ### 표시가 사라지므로 소제목 수를 따지지 않는다
-  assert.ok(!평가(끊은, { config: CONFIG, 말투: "지시", 사진수: 5 }).advice.some((a) => a.includes("소제목(###)이")));
+  assert.ok(!평가(한줄, { config: CONFIG, 말투: "지시", 사진수: 5 }).advice.some((a) => a.includes("소제목(###)이")));
+  assert.equal(CONFIG.문장길이.줄나누기, false, "20자 넘는 줄을 서버가 둘로 나누면 문장 중간에서 줄이 바뀐다");
 });
