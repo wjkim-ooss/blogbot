@@ -455,6 +455,7 @@ test("수식어를 겹쳐 쌓으면 걸린다 (원장 사례 ②)", () => {
   assert.equal(v.abstractFound.length, 0, "금지어는 하나도 없다");
   assert.equal(v.pass, false);
   assert.equal(v.압축[0].유형, "수식어중첩");
+  assert.equal(압축찾기("상담부터 1:1 밀착 관리로 매달 다섯 분만 받습니다.", CONFIG).걸림.length, 0, "「1:1 밀착 관리」는 대표님이 정한 좋은 말이라 걸지 않는다");
 });
 
 test("누가·어디부터 어디까지를 넣어 펴면 통과한다 (원장 사례 ② 고친 것)", () => {
