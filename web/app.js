@@ -369,7 +369,7 @@ function evaluateDraft(body, keyword, 지정목표 = 0, 유형 = "") {
   // 원장글 본보기에서 옮겨 온 문장도 서버와 똑같이 잡는다 — 본보기를 받는 유형(원장)만
   const 원장글 = 유형정보(CONFIG, 유형).원장글본보기 ? 원장글보관함(REFS) : null;
   // 말투 목표도 서버와 같은 재료(보관함의 원장·업체 글)로 잰다 — 유형 스위치가 켜진 글만(2026-10-23 대표님)
-  const 말투목표 = 유형정보(CONFIG, 유형).말투목표 ? 말투목표고르기(refHit, REFS) : null;
+  const 말투목표 = 유형정보(CONFIG, 유형).말투목표 ? 말투목표고르기(refHit, REFS, CONFIG) : null;
   return { ...평가(body, { keyword, config: CONFIG, 목표글자수: 지정목표, ref: refHit, 말투: "요약", 원장값, 유형, 원장글, 말투목표 }), refHit };
 }
 

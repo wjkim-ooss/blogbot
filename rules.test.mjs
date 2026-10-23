@@ -1234,7 +1234,7 @@ test("거울 장면은 한 번까지 — 넘으면 권장, 틀 문장은 불합�
   const 두번 = "### 거울 앞에서 보이는 것\n\n아침에 거울 앞에 서면 코가 먼저 보입니다.\n\n[사진: 거울 속 코 옆 각질]";
   const v = 평가(두번, { config: CONFIG, 말투: "지시" });
   assert.equal(v.거울수, 3);
-  assert.ok(v.advice.some((a) => a.includes("거울 장면이 3번")));
+  assert.ok(v.issues.some((a) => a.includes("거울 장면이 3번")), "AI 글은 다시 쓰게 한다");
   const 틀 = 평가("거울을 볼 때마다 한숨이 나옵니다.", { config: CONFIG, 말투: "지시" });
   assert.ok(틀.issues.some((a) => a.includes("거울 틀 문장")));
   assert.ok(!평가("거울 앞에서 코 옆 각질이 먼저 보입니다.", { config: CONFIG, 말투: "지시" }).advice.some((a) => a.includes("거울 장면")));
@@ -1283,13 +1283,28 @@ test("말투목표가 오면 묻는 문장 상한은 그 비율로, 고정 말�
 });
 
 test("보관함 원장·업체 글로 말투 목표를 잰다 — 후기·셋 미만이면 목표 없이 지금 규칙", async () => {
-  const { 말투목표재기, 말투목표고르기, 업체글인가 } = await import("./web/rules.js");
+  const { 말투목표재기, 말투목표고르기, 업체글인가: 업체글 } = await import("./web/rules.js");
+  const 업체글인가 = (p) => 업체글(p, CONFIG);
   const 업체 = (n) => ({ title: `모낭염 관리 안내 ${n}`, 짜임: { 후기: false }, text: Array.from({ length: 12 }, (_, i) => (i % 3 ? `${i}번째로 저희 관리실은 상담부터 합니다.` : `${i}번째로 원장이 직접 봐요?`)).join("\n") });
   assert.ok(업체글인가(업체(1)));
-  assert.ok(!업체글인가({ ...업체(1), 짜임: { 후기: true } }), "손님 후기는 따르지 않는다");
+  assert.ok(!업체글인가({ title: "모낭염 관리 후기", 짜임: { 후기: true }, text: "원장님이 상담해 주셨어요.\n예약하고 다녀왔어요.\n관리실이 깨끗했어요." }), "손님 후기는 따르지 않는다");
+  assert.ok(업체글인가({ ...업체(1), 짜임: { 후기: true } }), "후기 말이 있어도 업체 말(저희 등)이 둘 넘으면 원장이 쓴 고객 이야기다");
   const 잰 = 말투목표재기([업체(1), 업체(2), 업체(3)]);
   assert.equal(잰.편수, 3);
   assert.ok(잰.니다비율 > 0.5 && 잰.질문비율 > 0.2);
-  assert.ok(말투목표고르기({ posts: [업체(1), 업체(2), 업체(3)] }, []));
-  assert.equal(말투목표고르기({ posts: [업체(1)] }, []), null, "셋도 안 되면 경향이라 부를 수 없다");
+  assert.ok(말투목표고르기({ posts: [업체(1), 업체(2), 업체(3)] }, [], CONFIG));
+  assert.equal(말투목표고르기({ posts: [업체(1)] }, [], CONFIG), null, "셋도 안 되면 경향이라 부를 수 없다");
+  // 본문 앞에 후기 말이 있으면 손님 글(업체 말이 둘 넘으면 원장이 쓴 고객 이야기), 제목이 창업·렌탈이면 원장 상대 글
+  assert.ok(!업체글인가({ ...업체(4), text: "어제 다녀왔어요. 원장님 상담이 좋았고 예약도 쉬웠어요.\n" + 업체(4).text.replace(/저희 /g, "") }));
+  assert.ok(!업체글인가({ ...업체(5), title: "인천 피부관리실 창업, 장비 렌탈" }));
+});
+
+test("말투 목표의 묻는 문장이 목표 개수의 절반에 못 미치면 짚고, 거울이 넘치면 AI 글은 다시 쓰게 한다", () => {
+  const 목표 = { 편수: 3, 질문비율: 0.2, 확인질문비율: 0.05, 니다비율: 1, 요비율: 0, 이모지: 0, 끝말: [] };
+  const 글 = Array.from({ length: 20 }, (_, i) => `${i}번째 설명입니다.`).join("\n");
+  const v = 평가(글, { config: CONFIG, 말투: "지시", 말투목표: 목표 });
+  assert.ok(v.말투어긋남 && v.advice.some((a) => a.includes("묻는 문장 0개(목표 4개")));
+  const 거울 = "거울 앞에서 코가 보입니다.\n거울 속 각질도 보입니다.";
+  assert.ok(평가(거울, { config: CONFIG, 말투: "지시" }).issues.some((a) => a.includes("거울 장면")));
+  assert.ok(!평가(거울, { config: CONFIG, 말투: "요약" }).issues.some((a) => a.includes("거울 장면")));
 });
