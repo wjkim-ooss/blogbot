@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, noSpace, claimSentences, pickReference, 참고레퍼런스, 본문에서찾기, 원장글고르기, 품질점수, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈, 글짜임, 짜임요약, 줄끝맺음재기, 빈줄고르기, 문장줄나누기 } from "./web/rules.js";
+import { 평가, noSpace, claimSentences, pickReference, 참고레퍼런스, 본문에서찾기, 원장글고르기, 품질점수, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈, 글짜임, 짜임요약, 줄끝맺음재기, 빈줄고르기, 문장줄나누기, 소개나뉨찾기 } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
@@ -1307,4 +1307,15 @@ test("말투 목표의 묻는 문장이 목표 개수의 절반에 못 미치면
   const 거울 = "거울 앞에서 코가 보입니다.\n거울 속 각질도 보입니다.";
   assert.ok(평가(거울, { config: CONFIG, 말투: "지시" }).issues.some((a) => a.includes("거울 장면")));
   assert.ok(!평가(거울, { config: CONFIG, 말투: "요약" }).issues.some((a) => a.includes("거울 장면")));
+});
+
+test("원장 소개가 두 문단으로 이어지면 AI 글은 다시 쓰게 하고, 한 문단으로 묶은 소개는 그냥 둔다(2026-10-23 대표님)", () => {
+  const 나뉨 = "파운데이션이 오돌토돌한 부위에서 들뜹니다.\n\n화장품 회사 MD로 3년 동안 일했습니다.\n에스테틱 샵 직원으로 2년을 거쳤고요.\n\n현재는 3년 차 대표원장으로 일하고 있습니다.\n\n모낭염은 털구멍에 생깁니다.";
+  assert.deepEqual(소개나뉨찾기(나뉨, CONFIG), ["화장품 회사 MD로 3년 동안 일했습니다."]);
+  assert.ok(평가(나뉨, { config: CONFIG, 말투: "지시" }).issues.some((a) => a.includes("두 문단으로")));
+  assert.ok(평가(나뉨, { config: CONFIG, 말투: "요약" }).advice.some((a) => a.includes("두 문단으로")), "원장님 글은 권장");
+  const 한문단 = "모낭염은 털구멍에 생깁니다.\n\n화장품 회사 MD 3년, 샵 직원 2년을 거쳐 3년째 피부를 보는 원장입니다.\n역 3번 출구 앞입니다.\n\n[지도: 샵 위치]";
+  assert.deepEqual(소개나뉨찾기(한문단, CONFIG), []);
+  // 소개 사이에 본문 문단이 끼면(앞 한두 줄 + 끝 한 문단) 나뉜 것이 아니다
+  assert.deepEqual(소개나뉨찾기("10년째 원장입니다.\n\n각질은 이렇게 생깁니다.\n\n10년째 원장으로 일하고 있습니다.", CONFIG), []);
 });
