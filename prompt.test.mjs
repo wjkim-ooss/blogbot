@@ -205,3 +205,9 @@ test("두 사이트 공통 쓰기 기준은 원장 지시문에 그대로 실리
 test("도입 보기는 누구에게나 맞는 공감 질문을 시키지 않는다", () => {
   for (const d of CONFIG.스타일변주.도입) assert.ok(!/^거울 앞이나|^밤에 검색하다|이것저것 해 봤는데 그대로였던/.test(d), d);
 });
+
+// 2026-10-23 점검 사이트 실서버: 첫 장면 이름("샤워하다 손끝에 닿을 때.")을 그대로 첫 문장으로 썼다
+test("첫 장면 표시에는 그 말을 그대로 옮기지 말라는 줄이 붙는다", () => {
+  const 줄 = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "server.mjs"), "utf8");
+  assert.ok(줄.includes("그대로 첫 문장으로 옮기지 말고"));
+});
