@@ -10,7 +10,7 @@ import { resolveDraftView } from "./permissions.mjs";
 // 보관함 읽기는 한 곳(scripts/보관함.mjs)에서 한다 — 발행검증과 같은 목록을 봐야 한다.
 import { 보관함읽기 } from "./scripts/보관함.mjs";
 // 초안 판정 규칙은 브라우저와 한 파일을 함께 쓴다 (web/rules.js). 두 벌로 두면 반드시 갈라진다.
-import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형, 원장글보관함, 원장글고르기, 문장길이범위, 깨진기준, 초안본문, 적힌목표, 적힌유형, 초안다듬기, 바뀐문단다듬기, 줄나누기, 본문문장, 소제목줄, 해시태그줄, 켜진금지문구, 키워드꼬리, 이름꼬리, 짜임요약 } from "./web/rules.js";
+import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형, 원장글보관함, 원장글고르기, 문장길이범위, 깨진기준, 초안본문, 적힌목표, 적힌유형, 초안다듬기, 바뀐문단다듬기, 빈줄고르기, 줄나누기, 본문문장, 소제목줄, 해시태그줄, 켜진금지문구, 키워드꼬리, 이름꼬리, 짜임요약 } from "./web/rules.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
@@ -1199,11 +1199,12 @@ function 덧붙여넣기(body, 답, 받을까 = () => true) {
     .map((x, i) => ({ x, 글: 덩이들.find((d) => d.번호 === i + 1 || (x.소제목 && d.머리 === 정규(x.소제목)))?.글 }))
     .filter((y) => y.글);
   // 뒤 자리부터 넣어야 앞 자리의 줄 번호가 안 밀린다 (넣을것은 앞에서부터 차례다)
-  const 합치기 = (목록) => 목록.reduceRight((줄, { x, 글 }) => {
+  // 넣은 뒤 빈 줄을 다시 고른다(문단 사이 하나, 소제목·사진 앞뒤 둘 — 빈줄고르기)
+  const 합치기 = (목록) => 빈줄고르기(목록.reduceRight((줄, { x, 글 }) => {
     let 끝 = x.끝;
     while (끝 > x.시작 + 1 && !줄[끝 - 1].trim()) 끝--;
     return 줄.toSpliced(끝, 0, "", 글, ...(줄[끝]?.trim() ? [""] : []));
-  }, 원).join("\n").replace(/\n{3,}/g, "\n\n");
+  }, 원).join("\n").replace(/\n{3,}/g, "\n\n"));
   let 받은 = 넣을것, 결과 = 받은.length ? 받을까(합치기(받은)) : null;
   if (!결과) {
     받은 = [];
@@ -1424,7 +1425,7 @@ async function handleGenerate(res, body, ctx) {
       if (!CONFIG.말투?.다듬기?.켜짐) return false;
       const m = v.말투;
       // 묻는 문장이 상한을 넘어도 고쳐 쓴다(2026-10-23 대표님: ~시죠?가 너무 많다)
-      const 질문넘침 = v.질문수 > (CONFIG.말투?.질문상한 ?? Infinity) || v.확인질문수 > (CONFIG.말투?.확인질문상한 ?? Infinity);
+      const 질문넘침 = v.질문수 > (CONFIG.말투?.질문상한 ?? Infinity) || v.확인질문수 > (CONFIG.말투?.확인질문상한 ?? Infinity) || v.거울수 > (CONFIG.거울?.상한 ?? Infinity);
       return !!(m && (m.비율 < m.최소 || m.연속단정 > m.연속허용 || m.반복어미?.length)) || v.kwOver || v.첫문단키워드 === false || 질문넘침;
     };
     // AI를 한 번 더 부른다: 지금 제일 좋은 글 + 지시만 보내고(앞 차례는 버린다), 답을 받기(답)로 넘긴다. 실패하면 null.
@@ -1855,7 +1856,7 @@ async function handleChat(res, body, ctx, name) {
       // 처음 쓸 때처럼 덩어리를 문단으로 나눈다(초안다듬기) — 대화 수정으로 받은 글만 안 나눠져 8줄 문단이 나갔다(2026-10-23).
       // 드래그한 자리는 들어갈 글만, 글 전체(수정본)는 원래 글에 없던 문단만 — 원장님이 직접 쓴 문단은 줄바꿈을 바꾸지 않는다.
       새글 = 풀림.바꾼부분 != null && 선택 ? 끼워넣기(원문, 선택, 초안다듬기(풀림.바꾼부분, CONFIG, keyword))
-        : 풀림.수정본 != null ? 본문갈기(원문, 바뀐문단다듬기(원문, 풀림.수정본, CONFIG, keyword)) : null;
+        : 풀림.수정본 != null ? 본문갈기(원문, 빈줄고르기(바뀐문단다듬기(원문, 풀림.수정본, CONFIG, keyword))) : null;
       let 다시말 = null;
       if (!새글 && 풀림.남은글 && !재촉함) { 재촉함 = true; 다시말 = 형식재촉(); }
       else if (!새글 || 새글 === 원문) { 새글 = null; 깨진 = []; break; }

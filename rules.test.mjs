@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, noSpace, claimSentences, pickReference, 참고레퍼런스, 본문에서찾기, 원장글고르기, 품질점수, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈, 글짜임, 짜임요약, 줄끝맺음재기 } from "./web/rules.js";
+import { 평가, noSpace, claimSentences, pickReference, 참고레퍼런스, 본문에서찾기, 원장글고르기, 품질점수, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈, 글짜임, 짜임요약, 줄끝맺음재기, 빈줄고르기 } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
@@ -1218,4 +1218,24 @@ test("묻는 문장이 상한을 넘으면 권장으로 짚고, 평서 말 걸�
   assert.ok(!v.issues.some((a) => a.includes("묻는 문장")), "형식이라 불합격으로 걸지 않는다");
   const 평서 = ["턱에 좁쌀이 올라오셨을 겁니다.", "손이 먼저 가실 텐데요.", "짜면 번지거든요.", "왜 그럴까요?"].join("\n");
   assert.ok(!평가(평서, { config: CONFIG, 말투: "지시" }).advice.some((a) => a.includes("묻는 문장")));
+});
+
+// 2026-10-23 대표님(두 사이트 공통): 빈 줄은 문단 사이 하나, 소제목·사진 자리 앞뒤 둘
+test("빈 줄 고르기 — 문단 사이 하나, 소제목·사진·지도 앞뒤 둘, 붙어 있던 표시는 떼고 글자는 그대로", () => {
+  const 원 = "첫 문단 첫 줄.\n첫 문단 둘째 줄.\n\n\n\n둘째 문단.\n### 소제목\n셋째 문단.\n[사진: 턱 옆 좁쌀]\n\n넷째 문단.\n\n[지도: 샵 위치]\n\n#해시태그";
+  const 새 = 빈줄고르기(원);
+  assert.equal(새, "첫 문단 첫 줄.\n첫 문단 둘째 줄.\n\n둘째 문단.\n\n\n### 소제목\n\n\n셋째 문단.\n\n\n[사진: 턱 옆 좁쌀]\n\n\n넷째 문단.\n\n\n[지도: 샵 위치]\n\n\n#해시태그");
+  assert.equal(새.replace(/\s/g, ""), 원.replace(/\s/g, ""));
+  assert.equal(빈줄고르기(새), 새, "두 번 돌려도 같다");
+});
+
+// 2026-10-23 대표님: 거울은 한 글에 한 번까지(사진 자리·소제목 포함), "거울을 볼 때마다" 틀 문장은 쓰지 않는다
+test("거울 장면은 한 번까지 — 넘으면 권장, 틀 문장은 불합격", () => {
+  const 두번 = "### 거울 앞에서 보이는 것\n\n아침에 거울 앞에 서면 코가 먼저 보입니다.\n\n[사진: 거울 속 코 옆 각질]";
+  const v = 평가(두번, { config: CONFIG, 말투: "지시" });
+  assert.equal(v.거울수, 3);
+  assert.ok(v.advice.some((a) => a.includes("거울 장면이 3번")));
+  const 틀 = 평가("거울을 볼 때마다 한숨이 나옵니다.", { config: CONFIG, 말투: "지시" });
+  assert.ok(틀.issues.some((a) => a.includes("거울 틀 문장")));
+  assert.ok(!평가("거울 앞에서 코 옆 각질이 먼저 보입니다.", { config: CONFIG, 말투: "지시" }).advice.some((a) => a.includes("거울 장면")));
 });
