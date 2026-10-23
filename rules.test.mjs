@@ -1207,3 +1207,15 @@ test("원장이 준 적 없는 도로명 주소는 불합격으로 짚고, 준 �
   assert.ok(!편집기.issues.some((x) => x.includes("주소")) && 편집기.advice.some((x) => x.includes("주소")));
   assert.deepEqual(평가(본문, { config: CONFIG, 사진수: 5 }).지어낸주소, []);
 });
+
+// 2026-10-23 대표님: ~시죠?가 너무 많다 — 묻는 문장은 한 글에 질문상한, ~시죠?·~잖아요?는 확인질문상한까지
+test("묻는 문장이 상한을 넘으면 권장으로 짚고, 평서 말 걸기는 세지 않는다", () => {
+  const 많은 = ["턱에 좁쌀이 올라오시죠?", "손이 먼저 가시죠?", "짜면 번지잖아요?", "그 마음 아시죠?", "왜 그럴까요?", "그 이유가 있는데요.", "피지가 막혔거든요."].join("\n");
+  const v = 평가(많은, { config: CONFIG, 말투: "지시" });
+  assert.equal(v.질문수, 5);
+  assert.equal(v.확인질문수, 4);
+  assert.ok(v.advice.some((a) => a.includes("묻는 문장이 5개")));
+  assert.ok(!v.issues.some((a) => a.includes("묻는 문장")), "형식이라 불합격으로 걸지 않는다");
+  const 평서 = ["턱에 좁쌀이 올라오셨을 겁니다.", "손이 먼저 가실 텐데요.", "짜면 번지거든요.", "왜 그럴까요?"].join("\n");
+  assert.ok(!평가(평서, { config: CONFIG, 말투: "지시" }).advice.some((a) => a.includes("묻는 문장")));
+});
