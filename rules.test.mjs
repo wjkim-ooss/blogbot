@@ -1255,3 +1255,13 @@ test("받은 적 없는 고객 일화는 AI 글이면 불합격, 받은 사례�
   const 편집기 = 평가(글, { config: CONFIG, 말투: "요약" });
   assert.ok(!편집기.issues.some((x) => x.includes("사례")) && 편집기.advice.some((x) => x.includes("고객 사례")));
 });
+
+// 2026-10-23 점검 사이트 실서버: 원장 정보는 "피부관리실 8년"인데 "피부과에서 상담실장, 피부관리사로 8년간 근무"를 지어냈다
+test("원장이 준 이력에 없는 일한 곳·자리는 AI 글이면 불합격, 준 이력이면 괜찮다", () => {
+  const 글 = "저는 피부과에서 상담실장, 피부관리사로 8년간 근무했습니다.";
+  const v = 평가(글, { config: CONFIG, 말투: "지시", 원장값: { 이력: "피부관리실 8년" } });
+  assert.equal(v.지어낸경력.length, 1);
+  assert.ok(v.issues.some((x) => x.includes("[원장확인: 경력 한 줄")));
+  assert.equal(평가(글, { config: CONFIG, 말투: "지시", 원장값: { 이력: "피부과 상담실장 3년, 피부관리사 5년" } }).지어낸경력.length, 0);
+  assert.equal(평가("8년째 다니시는 고객님도 계십니다.", { config: CONFIG, 말투: "지시" }).지어낸경력.length, 0, "경력 말이 없으면 걸지 않는다");
+});

@@ -19,6 +19,8 @@ const 가짜구글 = http.createServer((req, res) => {
     return res.end(JSON.stringify({ models: [{ name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] }] }));
   }
   let 몸 = "";
+  // 조각을 문자열로 바로 이으면 조각 경계에 걸린 한글이 깨진다("경력은"이 "경력��") — 글자로 풀어 받는다
+  req.setEncoding("utf8");
   req.on("data", (c) => (몸 += c));
   req.on("end", () => {
     받은지시.push(몸);
