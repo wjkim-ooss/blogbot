@@ -142,5 +142,10 @@ test("바로 재기: 원장님 글은 지어낸 사례를 권장으로, AI글: t
   const AI = await (await 부르기({ keyword: "송도 여드름 관리", content: 글, AI글: true }, "test-partner-key", "check")).json();
   assert.ok(!원장.issues.some((x) => x.includes("고객 사례")) && 원장.advice.some((x) => x.includes("고객 사례")));
   assert.ok(AI.issues.some((x) => x.includes("고객 사례")));
+  // 이름 목록은 문구와 같은 순서 — 점검 사이트가 문구 대신 이름으로 고른다
+  assert.equal(AI.걸린기준.length, AI.issues.length);
+  assert.ok(AI.걸린기준.includes("지어낸사례"));
+  assert.equal(원장.권장기준.length, 원장.advice.length);
+  assert.ok(원장.권장기준.includes("지어낸사례"));
 });
 

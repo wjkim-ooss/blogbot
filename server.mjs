@@ -1970,7 +1970,8 @@ const server = http.createServer(async (req, res) => {
       // 원장님이 고친 글은 AI글 false(진짜 사례·경력·주소는 권장으로). 블로그봇이 쓴 글을 다시 잴 때는 점검 사이트가 AI글: true 를 보낸다
       const { 재기 } = await 대화판정준비(글, String(body?.keyword || "").trim(), 맥락, body, body?.AI글 === true);
       const v = 재기(글);
-      return json(res, 200, { pass: v.pass, issues: v.issues, advice: v.advice, chars: v.chars, targetChars: v.targetChars, photos: v.photos, kwCount: v.kwCount });
+      // 걸린기준·권장기준은 issues·advice와 같은 순서의 이름 — 점검 사이트가 문구 대신 이름으로 고른다(2026-10-23)
+      return json(res, 200, { pass: v.pass, issues: v.issues, advice: v.advice, 걸린기준: v.걸린기준, 권장기준: v.권장기준, chars: v.chars, targetChars: v.targetChars, photos: v.photos, kwCount: v.kwCount });
     }
 
     // --- 인증 컨텍스트 (API 요청에만 필요 — 정적 파일은 거치지 않는다) ---
