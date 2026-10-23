@@ -676,7 +676,9 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = nu
   } else {
     lines.push("", "(레퍼런스 없음 — 형식 규칙의 최소 기준으로 작성)");
   }
-  lines.push(...원장본보기블록(원장본보기));
+  // 말투 목표가 있으면 원장 글 본보기는 싣지 않는다 — 말투는 상위노출된 원장·업체 글 숫자를 따르는데, 본보기가 ~요 쪽으로 끌었다
+  // (2026-10-23 점검 사이트 실서버: 목표 ~니다 73%인데 글은 43~52%, 본보기 2편이 같이 실림)
+  lines.push(...(말투목표 ? [] : 원장본보기블록(원장본보기)));
   lines.push(
     "",
     목표글자수
@@ -1394,7 +1396,6 @@ async function handleGenerate(res, body, ctx) {
     // 보관함은 여기서 한 번만 읽는다 — check()는 고쳐 쓰기마다 돈다.
     const 원장글 = 원장글받기(글쓴이유형);
     const 원장본보기 = 원장글 ? 원장글고르기([원장글], keyword, CONFIG) : [];
-    if (원장본보기.length) send({ type: "status", message: `원장이 직접 쓴 글 ${원장본보기.length}편을 말투 본보기로 같이 보여줍니다` });
     // 같은 키워드로 다시 만들면 거의 같은 글이 나왔다 — 각도를 고르고, 이미 쓴 같은 키워드 초안을 피하게 한다
     // 도입·마무리도 같은 까닭으로 서버가 고른다(2026-10-12 우진: 첫 문단과 마지막 문단이 글마다 똑같다).
     const 하나 = (목록) => (목록?.length ? 목록[Math.floor(Math.random() * 목록.length)] : "");
@@ -1410,6 +1411,7 @@ async function handleGenerate(res, body, ctx) {
     const 이미쓴글 = ctx.파트너 ? (body.이미쓴글 || []).map(String).slice(0, 3) : await 같은키워드글(ctx, keyword);
     const 덧붙임 = ctx.파트너 ? 파트너지시(body) : "";
     const 말투목표 = 말투목표정하기(ctx, body, 글쓴이유형, ref);
+    if (원장본보기.length && !말투목표) send({ type: "status", message: `원장이 직접 쓴 글 ${원장본보기.length}편을 말투 본보기로 같이 보여줍니다` });
     if (말투목표 && !ctx.파트너) send({ type: "status", message: `상위노출된 원장·업체 글 ${말투목표.편수}편의 말투를 따릅니다` });
     const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례, 원장본보기, { 각도, 이미쓴글, 도입, 마무리, 제목방법, 말투목표 }) + (덧붙임 ? "\n\n" + 덧붙임 : "") }];
     const check = (d) => {
