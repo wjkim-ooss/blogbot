@@ -211,3 +211,12 @@ test("첫 장면 표시에는 그 말을 그대로 옮기지 말라는 줄이 �
   const 줄 = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "server.mjs"), "utf8");
   assert.ok(줄.includes("그대로 첫 문장으로 옮기지 말고"));
 });
+
+// 2026-10-23: 문단 기준을 1~3문장으로 바꿨는데 짜임 줄이 "문단은 2~2줄씩"을 따로 말하고 있었다 — 문단 크기는 한 곳에서만
+test("문단 크기는 [목표 분량] 한 곳에서만 말한다", () => {
+  const ref = { keyword: "모낭염", avgChars: 1800, avgImages: 12, posts: Array.from({ length: 6 }, (_, i) => ({ title: `모낭염 ${i}`, chars: 1800, images: 12, text: "턱에 좁쌀이 올라와요\n\n짜면 번져요" })) };
+  const u = __test.buildUserPrompt("모낭염", "", "", ref, 0, { 유형: "원장" }, "", []);
+  const 짜임 = u.slice(u.indexOf("[상위글의 짜임"), u.indexOf("[목표 분량]"));
+  assert.ok(!/문단은 \d/.test(짜임), "짜임 안내가 문단 줄 수를 따로 정하지 않는다");
+  assert.ok(u.includes(`1~${CONFIG.문단.최대줄}줄`));
+});
