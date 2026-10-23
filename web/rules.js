@@ -558,6 +558,13 @@ export function 줄나누기(body, config, 키워드 = "") {
 // AI가 쓴 본문을 초안에 넣기 전에 고르게 한다 — 긴 줄을 나누고, 덩어리를 문단으로 나눈다. 글자는 그대로다.
 export const 초안다듬기 = (body, config, 키워드 = "") => 문단나누기(줄나누기(body, config, 키워드), config);
 
+// 고쳐 쓴 글에서 원래 글에 없던 문단만 고르게 한다 — 원장님이 손으로 쓴 문단은 줄바꿈 하나 안 바꾼다.
+// 대화 수정으로 글 전체를 다시 받으면 덩어리가 나눠지지 않고 그대로 나갔다(2026-10-23 점검 사이트 실서버: 첫 문단 8줄).
+export function 바뀐문단다듬기(원래, 새글, config, 키워드 = "") {
+  const 있던 = new Set(String(원래).split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean));
+  return String(새글).split(/(\n\s*\n)/).map((조각, i) => (i % 2 || 있던.has(조각.trim()) ? 조각 : 초안다듬기(조각, config, 키워드))).join("");
+}
+
 // AI가 문단을 안 나누고 낸 덩어리를 문장이 끝나는 줄에서 나눈다 (config.문단). 글자는 그대로, 빈 줄만 더한다.
 export function 문단나누기(body, config) {
   const { 최대줄 = 5, 묶음 = 3, 끝남은최소 = 2 } = config.문단 || {};

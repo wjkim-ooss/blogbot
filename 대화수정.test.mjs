@@ -182,3 +182,16 @@ test("표시를 잘못 열고 닫아도 원장님께 하는 말이 고친 글에
   assert.ok(!안열린답.답.includes("</답>"), "답에 표시가 그대로 보이지 않는다");
   for (const r of [잘못연, 안에붙은, 안열린답]) for (const 글 of [r.바꾼부분, r.수정본]) assert.ok(!글 || (!글.includes(말) && !글.includes("</")));
 });
+
+// 2026-10-23 점검 사이트 실서버: 대화 수정으로 받은 글은 문단을 안 나눠 첫 문단이 8줄 덩어리로 나갔다
+test("대화 수정으로 받은 글도 덩어리를 문단으로 나누되, 원래 있던 문단은 그대로 둔다", async () => {
+  const { 바뀐문단다듬기 } = await import("./web/rules.js");
+  const CONFIG = JSON.parse(fs.readFileSync(new URL("./config.json", import.meta.url), "utf8"));
+  const 손으로 = "원장님이 쓴 첫 줄입니다.\n둘째 줄입니다.\n셋째 줄입니다.\n넷째 줄입니다.";
+  const 덩어리 = Array.from({ length: 8 }, (_, i) => `새로 쓴 ${i + 1}번째 문장입니다.`).join("\n");
+  const 나온 = 바뀐문단다듬기(`${손으로}\n\n옛 문단입니다.`, `${손으로}\n\n${덩어리}`, CONFIG);
+  assert.ok(나온.startsWith(손으로 + "\n\n"), "원래 있던 문단은 줄바꿈 하나 안 바뀐다");
+  const 새문단들 = 나온.slice(손으로.length).trim().split(/\n\s*\n/);
+  assert.ok(새문단들.length > 1 && 새문단들.every((p) => p.split("\n").length <= CONFIG.문단.최대줄), "새 덩어리는 나뉜다");
+  assert.equal(나온.replace(/\s/g, ""), `${손으로}${덩어리}`.replace(/\s/g, ""), "글자는 그대로다");
+});
