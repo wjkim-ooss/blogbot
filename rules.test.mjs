@@ -1265,3 +1265,19 @@ test("원장이 준 이력에 없는 일한 곳·자리는 AI 글이면 불합�
   assert.equal(평가(글, { config: CONFIG, 말투: "지시", 원장값: { 이력: "피부과 상담실장 3년, 피부관리사 5년" } }).지어낸경력.length, 0);
   assert.equal(평가("8년째 다니시는 고객님도 계십니다.", { config: CONFIG, 말투: "지시" }).지어낸경력.length, 0, "경력 말이 없으면 걸지 않는다");
 });
+
+// 2026-10-23 대표님: "말투는 우리 규칙은 기본만, 나머지는 상위노출된 글 말투를 따라" — 점검 사이트가 말투목표를 넘긴다
+test("말투목표가 오면 묻는 문장 상한은 그 비율로, 고정 말투 권장 대신 목표와 견준다", async () => {
+  const { 말투목표정리 } = await import("./web/rules.js");
+  const 목표 = { 편수: 3, 질문비율: 0.15, 확인질문비율: 0.05, 니다비율: 0.6, 요비율: 0.3, 이모지: 0, 끝말: ["습니다", "거든요"] };
+  const 문장 = Array.from({ length: 20 }, (_, i) => (i < 5 ? `${i}번째로 궁금하신가요?` : i < 12 ? `${i}번째 설명입니다.` : `${i}번째 이유가 있거든요.`)).join("\n");
+  const 고정 = 평가(문장, { config: CONFIG, 말투: "지시" });
+  const 따름 = 평가(문장, { config: CONFIG, 말투: "지시", 말투목표: 목표 });
+  assert.equal(고정.질문상한, CONFIG.말투.질문상한);
+  assert.equal(따름.질문상한, Math.ceil(20 * 0.15) + 1);
+  assert.ok(!따름.advice.some((a) => a.includes("말을 거는 문장이")), "고정 공감 비율 권장은 끈다");
+  assert.equal(말투목표정리({ 질문비율: 2 }), null, "이상한 값이면 지금 규칙 그대로");
+  assert.equal(말투목표정리(null), null);
+  const 어긋난 = 평가(Array.from({ length: 20 }, (_, i) => `${i}번째 설명입니다.`).join("\n"), { config: CONFIG, 말투: "지시", 말투목표: 목표 });
+  assert.ok(어긋난.말투어긋남 && 어긋난.advice.some((a) => a.includes("목표")));
+});
