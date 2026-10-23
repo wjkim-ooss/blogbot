@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { 평가, noSpace, claimSentences, pickReference, 참고레퍼런스, 본문에서찾기, 원장글고르기, 품질점수, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈, 글짜임, 짜임요약, 줄끝맺음재기, 빈줄고르기 } from "./web/rules.js";
+import { 평가, noSpace, claimSentences, pickReference, 참고레퍼런스, 본문에서찾기, 원장글고르기, 품질점수, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈, 글짜임, 짜임요약, 줄끝맺음재기, 빈줄고르기, 문장줄나누기 } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
@@ -1238,4 +1238,20 @@ test("거울 장면은 한 번까지 — 넘으면 권장, 틀 문장은 불합�
   const 틀 = 평가("거울을 볼 때마다 한숨이 나옵니다.", { config: CONFIG, 말투: "지시" });
   assert.ok(틀.issues.some((a) => a.includes("거울 틀 문장")));
   assert.ok(!평가("거울 앞에서 코 옆 각질이 먼저 보입니다.", { config: CONFIG, 말투: "지시" }).advice.some((a) => a.includes("거울 장면")));
+});
+
+// 2026-10-23 점검 사이트 실서버: 한 줄에 일곱 문장, 받은 적 없는 고객 일화
+test("한 줄에 문장이 여럿이면 문장마다 줄을 바꾸고, 숫자 마침표·따옴표 안·소제목·자리 표시는 그대로", () => {
+  assert.equal(문장줄나누기("비교하셨을 텐데요. 짠다고 끝나지 않거든요. 짚어드리겠습니다."), "비교하셨을 텐데요.\n짠다고 끝나지 않거든요.\n짚어드리겠습니다.");
+  for (const 그대로 of ["피지가 1.5배 늘어납니다", "“정말요?” 하고 물으셨습니다.", "### 1. 세안 순서", "[사진: 1. 세안 뒤]", "- 첫째. 둘째", "#여드름 #압출"]) assert.equal(문장줄나누기(그대로), 그대로);
+});
+
+test("받은 적 없는 고객 일화는 AI 글이면 불합격, 받은 사례면 괜찮고, 편집기에서는 권장", () => {
+  const 글 = "작년 가을, 3년 넘게 좁쌀 때문에 스트레스받던 분이 계셨습니다.\n많은 분이 오셨습니다.";
+  const v = 평가(글, { config: CONFIG, 말투: "지시" });
+  assert.equal(v.지어낸사례.length, 1);
+  assert.ok(v.issues.some((x) => x.includes("[원장확인: 실제 고객 사례")));
+  assert.equal(평가(글, { config: CONFIG, 말투: "지시", 원장값: { 사례: "3년 넘게 좁쌀로 고생하던 분" } }).지어낸사례.length, 0);
+  const 편집기 = 평가(글, { config: CONFIG, 말투: "요약" });
+  assert.ok(!편집기.issues.some((x) => x.includes("사례")) && 편집기.advice.some((x) => x.includes("고객 사례")));
 });
