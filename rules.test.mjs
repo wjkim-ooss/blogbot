@@ -1191,3 +1191,19 @@ test("문장 중간에서 줄을 바꾼 글과 소제목 없는 초안을 권장
   assert.ok(!평가(한줄, { config: CONFIG, 말투: "지시", 사진수: 5 }).advice.some((a) => a.includes("소제목(###)이")));
   assert.equal(CONFIG.문장길이.줄나누기, false, "20자 넘는 줄을 서버가 둘로 나누면 문장 중간에서 줄이 바뀐다");
 });
+
+// 2026-10-23 점검 사이트 실서버 32편 중 8편: 받은 적 없는 도로명 주소를 지어 썼다
+test("원장이 준 적 없는 도로명 주소는 불합격으로 짚고, 준 주소와 생활 문장은 걸지 않는다", () => {
+  const 본문 = "마곡나루역 3번 출구에서 걸어오시면 됩니다.\n이천시 중앙로 123 2층에 있습니다.\n미온수로 30초만 헹궈 주세요.";
+  const 걸린 = 평가(본문, { config: CONFIG, 말투: "지시", 원장값: { 운영: "1인샵" } });
+  assert.deepEqual(걸린.지어낸주소, ["중앙로 123"]);
+  assert.ok(걸린.issues.some((x) => x.includes("원장확인: 오시는 길")));
+  const 준 = 평가(본문, { config: CONFIG, 말투: "지시", 원장값: { 운영: "이천시 중앙로 123 2층, 1인샵" } });
+  assert.deepEqual(준.지어낸주소, [], "원장이 준 주소는 괜찮다");
+  for (const 줄 of ["테헤란로 123, 3층", "해돋이로 168 랜드마크", "공항대로 2", "송도과학로16번길 33"]) assert.ok(평가(줄, { config: CONFIG }).지어낸주소.length, 줄);
+  for (const 줄 of ["미온수로 30초", "세안제로 2번 거품을 냅니다", "하루로 치면 2시간"]) assert.equal(평가(줄, { config: CONFIG }).지어낸주소.length, 0, 줄);
+  // 편집기(요약)에서는 원장님이 직접 적은 진짜 주소일 수 있어 권장으로만, 발행된 글은 지도 칸 때문에 보지 않는다
+  const 편집기 = 평가(본문, { config: CONFIG, 말투: "요약" });
+  assert.ok(!편집기.issues.some((x) => x.includes("주소")) && 편집기.advice.some((x) => x.includes("주소")));
+  assert.deepEqual(평가(본문, { config: CONFIG, 사진수: 5 }).지어낸주소, []);
+});
