@@ -104,8 +104,9 @@ const 논문 = CONFIG.논문검증 || {}; // 프롬프트에 인용한다 (판�
 // 말투 "지시": AI에게 "무엇을 어떻게 고쳐라"까지 적어 준다. 그래야 실제로 고쳐진다.
 // 원장 유형만 원장글 본보기를 받는다(config.글쓴이유형.X.원장글본보기) — 생성과 대화 수정이 같이 쓴다
 const 원장글받기 = (유형) => (유형정보(유형).원장글본보기 ? 원장글보관함(보관함읽기()) : null);
-const validateDraft = (text, keyword, minChars = CONFIG.최소글자수, title = "", ref = null, 원장값 = null, 유형 = "", 원장글 = null, 말투목표 = null) =>
-  평가(text, { keyword, config: CONFIG, 목표글자수: minChars, ref, title, 말투: "지시", 원장값, 유형, 원장글, 말투목표 });
+// AI글: 받은 적 없는 주소·사례·경력을 불합격으로 걸지(AI가 쓴 글) 권장으로 띄울지(원장님이 편집기에서 쓰는 글) — 점검 사이트 바로 재기는 원장님 글이다
+const validateDraft = (text, keyword, minChars = CONFIG.최소글자수, title = "", ref = null, 원장값 = null, 유형 = "", 원장글 = null, 말투목표 = null, AI글 = true) =>
+  평가(text, { keyword, config: CONFIG, 목표글자수: minChars, ref, title, 말투: "지시", 원장값, 유형, 원장글, 말투목표, AI글 });
 
 // ---------- 레퍼런스 ----------
 // 보관함을 읽는 코드는 scripts/보관함.mjs 하나다 — 발행검증(scripts/ego/verify-post.mjs)도
@@ -1206,7 +1207,7 @@ function 덧붙여넣기(body, 답, 받을까 = () => true) {
     let 끝 = x.끝;
     while (끝 > x.시작 + 1 && !줄[끝 - 1].trim()) 끝--;
     return 줄.toSpliced(끝, 0, "", 글, ...(줄[끝]?.trim() ? [""] : []));
-  }, 원).join("\n").replace(/\n{3,}/g, "\n\n"), CONFIG);
+  }, 원).join("\n"), CONFIG);
   let 받은 = 넣을것, 결과 = 받은.length ? 받을까(합치기(받은)) : null;
   if (!결과) {
     받은 = [];
@@ -1298,7 +1299,7 @@ function 파트너지시(body) {
   for (const x of (쓰기전.의심 || []).slice(0, 5)) if (x?.의심) 줄.push(`- 고객 속 의심 "${String(x.의심).slice(0, 120)}": ${x.근거 ? `지울 근거 ${String(x.근거).slice(0, 600)}` : "근거 없음. 억지로 지우지 말고 원장님이 채울 자리로 둔다"}`);
   if (쓰기전.제목) 줄.push(`- 제목은 이것을 그대로 쓴다: ${String(쓰기전.제목).slice(0, 120)}`);
   if (쓰기전.첫문단) 줄.push(`- 본문 첫 문단은 아래를 그대로 쓰고 이어서 쓴다:\n${String(쓰기전.첫문단).slice(0, 1200)}`);
-  return [줄.length ? `[원장님이 쓰기 전에 정리한 것]\n${줄.join("\n")}` : "", 파트너기준(body), 파트너기억(body), 파트너말투(body), 말투목표블록(파트너말투목표(body), 최소줄수(요청글자수(body.chars)))].filter(Boolean).join("\n\n");
+  return [줄.length ? `[원장님이 쓰기 전에 정리한 것]\n${줄.join("\n")}` : "", 파트너기준(body), 파트너기억(body), 파트너말투(body)].filter(Boolean).join("\n\n");
 }
 // 점검 사이트가 그 글에만 덧붙여 보내는 참고(검색 결과 위 글 정보 등). 쓰기 기준 자체는 두 사이트 공통(config.공통쓰기기준)이라 여기로 오지 않는다(2026-10-22 대표님)
 function 파트너기준(body) {
@@ -1324,7 +1325,7 @@ function 말투목표블록(목표, 문장수) {
     "위 지시 가운데 문장 끝 어미의 비율, 말 거는 어미, 묻는 문장 수는 이 숫자를 따른다(2026-10-23 대표님: 우리 규칙은 기본만, 말투는 상위노출 글을 따른다).",
     "그대로 지킬 기본: 존댓말, 쓰지 않는 표현(의료·과장·AI 티), 지어내지 않기, 첫 문장, 한 줄에 한 문장, 문단 모양.",
     `- 문장 끝: ~니다 ${퍼(목표.니다비율)}, ~요 ${퍼(목표.요비율)} (이 글이면 문장 ${문장수}개 중 ~니다 ${Math.round(문장수 * 목표.니다비율)}개, ~요 ${Math.round(문장수 * 목표.요비율)}개 안팎)`,
-    `- 묻는 문장(?): ${퍼(목표.질문비율)} — 이 글이면 ${목표개수(문장수, 목표.질문비율)}개까지, 그중 ~시죠?·~잖아요?는 ${목표개수(문장수, 목표.확인질문비율)}개까지`,
+    `- 묻는 문장(?): ${퍼(목표.질문비율)} — 이 글이면 ${목표개수(문장수, 목표.질문비율, CONFIG)}개까지, 그중 ~시죠?·~잖아요?는 ${목표개수(문장수, 목표.확인질문비율, CONFIG)}개까지`,
     ...(목표.끝말.length ? [`- 자주 쓰는 끝말: ${목표.끝말.map((w) => `~${w}`).join(" · ")}`] : []),
     `- 이모지: ${목표.이모지 ? `1,000자당 ${목표.이모지}개 안팎` : "쓰지 않는다"}`,
   ].join("\n");
@@ -1410,7 +1411,7 @@ async function handleGenerate(res, body, ctx) {
     const 덧붙임 = ctx.파트너 ? 파트너지시(body) : "";
     const 말투목표 = 말투목표정하기(ctx, body, 글쓴이유형, ref);
     if (말투목표 && !ctx.파트너) send({ type: "status", message: `상위노출된 원장·업체 글 ${말투목표.편수}편의 말투를 따릅니다` });
-    const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례, 원장본보기, { 각도, 이미쓴글, 도입, 마무리, 제목방법, 말투목표: ctx.파트너 ? null : 말투목표 }) + (덧붙임 ? "\n\n" + 덧붙임 : "") }];
+    const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례, 원장본보기, { 각도, 이미쓴글, 도입, 마무리, 제목방법, 말투목표 }) + (덧붙임 ? "\n\n" + 덧붙임 : "") }];
     const check = (d) => {
       const p = parseDraftOutput(d, keyword);
       return { parsed: p, validation: validateDraft(`${p.title}\n${p.body}`, keyword, targetChars, p.title, ref, { ...shop, 사례 }, 글쓴이유형, 원장글, 말투목표) };
@@ -1446,11 +1447,8 @@ async function handleGenerate(res, body, ctx) {
     // 다른 까닭으로 고쳐 쓸 때 권장 목록에 실려 같이 고쳐진다.
     const 다듬을까 = (v) => {
       if (!CONFIG.말투?.다듬기?.켜짐) return false;
-      const m = v.말투;
-      // 묻는 문장이 상한을 넘어도 고쳐 쓴다(2026-10-23 대표님: ~시죠?가 너무 많다)
-      // 상한은 평가()가 낸 값(말투 목표가 오면 그 비율로) — 말투 목표와 어긋나도 고쳐 쓴다
-      const 질문넘침 = v.질문수 > v.질문상한 || v.확인질문수 > v.확인질문상한 || v.거울수 > (CONFIG.거울?.상한 ?? Infinity) || v.말투어긋남;
-      return !!(m && (m.비율 < m.최소 || m.연속단정 > m.연속허용 || m.반복어미?.length)) || v.kwOver || v.첫문단키워드 === false || 질문넘침;
+      // 어느 권장이 고쳐 쓰기를 부르는지는 config.말투.다듬기.부를것 — 판정은 평가()가 한 번만 한다(권장기준)
+      return (CONFIG.말투.다듬기.부를것 || []).some((이름) => v.권장기준.includes(이름));
     };
     // AI를 한 번 더 부른다: 지금 제일 좋은 글 + 지시만 보내고(앞 차례는 버린다), 답을 받기(답)로 넘긴다. 실패하면 null.
     const 한번더 = async (알림, 지시) => {
@@ -1704,16 +1702,21 @@ function 대화답풀기(text) {
   const 바꾼 = 꺼내("바꾼부분", true), 수정 = 꺼내("수정본");
   // <답>이 제대로 없으면 글 칸을 걷어 낸 나머지가 답이다(표시는 지운다)
   const 답칸 = 꺼내("답");
-  const 답 = 답칸 ? 답칸.글 : [바꾼, 수정].filter(Boolean).sort((a, b) => b.자리[0] - a.자리[0])
-    .reduce((t, x) => t.slice(0, x.자리[0]) + t.slice(x.자리[1]), 원)
+  const 표시모두 = new RegExp(표시꼴.source, "g");
+  let 답 = 답칸?.글;
+  if (답 == null) {
+    let t = 원;
+    for (const x of [바꾼, 수정].filter(Boolean).sort((a, b) => b.자리[0] - a.자리[0])) t = t.slice(0, x.자리[0]) + t.slice(x.자리[1]);
     // 받은 글 칸이 하나도 없으면 안 닫힌 글 칸은 끝까지 글이다 — 답에 넣지 않는다
-    .replace(바꾼 || 수정 ? /$^/ : new RegExp(`<(${칸.바꾼부분}|${칸.수정본})>[\\s\\S]*$`), "").replace(new RegExp(표시꼴.source, "g"), "").trim();
+    if (!바꾼 && !수정) t = t.replace(new RegExp(`<(?:${칸.바꾼부분}|${칸.수정본})>[\\s\\S]*$`), "");
+    답 = t.replace(표시모두, "").trim();
+  }
   const 바꾼부분 = 바꾼 ? 바꾼.글 : null;
   const 수정본 = 수정 ? 수정.글 : null;
   const 답끝 = 원.indexOf("</답>");
   // 받은 글 칸이 없는데 </답> 뒤에 글이 있으면 알린다 — 부르는 쪽이 형식을 다시 재촉한다(그대로 넣지 않는다)
   const 남은글 = 바꾼부분 == null && 수정본 == null && 답끝 >= 0
-    ? 원.slice(답끝 + "</답>".length).replace(/<\/?[^>\n]{1,12}>/g, "").trim() || null : null;
+    ? 원.slice(답끝 + "</답>".length).replace(표시모두, "").trim() || null : null;
   return { 답, 바꾼부분, 수정본, 남은글 };
 }
 
@@ -1736,14 +1739,14 @@ function 본문갈기(원문, 새본문) {
 
 // 편집기가 재는 것과 같은 재료로 잰다(목표·유형은 초안 머리말, 원장값은 내 샵 정보).
 // 말투만 "지시" — 다시 시킬 때 AI에게 무엇을 어떻게 고칠지까지 알려 주려고.
-async function 대화판정준비(원문, keyword, ctx, body = {}) {
+async function 대화판정준비(원문, keyword, ctx, body = {}, AI글 = true) {
   const shop = await 샵읽기(ctx);
   const 유형 = 유형정규화(적힌유형(원문) || shop.유형);
   const { ref } = 레퍼런스고르기(keyword);
   const 원장글 = 원장글받기(유형);
   const 목표 = 적힌목표(원문) || 0;
   const 말투목표 = 말투목표정하기(ctx, body, 유형, ref);
-  const 재기 = (글) => validateDraft(초안본문(글), keyword, 목표, "", ref, shop, 유형, 원장글, 말투목표);
+  const 재기 = (글) => validateDraft(초안본문(글), keyword, 목표, "", ref, shop, 유형, 원장글, 말투목표, AI글);
   return { 유형, 재기, 말투목표 };
 }
 
@@ -1945,7 +1948,7 @@ const server = http.createServer(async (req, res) => {
       if (입구[1] === "chat") return handleChat(res, body, 맥락, "partner");
       const 글 = String(body?.content || "");
       if (!글.trim()) return json(res, 400, { error: "글이 비어 있습니다" });
-      const { 재기 } = await 대화판정준비(글, String(body?.keyword || "").trim(), 맥락, body);
+      const { 재기 } = await 대화판정준비(글, String(body?.keyword || "").trim(), 맥락, body, false);   // 원장님이 고치는 글
       const v = 재기(글);
       return json(res, 200, { pass: v.pass, issues: v.issues, advice: v.advice, chars: v.chars, targetChars: v.targetChars, photos: v.photos, kwCount: v.kwCount });
     }

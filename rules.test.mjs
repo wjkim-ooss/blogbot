@@ -1212,8 +1212,8 @@ test("원장이 준 적 없는 도로명 주소는 불합격으로 짚고, 준 �
 test("묻는 문장이 상한을 넘으면 권장으로 짚고, 평서 말 걸기는 세지 않는다", () => {
   const 많은 = ["턱에 좁쌀이 올라오시죠?", "손이 먼저 가시죠?", "짜면 번지잖아요?", "그 마음 아시죠?", "왜 그럴까요?", "그 이유가 있는데요.", "피지가 막혔거든요."].join("\n");
   const v = 평가(많은, { config: CONFIG, 말투: "지시" });
-  assert.equal(v.질문수, 5);
-  assert.equal(v.확인질문수, 4);
+  assert.equal(v.질문들.length, 5);
+  assert.equal(v.확인질문들.length, 4);
   assert.ok(v.advice.some((a) => a.includes("묻는 문장이 5개")));
   assert.ok(!v.issues.some((a) => a.includes("묻는 문장")), "형식이라 불합격으로 걸지 않는다");
   const 평서 = ["턱에 좁쌀이 올라오셨을 겁니다.", "손이 먼저 가실 텐데요.", "짜면 번지거든요.", "왜 그럴까요?"].join("\n");
@@ -1279,7 +1279,7 @@ test("말투목표가 오면 묻는 문장 상한은 그 비율로, 고정 말�
   assert.equal(말투목표정리({ 질문비율: 2 }), null, "이상한 값이면 지금 규칙 그대로");
   assert.equal(말투목표정리(null), null);
   const 어긋난 = 평가(Array.from({ length: 20 }, (_, i) => `${i}번째 설명입니다.`).join("\n"), { config: CONFIG, 말투: "지시", 말투목표: 목표 });
-  assert.ok(어긋난.말투어긋남 && 어긋난.advice.some((a) => a.includes("목표")));
+  assert.ok(어긋난.권장기준.includes("말투목표") && 어긋난.advice.some((a) => a.includes("목표")));
 });
 
 test("보관함 원장·업체 글로 말투 목표를 잰다 — 후기·셋 미만이면 목표 없이 지금 규칙", async () => {
@@ -1289,7 +1289,7 @@ test("보관함 원장·업체 글로 말투 목표를 잰다 — 후기·셋 �
   assert.ok(업체글인가(업체(1)));
   assert.ok(!업체글인가({ title: "모낭염 관리 후기", 짜임: { 후기: true }, text: "원장님이 상담해 주셨어요.\n예약하고 다녀왔어요.\n관리실이 깨끗했어요." }), "손님 후기는 따르지 않는다");
   assert.ok(업체글인가({ ...업체(1), 짜임: { 후기: true } }), "후기 말이 있어도 업체 말(저희 등)이 둘 넘으면 원장이 쓴 고객 이야기다");
-  const 잰 = 말투목표재기([업체(1), 업체(2), 업체(3)]);
+  const 잰 = 말투목표재기([업체(1), 업체(2), 업체(3)], CONFIG);
   assert.equal(잰.편수, 3);
   assert.ok(잰.니다비율 > 0.5 && 잰.질문비율 > 0.2);
   assert.ok(말투목표고르기({ posts: [업체(1), 업체(2), 업체(3)] }, [], CONFIG));
@@ -1303,7 +1303,7 @@ test("말투 목표의 묻는 문장이 목표 개수의 절반에 못 미치면
   const 목표 = { 편수: 3, 질문비율: 0.2, 확인질문비율: 0.05, 니다비율: 1, 요비율: 0, 이모지: 0, 끝말: [] };
   const 글 = Array.from({ length: 20 }, (_, i) => `${i}번째 설명입니다.`).join("\n");
   const v = 평가(글, { config: CONFIG, 말투: "지시", 말투목표: 목표 });
-  assert.ok(v.말투어긋남 && v.advice.some((a) => a.includes("묻는 문장 0개(목표 4개")));
+  assert.ok(v.권장기준.includes("말투목표") && v.advice.some((a) => a.includes("묻는 문장 0개(목표 4개")));
   const 거울 = "거울 앞에서 코가 보입니다.\n거울 속 각질도 보입니다.";
   assert.ok(평가(거울, { config: CONFIG, 말투: "지시" }).issues.some((a) => a.includes("거울 장면")));
   assert.ok(!평가(거울, { config: CONFIG, 말투: "요약" }).issues.some((a) => a.includes("거울 장면")));

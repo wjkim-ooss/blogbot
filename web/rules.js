@@ -564,7 +564,7 @@ export const 초안다듬기 = (body, config, 키워드 = "") => 빈줄고르기
 export function 문장줄나누기(body) {
   return String(body).split("\n").map((l) => {
     const t = l.trim();
-    if (!t || 소제목줄.test(t) || /^[\[#]/.test(t) || /^(?:[-·•]|\d+[.)])\s/.test(t)) return l;
+    if (!t || !본문문장(t) || t.startsWith("[") || /^(?:[-·•]|\d+[.)])\s/.test(t)) return l;
     const 들여 = l.match(/^\s*/)[0];
     return l.replace(/((?<!\d)[.?!]+)\s+(?=\S)/g, `$1\n${들여}`);
   }).join("\n");
@@ -589,16 +589,15 @@ export function 빈줄고르기(body) {
 }
 
 // 거울 장면 횟수(config.거울) — 본문 전체, 사진 자리 설명·소제목까지 센다
-export const 거울세기 = (text, config) => (config.거울?.낱말 ? (String(text || "").match(new RegExp(config.거울.낱말, "g")) || []).length : 0);
+export const 거울세기 = (text, config) => countWord(String(text || ""), config.거울?.낱말);
 
 // 받은 적 없는 고객 일화(config.사례검사) — 고객을 가리키는 말 + 지난 일 높임 + 준 값에 없는 기간·횟수가 한 문장에 있으면
-export function 지어낸사례찾기(문장들, 원장값, config) {
+// 원장이 준 값 — 지어낸 사례·경력·주소 검사가 같이 쓴다(평가()가 한 번 만들어 넘긴다)
+export const 준값 = (원장값) => ({ 글: Object.values(원장값 || {}).filter((v) => typeof v === "string").join("\n"), 허용: 허용숫자(원장값) });
+export function 지어낸사례찾기(문장들, 준, config) {
   const 설정 = config.사례검사;
   if (!설정) return [];
-  const 고객 = new RegExp(설정.고객말), 지난 = new RegExp(설정.지난높임);
-  const 허용 = 허용숫자(원장값);
-  return 문장들.filter((문장) => 고객.test(문장) && 지난.test(문장) &&
-    [...문장.matchAll(숫자꼴)].some((m) => !허용.has(`${m[1].replace(/,/g, "")}${m[2].replace(/\s/g, "")}`)));
+  return 문장들.filter((문장) => 꼴(설정.고객말).test(문장) && 꼴(설정.지난높임).test(문장) && [...숫자뽑기(문장)].some((k) => !준.허용.has(k)));
 }
 
 // 말투 목표(2026-10-23 대표님: "말투는 우리 규칙은 기본만, 나머지는 상위노출된 글 말투를 따라"). 점검 사이트가 상위에 있는
@@ -608,84 +607,110 @@ export function 말투목표정리(x) {
   const 비율 = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= 1 ? Number(v) : null);
   const 목표 = {
     편수: Math.max(0, Math.round(Number(x.편수) || 0)),
-    질문비율: 비율(x.질문비율), 확인질문비율: 비율(x.확인질문비율), 니다비율: 비율(x.니다비율), 요비율: 비율(x.요비율),
-    이모지: Number.isFinite(Number(x.이모지)) && Number(x.이모지) >= 0 ? Math.min(Number(x.이모지), 20) : 0,
+    질문비율: 비율(x.질문비율), 확인질문비율: 비율(x.확인질문비율) ?? 0, 니다비율: 비율(x.니다비율), 요비율: 비율(x.요비율),
+    이모지: Number.isFinite(Number(x.이모지)) && Number(x.이모지) >= 0 ? Math.min(Number(x.이모지), 20) : 0,   // 1,000자당 20개를 넘는 값은 잘못 잰 것
     끝말: (Array.isArray(x.끝말) ? x.끝말 : []).map((w) => String(w || "").replace(/[^가-힣]/g, "").slice(0, 6)).filter(Boolean).slice(0, 6),
   };
-  return 목표.질문비율 == null || 목표.니다비율 == null || 목표.요비율 == null ? null : { ...목표, 확인질문비율: 목표.확인질문비율 ?? 0 };
+  return 목표.질문비율 == null || 목표.니다비율 == null || 목표.요비율 == null ? null : 목표;
 }
 // 블로그봇이 직접 쓰는 글의 말투 목표 — 보관함 상위글 가운데 손님 후기가 아닌 원장·업체 글을 잰다(2026-10-23 대표님: 두 사이트 모두).
 // 크롤링한 글은 마침표 없이 줄을 끝내는 일이 많아 문장 대신 '문장이 끝나는 줄'(다·요·죠·까·물음표로 끝남)을 센다.
 // 원장·업체 글인가(config.업체글) — 손님 후기와 원장을 상대로 파는 글(창업·렌탈 등)은 뺀다. 두 사이트가 이 함수 하나를 쓴다
-const 모두꼴캐시 = new Map();
-const 모두꼴 = (s) => { if (!모두꼴캐시.has(s)) 모두꼴캐시.set(s, new RegExp(s, "g")); const re = 모두꼴캐시.get(s); re.lastIndex = 0; return re; };
 export function 업체글인가(p, config) {
   const U = config?.업체글;
   if (!U) return false;
   const 글 = String(p?.text || ""), 제목 = String(p?.title || ""), 앞 = 글.slice(0, U.앞글자);
   if (꼴(U.원장상대).test(제목)) return false;
   const 후기 = p?.짜임?.후기 || 꼴(U.후기말).test(제목) || 꼴(U.후기말).test(앞);
-  if (후기 && (앞.match(모두꼴(U.업체말)) || []).length < U.업체말최소) return false;
-  return new Set(글.match(모두꼴(U.업체신호)) || []).size >= U.신호최소;
+  if (후기 && (앞.match(꼴(U.업체말, "g")) || []).length < U.업체말최소) return false;
+  return new Set(글.match(꼴(U.업체신호, "g")) || []).size >= U.신호최소;
 }
-export function 말투목표재기(posts) {
+// 본문 줄만 — 보이지 않는 글자를 지우고, 4자 미만·소제목·자리 표시·해시태그 줄은 뺀다(줄끝맺음재기·말끝분포가 같이 쓴다)
+const 본문줄들 = (text) => String(text || "").split("\n").map((l) => l.replace(/[\u200b\u00a0]/g, "").trim())
+  .filter((l) => noSpace(l) >= 4 && 본문문장(l) && !소제목줄.test(l));
+// 문장 끝 분포 — 상위글(목표)과 초안을 같은 자로 잰다. 크롤링 글은 마침표 없이 줄을 끝내는 일이 많아
+// 문장이 끝나는 줄(다·요·죠·까·물음표)만 센다. 확인 질문 어미는 config.말투.확인질문어미
+export function 말끝분포(text, config) {
+  const 확인어미 = (config.말투?.확인질문어미 || []).map((e) => e.replace(/[?？]$/, ""));
+  const 끝들 = [];
+  for (const l of 본문줄들(text)) {
+    const t = l.replace(/[\p{Extended_Pictographic}\uFE0F)"'”’\]\s.!…~^ㅎㅋ]+$/u, "");
+    const 물음 = /[?？]$/.test(t), 알 = t.replace(/[?？]+$/, "");
+    if (물음 || /(?:다|요|죠|까)$/.test(알)) 끝들.push({ 물음, 알 });
+  }
+  const 비 = (f) => (끝들.length ? 끝들.filter(f).length / 끝들.length : 0);
+  return {
+    수: 끝들.length, 끝들,
+    질문: 비((x) => x.물음), 확인: 비((x) => x.물음 && 확인어미.some((e) => x.알.endsWith(e))),
+    니다: 비((x) => x.알.endsWith("니다")), 요: 비((x) => x.알.endsWith("요")),
+  };
+}
+export function 말투목표재기(posts, config) {
+  const 기준 = config.말투목표기준 || {};
   const 잰 = [];
   const 끝말셈 = new Map();
   for (const p of posts || []) {
     const 글 = String(p?.text || "");
-    const 끝들 = [];
-    for (const 날줄 of 글.split("\n")) {
-      const l = 날줄.replace(/[\u200b\u00a0]/g, "").trim();
-      if (noSpace(l) < 4 || !본문문장(l) || 소제목줄.test(l)) continue;
-      const t = l.replace(/[\p{Extended_Pictographic}\uFE0F)"'”’\]\s.!…~^ㅎㅋ]+$/u, "");
-      const 물음 = /[?？]$/.test(t), 알 = t.replace(/[?？]+$/, "");
-      if (물음 || /(?:다|요|죠|까)$/.test(알)) 끝들.push({ 물음, 알 });
-    }
-    if (끝들.length < 10) continue;
-    const 비 = (f) => 끝들.filter(f).length / 끝들.length;
-    잰.push({ 질문: 비((x) => x.물음), 확인: 비((x) => x.물음 && /(?:죠|잖아요)$/.test(x.알)), 니다: 비((x) => /니다$/.test(x.알)), 요: 비((x) => /요$/.test(x.알)),
-      이모지: ((글.match(/\p{Extended_Pictographic}/gu) || []).length / Math.max(noSpace(글), 1)) * 1000 });
-    for (const x of 끝들) { const 끝 = x.알.match(/[가-힣]{2,3}$/)?.[0]; if (끝) 끝말셈.set(끝, (끝말셈.get(끝) || 0) + 1); }
+    const 분포 = 말끝분포(글, config);
+    if (분포.수 < (기준.최소줄 ?? 10)) continue;
+    잰.push({ ...분포, 이모지: ((글.match(/\p{Extended_Pictographic}/gu) || []).length / Math.max(noSpace(글), 1)) * 1000 });
+    for (const x of 분포.끝들) { const 끝 = x.알.match(/[가-힣]{2,3}$/)?.[0]; if (끝) 끝말셈.set(끝, (끝말셈.get(끝) || 0) + 1); }
   }
   if (!잰.length) return null;
   const 평균 = (k) => Math.round((잰.reduce((a, x) => a + x[k], 0) / 잰.length) * 100) / 100;
   return { 편수: 잰.length, 질문비율: 평균("질문"), 확인질문비율: 평균("확인"), 니다비율: 평균("니다"), 요비율: 평균("요"), 이모지: 평균("이모지"),
     끝말: [...끝말셈].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([w]) => w) };
 }
-// 키워드 레퍼런스에서 원장·업체 글이 둘 이상이면 그 글로, 모자라면 같은 업종 보관함 전체의 원장·업체 글로 잰다
+// 키워드 레퍼런스에서 원장·업체 글이 키워드최소 이상이면 그 글로, 모자라면 같은 업종 보관함의 원장·업체 글로 잰다(config.말투목표기준).
+// 결과는 글과 상관없이 레퍼런스·보관함으로만 정해진다 — 편집기가 키 입력마다 부르므로 보관함 목록(같은 배열이면 같은 값)별로 담아 둔다
+const 목표캐시 = new WeakMap();
+const 빈목록 = [];
 export function 말투목표고르기(ref, 목록, config) {
+  const 기준 = config.말투목표기준 || {};
+  const 칸 = 목표캐시.get(목록 || 빈목록) || new Map();
+  목표캐시.set(목록 || 빈목록, 칸);
+  const 키 = `${ref?.keyword || ""}|${ref?.업종 || ""}|${ref?.posts?.length || 0}`;
+  if (칸.has(키)) return 칸.get(키);
   const 업체 = (p) => 업체글인가(p, config);
+  const 최대 = 기준.최대편 ?? 30;
   let 글들 = (ref?.posts || []).filter(업체);
-  if (글들.length < 2) 글들 = (목록 || []).filter((r) => !원장글인가(r) && (!ref?.업종 || r.업종 === ref.업종)).flatMap((r) => r.posts || []).filter(업체);
-  const 목표 = 말투목표재기(글들.slice(0, 30));
-  return 목표 && 목표.편수 >= 3 ? 목표 : null;   // 셋도 안 되면 경향이라 부를 수 없다 — 지금 규칙 그대로
+  if (글들.length < (기준.키워드최소 ?? 2)) {
+    글들 = [];
+    for (const r of 상위글만(목록)) {
+      if (ref?.업종 && r.업종 !== ref.업종) continue;
+      for (const p of r.posts || []) if (업체(p) && 글들.push(p) >= 최대) break;
+      if (글들.length >= 최대) break;
+    }
+  }
+  const 목표 = 말투목표재기(글들.slice(0, 최대), config);
+  const 답 = 목표 && 목표.편수 >= (기준.최소편 ?? 3) ? 목표 : null;   // 몇 편 안 되면 경향이라 부를 수 없다 — 지금 규칙 그대로
+  칸.set(키, 답);
+  return 답;
 }
 
 // 목표 비율을 이 글의 문장 수로 바꾼 상한·개수(올림 + 1 여유)
-export const 목표개수 = (문장수, 비율) => Math.ceil(문장수 * 비율) + 1;
+export const 목표개수 = (문장수, 비율, config) => Math.ceil(문장수 * 비율) + (config?.말투목표기준?.여유 ?? 1);
 
 // 원장이 준 이력에 없는 일한 곳·자리(config.경력검사) — 햇수와 경력 말이 있는 문장에서, 원장 정보에 없는 자리말을 찾는다
-export function 지어낸경력찾기(문장들, 원장값, config) {
+export function 지어낸경력찾기(문장들, 준, config) {
   const 설정 = config.경력검사;
   if (!설정) return [];
-  const 자리 = new RegExp(설정.자리말, "g"), 경력 = new RegExp(설정.경력말);
-  const 준 = Object.values(원장값 || {}).filter((v) => typeof v === "string").join("\n");
-  return 문장들.filter((문장) => /\d+\s*년/.test(문장) && 경력.test(문장) && (문장.match(자리) || []).some((w) => !준.includes(w)));
+  return 문장들.filter((문장) => /\d+\s*년/.test(문장) && 꼴(설정.경력말).test(문장) && (문장.match(꼴(설정.자리말, "g")) || []).some((w) => !준.글.includes(w)));
 }
 
 // 원장이 준 적 없는 도로명 주소(config.주소검사) — AI가 "중앙로 123 2층"처럼 지어 쓴다. 준 값에 같은 주소가 있으면 괜찮다
-export function 지어낸주소찾기(text, 원장값, config) {
-  const 꼴 = config.주소검사?.꼴;
-  if (!꼴) return [];
-  const 준 = Object.values(원장값 || {}).filter((v) => typeof v === "string").join("\n").replace(/\s/g, "");
-  return [...new Set(String(text || "").match(new RegExp(꼴, "gm")) || [])].filter((a) => !준.includes(a.replace(/\s/g, "")));
+export function 지어낸주소찾기(문장들, 준, config) {
+  const 주소꼴 = config.주소검사?.꼴;
+  if (!주소꼴) return [];
+  const 준글 = despace(준.글);
+  return [...new Set(문장들.join("\n").match(꼴(주소꼴, "gm")) || [])].filter((a) => !준글.includes(despace(a)));
 }
 
 // 고쳐 쓴 글에서 원래 글에 없던 문단만 고르게 한다 — 원장님이 손으로 쓴 문단은 줄바꿈 하나 안 바꾼다.
 // 대화 수정으로 글 전체를 다시 받으면 덩어리가 나눠지지 않고 그대로 나갔다(2026-10-23 점검 사이트 실서버: 첫 문단 8줄).
 export function 바뀐문단다듬기(원래, 새글, config, 키워드 = "") {
-  const 있던 = new Set(String(원래).split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean));
-  return String(새글).split(/(\n\s*\n)/).map((조각, i) => (i % 2 || 있던.has(조각.trim()) ? 조각 : 초안다듬기(조각, config, 키워드))).join("");
+  const 있던 = new Set(String(원래).split(문단경계).map((p) => p.trim()).filter(Boolean));
+  return String(새글).split(new RegExp(`(${문단경계.source})`)).map((조각, i) => (i % 2 || 있던.has(조각.trim()) ? 조각 : 초안다듬기(조각, config, 키워드))).join("");
 }
 
 // AI가 문단을 안 나누고 낸 덩어리를 문장이 끝나는 줄에서 나눈다 (config.문단). 글자는 그대로, 빈 줄만 더한다.
@@ -792,7 +817,8 @@ export function 말투재기(본문들, config, 범위 = null) {
     const 부드러움 = 부드러운어미.some((e) => 끝.endsWith(e));
     if (부드러움) 부드러운문장.push(문장);
     if (부드러움 && 약속신호.some((w) => 문장.includes(w))) 약속흐림.push(문장);
-    if (단정어미.some((e) => 끝.endsWith(e))) {
+    // 말 거는 어미(~하셨을 겁니다)는 ~니다로 끝나도 단정 줄짓기에 넣지 않는다 — 지시문이 그것으로 줄짓기를 끊으라고 한다
+    if (!건어미 && 단정어미.some((e) => 끝.endsWith(e))) {
       if (연속 === 0) 줄시작 = 문장;
       연속 += 1;
       if (연속 > 연속단정) { 연속단정 = 연속; 연속자리 = 줄시작; }
@@ -1252,14 +1278,13 @@ const 끝맺는줄 = /([.?!]|[다요죠까]\??)\s*\S{0,2}$/;
 export function 줄끝맺음재기(text, config) {
   const 설정 = config.줄끝맺음;
   if (!설정) return null;
-  const 줄들 = String(text || "").split("\n").map((l) => l.replace(/[\u200b\u00a0]/g, "").trim())
-    .filter((l) => noSpace(l) >= 4 && 본문문장(l) && !소제목줄.test(l));
+  const 줄들 = 본문줄들(text);
   if (줄들.length < (설정.최소줄 ?? 20)) return null;
   const 끊긴 = 줄들.filter((l) => !끝맺는줄.test(l));
   return { 비율: Math.round(((줄들.length - 끊긴.length) / 줄들.length) * 100), 줄수: 줄들.length, 하한: 설정.하한, 끊긴 };
 }
 
-export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = null, title, 말투 = "요약", 원장값 = null, 유형 = "", 원장글 = null, 사진수 = null, 말투목표 = null } = {}) {
+export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = null, title, 말투 = "요약", 원장값 = null, 유형 = "", 원장글 = null, 사진수 = null, 말투목표 = null, AI글 = 말투 === "지시" } = {}) {
   // 재는 덩어리를 여기서 한 모양("제목: X" + 본문)으로 굳힌다.
   // 같은 글이 두 모양으로 들어오고 있었다: 서버·발행검증은 `제목\n본문`, 편집기는 초안 파일
   // 그대로 "제목: …" 줄째. 그래서 판정이 두 군데서 갈렸다 —
@@ -1329,7 +1354,8 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   // 빈 객체도 '준 적 없음'이다 — 예전엔 {…shop} 이 늘 truthy라, 아무것도 안 채운 원장에게
   // 글의 숫자를 전부 "내가 준 값이 아닙니다"로 들이밀었다.
   const 준값있나 = !!원장값 && Object.entries(원장값).some(([k, v]) => !["확인일", "유형"].includes(k) && typeof v === "string" && v.trim());
-  const 출처없음 = 준값있나 && 검사켜짐(검사설정, "출처") ? 출처불명(text, config, 허용숫자(원장값), 문장들) : [];
+  const 준 = 준값(원장값);
+  const 출처없음 = 준값있나 && 검사켜짐(검사설정, "출처") ? 출처불명(text, config, 준.허용, 문장들) : [];
   const claims = claimSentences(text, config, 문장들);
   const needsEvidence = claims.length > 0;
   // 모바일 가독성·말투는 유형과 무관하게 잰다. 다만 공감 어미를 얼마나 섞을지는 유형마다 다르다
@@ -1355,18 +1381,19 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const 확인질문들 = 질문들.filter((s) => (config.말투?.확인질문어미 || []).some((e) => s.trim().replace(/["'”’)]+$/, "").endsWith(e)));
   // 말투 목표가 오면 묻는 문장 상한도 그 비율로(이 글 문장 수 × 비율, 올림 + 1). 없으면 config.말투 값
   const 말목표 = 말투목표정리(말투목표);
-  const 질문상한 = 말목표 ? 목표개수(본문들.length, 말목표.질문비율) : config.말투?.질문상한 ?? Infinity;
-  const 확인질문상한 = 말목표 ? 목표개수(본문들.length, 말목표.확인질문비율) : config.말투?.확인질문상한 ?? Infinity;
+  const 질문상한 = 말목표 ? 목표개수(본문들.length, 말목표.질문비율, config) : config.말투?.질문상한 ?? Infinity;
+  const 확인질문상한 = 말목표 ? 목표개수(본문들.length, 말목표.확인질문비율, config) : config.말투?.확인질문상한 ?? Infinity;
   const 질문넘침 = 질문들.length > 질문상한 || 확인질문들.length > 확인질문상한;
-  // 목표와 견줄 말투 — ~니다로 끝나는 문장, ~요로 끝나는 문장(~거든요·~인데요 포함)의 비율. 15%p 넘게 벌어지면 짚는다
-  const 끝비율 = (꼴) => (본문들.length ? 본문들.filter((s) => 꼴.test(s.trim().replace(/[.?!…"'”’)\s]+$/, ""))).length / 본문들.length : 0);
-  const 말투견줌 = 말목표 ? { 니다: 끝비율(/니다$/), 요: 끝비율(/요$/), 목표: 말목표 } : null;
+  // 목표와 견줄 말투 — 목표를 잰 것과 같은 자(말끝분포)로 이 글을 잰다. 문턱은 config.말투목표기준.어긋남
+  const 이글분포 = 말목표 ? 말끝분포(text, config) : null;
   // 묻는 문장도 목표를 따른다(2026-10-23 대표님) — 상한을 넘는 것은 질문넘침이, 목표 개수의 절반에 못 미치는 것은 여기서 짚는다
   const 목표질문 = 말목표 ? Math.round(본문들.length * 말목표.질문비율) : 0;
   const 질문모자람 = 목표질문 >= 2 && 질문들.length < 목표질문 / 2;
-  const 말투어긋남 = !!말투견줌 && 본문들.length >= 표본최소 && (Math.abs(말투견줌.니다 - 말목표.니다비율) > 0.15 || Math.abs(말투견줌.요 - 말목표.요비율) > 0.15 || 질문모자람);
-  if (말투견줌) Object.assign(말투견줌, { 질문: 질문들.length, 목표질문 });
-  const 거울수 = 거울세기(text, config);
+  const 어긋남문턱 = config.말투목표기준?.어긋남 ?? 0.15;
+  const 말투견줌 = 이글분포 ? { 니다: 이글분포.니다, 요: 이글분포.요, 질문: 질문들.length, 목표질문, 목표: 말목표 } : null;
+  const 말투어긋남 = !!말투견줌 && 본문들.length >= 표본최소 &&
+    (Math.abs(말투견줌.니다 - 말목표.니다비율) > 어긋남문턱 || Math.abs(말투견줌.요 - 말목표.요비율) > 어긋남문턱 || 질문모자람);
+  const 거울수 = 거울세기(text, config), 거울상한 = config.거울?.상한 ?? Infinity;
   const 소제목셈 = String(text || "").split("\n").filter((l) => 소제목줄.test(l.trim())).length;
   const 소제목범위 = config.분량?.소제목수 || null;
   const 말투값 = 말투재기(본문들, config, 공감범위(config, 글유형));
@@ -1375,10 +1402,12 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const 반박최소 = 검사켜짐(검사설정, "반박제거") ? config.반박제거?.최소 ?? 0 : 0;
   const 가격 = 검사켜짐(검사설정, "가격금지") ? 가격찾기(text, config) : [];
   const 금지문구 = 금지문구찾기(본문들, config, 검사설정);
-  const 지어낸사례 = 사진수 == null ? 지어낸사례찾기(본문들, 원장값, config) : [];
-  const 지어낸경력 = 사진수 == null ? 지어낸경력찾기(본문들, 원장값, config) : [];
-  // 발행된 글(사진수를 넘긴 글)은 지도 칸에 진짜 주소가 들어 있어 보지 않는다
-  const 지어낸주소 = 사진수 == null ? 지어낸주소찾기(본문들.join("\n"), 원장값, config) : [];
+  // 받은 적 없는 주소·사례·경력 — 초안만 본다(발행 글은 지도 칸에 진짜 주소가 있고 원장 정보와 견줄 수 없다).
+  // AI가 쓴 글이면 다시 쓰게 하고, 원장님이 쓴 글(편집기·점검 사이트 편집)이면 진짜일 수 있어 권장으로만 띄운다(아래)
+  const 지어낸 = 사진수 == null
+    ? { 지어낸주소: 지어낸주소찾기(본문들, 준, config), 지어낸사례: 지어낸사례찾기(본문들, 준, config), 지어낸경력: 지어낸경력찾기(본문들, 준, config) }
+    : { 지어낸주소: [], 지어낸사례: [], 지어낸경력: [] };
+  const { 지어낸주소, 지어낸사례, 지어낸경력 } = 지어낸;
   const 영어섞임 = 영어섞임찾기(text, config);
   const AI티 = 문구뽑기(본문들.join("\n"), config.사람처럼?.잡는말);
   // 베끼기는 유형과 무관하다. 파는 사람이든 아니든 남의 문장을 옮기면 네이버가 원본을 위로 올린다.
@@ -1456,7 +1485,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
     공감본보기: config.말투?.본보기 || "", 약속본보기: config.말투?.약속본보기 || { 나쁨: "", 좋음: "" },
     부드러움허용: config.말투?.부드러움허용 ?? 100, // 없으면 안 걸린다
     첫문단문장수, 가짜PMID, 본보기베낌, 지어낸경험, 당부문단, 줄끝맺음, 소제목셈, 소제목범위, 지어낸주소, 지어낸사례, 지어낸경력, 질문들, 확인질문들,
-    질문상한, 확인질문상한, 거울수, 거울상한: config.거울?.상한, 말투견줌,
+    질문상한, 확인질문상한, 거울수, 거울상한, 말투견줌,
     반박최소, 반박걱정: (config.반박제거?.걱정 || []).map((x) => x.걱정 ?? x), 반박심는법: (config.반박제거?.심는법 || []).join(" "),
     가격대신: config.가격금지?.대신 || "",
     겹침, 약속, 태그, 태그범위: config.마무리?.해시태그?.개수 || null,
@@ -1482,12 +1511,10 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   if (overclaimFound.length) 걸림("과장");
   if (금지문구.length) 걸림("금지문구");   // 우진이 못박은 문장이라 불합격이다 — 다시 쓰게 한다
   // 틀린 주소가 발행되면 손님이 엉뚱한 곳으로 간다 — AI가 쓴 글(지시)은 다시 쓰게 한다.
-  // 원장님 편집기(요약)에서는 원장님이 직접 적은 진짜 주소일 수 있어 권장으로만 띄운다(아래)
-  if (지어낸주소.length && 말투 === "지시") 걸림("지어낸주소");
-  if (지어낸사례.length && 말투 === "지시") 걸림("지어낸사례");   // 받은 적 없는 고객 일화는 다시 쓰게 한다
-  if (지어낸경력.length && 말투 === "지시") 걸림("지어낸경력");
-  // 거울이 상한을 넘으면 AI 글은 다시 쓰게 한다 — 권장으로만 두면 고쳐 쓴 글이 다른 권장 때문에 버려져 그대로 나갔다(config.거울)
-  if (거울수 > (config.거울?.상한 ?? Infinity) && 말투 === "지시") 걸림("거울많음");
+  // AI가 쓴 글에만 거는 것: 받은 적 없는 주소·사례·경력, 거울 상한 초과. 원장님이 쓴 글에는 권장으로만(아래 같은 자리).
+  // 거울은 권장으로만 두었더니 고쳐 쓴 글이 다른 권장 때문에 버려져 그대로 나갔다(config.거울)
+  const AI글만 = Object.entries({ ...지어낸, 거울많음: 거울수 > 거울상한 ? [거울수] : [] }).filter(([, 찾음]) => 찾음.length).map(([이름]) => 이름);
+  if (AI글) for (const 이름 of AI글만) 걸림(이름);
   if (영어섞임.length) 걸림("영어섞임");   // 지시문이 처음부터 막은 것이다
   if (needsEvidence && !pmids.length) 걸림("근거없음");
   if (가짜PMID.length) 걸림("가짜PMID");
@@ -1496,65 +1523,64 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   if (베낌) 걸림("베낀문장");
   if (약속 && 약속.항목 !== 약속.약속) 걸림("제목약속");
 
-  const advice = [];
-  if (지어낸주소.length && 말투 !== "지시") advice.push(말.지어낸주소(v));
-  if (지어낸사례.length && 말투 !== "지시") advice.push(말.지어낸사례(v));
-  if (지어낸경력.length && 말투 !== "지시") advice.push(말.지어낸경력(v));
+  // 권장도 이름을 같이 낸다 — 서버는 그 이름으로 '한 번에 고쳐 쓰기'를 부를지 정한다(config.말투.다듬기.부를것)
+  const advice = [], 권장기준 = [];
+  const 권장 = (이름) => { advice.push(말[이름](v)); 권장기준.push(이름); };
+  if (!AI글) for (const 이름 of AI글만) 권장(이름);
   // 형식이라 불합격으로 걸지 않는다 — 권장으로 짚으면 생성 때 한 번에 고쳐 쓰기가 부른다(config.말투.다듬기)
-  if (질문넘침) advice.push(말.질문많음(v));
-  if (거울수 > (config.거울?.상한 ?? Infinity) && 말투 !== "지시") advice.push(말.거울많음(v));
-  if (photos < 목표사진) advice.push(말.사진(v));
-  if (제목 && !titleHasNum) advice.push(말.제목숫자(v));
-  if (!첫문단키워드) advice.push(말.첫문단키워드(v));
-  if (!소제목키워드) advice.push(말.소제목키워드(v));
-  if (정도부사횟수 > 부사허용) advice.push(말.정도부사(v));
+  if (질문넘침) 권장("질문많음");
+  if (photos < 목표사진) 권장("사진");
+  if (제목 && !titleHasNum) 권장("제목숫자");
+  if (!첫문단키워드) 권장("첫문단키워드");
+  if (!소제목키워드) 권장("소제목키워드");
+  if (정도부사횟수 > 부사허용) 권장("정도부사");
   // AI가 모르는 값을 지어내지 않고 비워 둔 것은 잘한 것이다 — 불합격이 아니라 발행 전 확인 사항
-  if (채움.length) advice.push(말.채움(v));
+  if (채움.length) 권장("채움");
   // 지어낸 숫자를 불합격으로 걸면 AI가 숫자를 빼 버린다 — 원장이 눈으로 고르게 한다
-  if (출처없음.length) advice.push(말.출처(v));
-  if (가격.length) advice.push(말.가격(v));
+  if (출처없음.length) 권장("출처");
+  if (가격.length) 권장("가격");
   // 해시태그는 원장이 마지막에 붙이는 자리라 AI가 빼먹기 쉽다 — 파는 사람 글에만 요구한다
-  if (검사켜짐(검사설정, "마무리") && v.태그범위 && (태그 < v.태그범위[0] || 태그 > v.태그범위[1])) advice.push(말.해시태그(v));
+  if (검사켜짐(검사설정, "마무리") && v.태그범위 && (태그 < v.태그범위[0] || 태그 > v.태그범위[1])) 권장("해시태그");
   // 불합격까지는 아니어도 겹치는 대목이 보이면 짚는다 — 발행 전에 눈으로 고르게 한다
-  if (!베낌 && 긴겹침) advice.push(말.겹침주의(v));
-  if (말투값.약속흐림.length) advice.push(말.약속어미(v));
+  if (!베낌 && 긴겹침) 권장("겹침주의");
+  if (말투값.약속흐림.length) 권장("약속어미");
   // 문장 몇 개짜리 초안에는 아무것도 짚지 않는다 — 비율이 튀고, 아직 심을 자리도 없다
   if (본문들.length >= 표본최소) {
-    if (반박최소 && 반박.length < 반박최소) advice.push(말.반박제거(v));
+    if (반박최소 && 반박.length < 반박최소) 권장("반박제거");
     // 겹침률도 비율이다. 게이트 밖에 두었더니 64자 초안에서 22%로 뜨고
     // 748자가 되면 같은 복붙이 1.6%로 조용해졌다 — 방향이 거꾸로였다.
-    if (!베낌 && !긴겹침 && 겹침.토막.length && 겹침.겹침률 >= (유사.겹침률경고 ?? Infinity)) advice.push(말.겹침주의(v));
+    if (!베낌 && !긴겹침 && 겹침.토막.length && 겹침.겹침률 >= (유사.겹침률경고 ?? Infinity)) 권장("겹침주의");
     // 긴 문장은 티가 나면 안 된다(우진, 2026-09-14) — config.문장길이.불합격이 켜져 있으면 다시 쓰게 한다
-    if (문장길이값.비율 > 문장허용) config.문장길이?.불합격 ? 걸림("문장길이") : advice.push(말.문장길이(v));
-    // 말투 목표가 오면(점검 사이트, 상위 원장·업체 글) 고정 말투 기준 대신 목표와 견준다
-    if (말목표) { if (말투어긋남) advice.push(말.말투목표(v)); }
+    if (문장길이값.비율 > 문장허용) config.문장길이?.불합격 ? 걸림("문장길이") : 권장("문장길이");
+    // 말투 목표가 오면(상위 원장·업체 글) 고정 말투 기준 대신 목표와 견준다
+    if (말목표) { if (말투어긋남) 권장("말투목표"); }
     else {
-    if (말투값.비율 < 말투값.최소) advice.push(말.말투부족(v));
-    else if (말투값.비율 > 말투값.최대) advice.push(말.말투과다(v));
-    // 말을 거는 것과 가벼워지는 것은 다르다 — ~어요가 늘어나면 유형과 상관없이 짚는다
-    if (말투값.부드러움비율 > v.부드러움허용) advice.push(말.부드러움과다(v));
-    // 비율이 맞아도 ~입니다가 줄지어 서면 딱딱하다 — 제일 긴 줄로 본다
-    if (말투값.연속단정 > 말투값.연속허용) advice.push(말.단정연속(v));
-    if (말투값.반복어미.length) advice.push(말.어미반복(v));
+      if (말투값.비율 < 말투값.최소) 권장("말투부족");
+      else if (말투값.비율 > 말투값.최대) 권장("말투과다");
+      // 말을 거는 것과 가벼워지는 것은 다르다 — ~어요가 늘어나면 유형과 상관없이 짚는다
+      if (말투값.부드러움비율 > v.부드러움허용) 권장("부드러움과다");
+      // 비율이 맞아도 ~입니다가 줄지어 서면 딱딱하다 — 제일 긴 줄로 본다
+      if (말투값.연속단정 > 말투값.연속허용) 권장("단정연속");
+      if (말투값.반복어미.length) 권장("어미반복");
     }
     // 10~20자라고 전부 10자 안팎으로 끊으면 그것도 티가 난다. 문턱은 보관함 상위글에서 재어 잡았다
     // (상위 10위 안 198편: 짧은비율 중앙값 47%, 95번째 69%). 40%로 두었더니 그 글들의 68%에 걸렸다.
-    if (문장길이값.짧은비율 > (config.문장길이?.짧은비율허용 ?? 100)) advice.push(말.짧은문장(v));
-    if (당부문단.length > (config.당부?.허용 ?? Infinity)) advice.push(말.당부반복(v));
-    if (줄끝맺음 && 줄끝맺음.비율 < 줄끝맺음.하한) advice.push(말.줄끝맺음(v));
+    if (문장길이값.짧은비율 > (config.문장길이?.짧은비율허용 ?? 100)) 권장("짧은문장");
+    if (당부문단.length > (config.당부?.허용 ?? Infinity)) 권장("당부반복");
+    if (줄끝맺음 && 줄끝맺음.비율 < 줄끝맺음.하한) 권장("줄끝맺음");
     // 소제목이 없으면 휴대폰에서 훑을 자리가 없다. "첫째, 둘째"로 대신한 초안이 실제로 나왔다(2026-10-22)
     // 발행된 글(사진수를 넘긴 글)은 ### 표시가 사라져 소제목을 셀 수 없다 — 초안에서만 본다
-    if (소제목범위 && 사진수 == null && 소제목셈 < 소제목범위[0]) advice.push(말.소제목부족(v));
+    if (소제목범위 && 사진수 == null && 소제목셈 < 소제목범위[0]) 권장("소제목부족");
   }
   // 아래 둘은 비율이 아니라 '있으면 잘못된 것'이라 짧은 초안에서도 짚는다
-  if (본보기베낌.length) advice.push(말.본보기베낌(v));
-  if (지어낸경험.length) advice.push(말.지어낸경험(v));
-  if (구체권장미달) advice.push(말.구체성권장(v));
+  if (본보기베낌.length) 권장("본보기베낌");
+  if (지어낸경험.length) 권장("지어낸경험");
+  if (구체권장미달) 권장("구체성권장");
   // 과다는 권장이다. 불합격으로 걸면 AI가 내용을 버리고 횟수만 맞춘다 — 2026-09-30에 상한을
   // 3회로 좁히면서 같이 내렸다(그 전엔 7회 상한에 불합격이었다).
-  if (kwOver && !kwLack) advice.push(말.키워드과다(v));
-  if (주의낱말.length) advice.push(말.주의표현(v));
-  if (AI티.length) advice.push(말.AI티(v));
+  if (kwOver && !kwLack) 권장("키워드과다");
+  if (주의낱말.length) 권장("주의표현");
+  if (AI티.length) 권장("AI티");
 
   return {
     chars, photos, kwCount, kwParts, tokens, kwLack, kwOver,
@@ -1569,7 +1595,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
     // 세 갈래로 나눠 한 곳에서 낸다 — 부르는 쪽이 저마다 해석하면 그게 규칙 두 벌이다.
     판정: issues.length ? "불합격" : 꺼진검사.length ? "부분통과" : "통과",
     주의낱말,
-    지어낸주소, 지어낸사례, 지어낸경력, 질문상한, 확인질문상한, 말투어긋남, 질문수: 질문들.length, 확인질문수: 확인질문들.length, 거울수,
-    issues, advice, 걸린기준, 걸린문구, pass: issues.length === 0,
+    지어낸주소, 지어낸사례, 지어낸경력, 질문들, 확인질문들, 질문상한, 확인질문상한, 거울수,
+    issues, advice, 걸린기준, 걸린문구, 권장기준, pass: issues.length === 0,
   };
 }
