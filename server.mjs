@@ -10,7 +10,7 @@ import { resolveDraftView } from "./permissions.mjs";
 // 보관함 읽기는 한 곳(scripts/보관함.mjs)에서 한다 — 발행검증과 같은 목록을 봐야 한다.
 import { 보관함읽기 } from "./scripts/보관함.mjs";
 // 초안 판정 규칙은 브라우저와 한 파일을 함께 쓴다 (web/rules.js). 두 벌로 두면 반드시 갈라진다.
-import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형, 원장글보관함, 원장글고르기, 문장길이범위, 깨진기준, 초안본문, 적힌목표, 적힌유형, 초안다듬기, 바뀐문단다듬기, 빈줄고르기, 말투목표정리, 목표개수, 줄나누기, 본문문장, 소제목줄, 해시태그줄, 켜진금지문구, 키워드꼬리, 이름꼬리, 짜임요약 } from "./web/rules.js";
+import { noSpace, 요청글자수, 권장글자수, 분량표시, 참고레퍼런스, 레퍼런스안내, targetPhotosFor, 사진범위, 추상어목록, 평가, 검사켜짐, 공감범위, 유형정규화 as 유형정규화규칙, 기본유형, 원장글보관함, 원장글고르기, 문장길이범위, 깨진기준, 초안본문, 적힌목표, 적힌유형, 초안다듬기, 바뀐문단다듬기, 빈줄고르기, 말투목표정리, 목표개수, 말투목표고르기, 줄나누기, 본문문장, 소제목줄, 해시태그줄, 켜진금지문구, 키워드꼬리, 이름꼬리, 짜임요약 } from "./web/rules.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(ROOT, "web");
@@ -639,7 +639,7 @@ function 짜임블록(짜, 이번방법 = []) {
 }
 
 // 이번글: 만들 때마다 서버가 고르는 것 — 각도·도입·마무리·제목 방법, 그리고 같은 키워드로 이미 쓴 글(피할 것)
-function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = null, 사례 = "", 원장본보기 = [], { 각도 = "", 이미쓴글 = [], 도입 = "", 마무리 = "", 제목방법 = [] } = {}) {
+function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = null, 사례 = "", 원장본보기 = [], { 각도 = "", 이미쓴글 = [], 도입 = "", 마무리 = "", 제목방법 = [], 말투목표 = null } = {}) {
   const lines = [`키워드: ${keyword}`];
   if (region) lines.push(`지역: ${region} (본문에 자연스럽게 반영하되, 앞쪽 자기소개 줄에는 넣지 않는다. 샵 위치 안내는 글 끝 마지막 문단에서 한 번)`);
   if (point) lines.push(`강조 포인트: ${point} (이 말이 수식어를 겹친 명사구라면 그대로 쓰지 말고, 뜻은 살리되 '누가·어디부터 어디까지·몇 분'을 넣은 문장으로 펴서 쓸 것)`);
@@ -737,6 +737,7 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = nu
     "위 항목을 다 만족한 뒤에 출력하세요."
   );
   lines.push("", "위 조건으로 견본 글을 작성하세요.");
+  if (말투목표) lines.push("", 말투목표블록(말투목표, 최소줄수(목표글자수)));
   return lines.join("\n");
 }
 
@@ -1309,13 +1310,17 @@ function 파트너말투(body) {
   const 글 = String(body?.말투 || "").trim().slice(0, 2400);
   return 글 ? `[원장님이 예전에 쓴 글. 내용은 가져오지 말고 문장 길이, 끝맺음, 자주 쓰는 말만 이 글처럼 맞춘다. 기준(글자수·키워드·금지 표현)은 그대로 지킨다]\n${글}` : "";
 }
+// 이 글의 말투 목표 — 점검 사이트는 재서 보내고(원장님 글이 오면 그게 먼저), 블로그봇 직접 쓰기는 보관함의 원장·업체 글로 잰다.
+// 유형 스위치(config.글쓴이유형.X.말투목표)가 켜진 글에만(2026-10-23 대표님: 두 사이트 모두)
+const 말투목표정하기 = (ctx, body, 유형, ref) =>
+  !유형정보(유형).말투목표 ? null : ctx.파트너 ? 파트너말투목표(body) : 말투목표고르기(ref, 보관함읽기());
 // 점검 사이트가 재서 보낸 말투 목표(검색 결과 위 원장·업체 글). 원장님 본인 글(말투 칸)이 오면 그게 먼저라 목표는 쓰지 않는다
 const 파트너말투목표 = (body) => (String(body?.말투 || "").trim() ? null : 말투목표정리(body?.말투목표));
 function 말투목표블록(목표, 문장수) {
   if (!목표) return "";
   const 퍼 = (x) => `${Math.round(x * 100)}%`;
   return [
-    `[이번 글 말투 목표 — 검색 결과 위에 있는 원장·업체 글 ${목표.편수}편을 잰 숫자다. 문장은 가져오지 않는다]`,
+    `[이번 글 말투 목표 — 상위노출된 원장·업체 글 ${목표.편수}편을 잰 숫자다(손님 후기는 뺐다). 문장은 가져오지 않는다]`,
     "위 지시 가운데 문장 끝 어미의 비율, 말 거는 어미, 묻는 문장 수는 이 숫자를 따른다(2026-10-23 대표님: 우리 규칙은 기본만, 말투는 상위노출 글을 따른다).",
     "그대로 지킬 기본: 존댓말, 쓰지 않는 표현(의료·과장·AI 티), 지어내지 않기, 첫 문장, 한 줄에 한 문장, 문단 모양.",
     `- 문장 끝: ~니다 ${퍼(목표.니다비율)}, ~요 ${퍼(목표.요비율)} (이 글이면 문장 ${문장수}개 중 ~니다 ${Math.round(문장수 * 목표.니다비율)}개, ~요 ${Math.round(문장수 * 목표.요비율)}개 안팎)`,
@@ -1403,10 +1408,12 @@ async function handleGenerate(res, body, ctx) {
     if (각도) send({ type: "status", message: `이번 글은 "${각도}"로 씁니다` });
     const 이미쓴글 = ctx.파트너 ? (body.이미쓴글 || []).map(String).slice(0, 3) : await 같은키워드글(ctx, keyword);
     const 덧붙임 = ctx.파트너 ? 파트너지시(body) : "";
-    const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례, 원장본보기, { 각도, 이미쓴글, 도입, 마무리, 제목방법 }) + (덧붙임 ? "\n\n" + 덧붙임 : "") }];
+    const 말투목표 = 말투목표정하기(ctx, body, 글쓴이유형, ref);
+    if (말투목표 && !ctx.파트너) send({ type: "status", message: `상위노출된 원장·업체 글 ${말투목표.편수}편의 말투를 따릅니다` });
+    const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례, 원장본보기, { 각도, 이미쓴글, 도입, 마무리, 제목방법, 말투목표: ctx.파트너 ? null : 말투목표 }) + (덧붙임 ? "\n\n" + 덧붙임 : "") }];
     const check = (d) => {
       const p = parseDraftOutput(d, keyword);
-      return { parsed: p, validation: validateDraft(`${p.title}\n${p.body}`, keyword, targetChars, p.title, ref, { ...shop, 사례 }, 글쓴이유형, 원장글, ctx.파트너 ? 파트너말투목표(body) : null) };
+      return { parsed: p, validation: validateDraft(`${p.title}\n${p.body}`, keyword, targetChars, p.title, ref, { ...shop, 사례 }, 글쓴이유형, 원장글, 말투목표) };
     };
 
     // 엔진이 이미 쓸 수 있는 모델을 모두 훑고 일반 호출까지 해 본 뒤에 던진다.
@@ -1729,14 +1736,15 @@ function 본문갈기(원문, 새본문) {
 
 // 편집기가 재는 것과 같은 재료로 잰다(목표·유형은 초안 머리말, 원장값은 내 샵 정보).
 // 말투만 "지시" — 다시 시킬 때 AI에게 무엇을 어떻게 고칠지까지 알려 주려고.
-async function 대화판정준비(원문, keyword, ctx, 말투목표 = null) {
+async function 대화판정준비(원문, keyword, ctx, body = {}) {
   const shop = await 샵읽기(ctx);
   const 유형 = 유형정규화(적힌유형(원문) || shop.유형);
   const { ref } = 레퍼런스고르기(keyword);
   const 원장글 = 원장글받기(유형);
   const 목표 = 적힌목표(원문) || 0;
+  const 말투목표 = 말투목표정하기(ctx, body, 유형, ref);
   const 재기 = (글) => validateDraft(초안본문(글), keyword, 목표, "", ref, shop, 유형, 원장글, 말투목표);
-  return { 유형, 재기 };
+  return { 유형, 재기, 말투목표 };
 }
 
 // 이 초안에서 대화를 몇 번까지 하나 — null 이면 제한 없음. '제한 없음'을 판단하는 곳은 여기 하나다.
@@ -1826,8 +1834,7 @@ async function handleChat(res, body, ctx, name) {
   const { engine, client } = await 엔진준비();
   if (!engine) return json(res, 503, { error: "AI 연결이 아직 설정되지 않았습니다" });
 
-  const 말투목표 = ctx.파트너 ? 파트너말투목표(body) : null;
-  const [{ 유형, 재기 }, 지난] = await Promise.all([대화판정준비(원문, keyword, ctx, 말투목표), 기록함 ? 지난대화(ctx.userId, name) : ctx.파트너 ? 파트너지난(body.지난) : []]);
+  const [{ 유형, 재기, 말투목표 }, 지난] = await Promise.all([대화판정준비(원문, keyword, ctx, body), 기록함 ? 지난대화(ctx.userId, name) : ctx.파트너 ? 파트너지난(body.지난) : []]);
   const 전 = 재기(원문);
   const 요청 = [
     지난.length ? "(이미 인사를 나눴다 — '원장님' 호칭 없이 바로 본론을 말한다)" : "(이번이 대화의 첫 답이다 — 처음에 한 번만 '원장님'이라고 불러도 된다)",
@@ -1938,7 +1945,7 @@ const server = http.createServer(async (req, res) => {
       if (입구[1] === "chat") return handleChat(res, body, 맥락, "partner");
       const 글 = String(body?.content || "");
       if (!글.trim()) return json(res, 400, { error: "글이 비어 있습니다" });
-      const { 재기 } = await 대화판정준비(글, String(body?.keyword || "").trim(), 맥락, 파트너말투목표(body));
+      const { 재기 } = await 대화판정준비(글, String(body?.keyword || "").trim(), 맥락, body);
       const v = 재기(글);
       return json(res, 200, { pass: v.pass, issues: v.issues, advice: v.advice, chars: v.chars, targetChars: v.targetChars, photos: v.photos, kwCount: v.kwCount });
     }
