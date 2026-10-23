@@ -135,3 +135,11 @@ test("말투목표가 오면 지시문에 목표 숫자가 실리고, 원장님 
   await (await 부르기({ keyword: "송도 여드름 관리", 쓰기전: { 제목: "송도 여드름 관리, 첫날" }, 말투목표: 목표, 말투: "저는요, 짧게 말하는 편이에요." })).text();
   assert.doesNotMatch(받은지시[0], /이번 글 말투 목표 — 상위노출된/, "원장님 본인 글이 먼저다");
 });
+
+test("바로 재기: 원장님 글은 지어낸 사례를 권장으로, AI글: true 를 보내면 고칠 점으로 잰다", async () => {
+  const 글 = `제목: 송도 여드름 관리, 첫날\n\n작년 가을, 3년 넘게 좁쌀로 고생하던 분이 계셨습니다.\n${본문}`;
+  const 원장 = await (await 부르기({ keyword: "송도 여드름 관리", content: 글 }, "test-partner-key", "check")).json();
+  const AI = await (await 부르기({ keyword: "송도 여드름 관리", content: 글, AI글: true }, "test-partner-key", "check")).json();
+  assert.ok(!원장.issues.some((x) => x.includes("고객 사례")) && 원장.advice.some((x) => x.includes("고객 사례")));
+  assert.ok(AI.issues.some((x) => x.includes("고객 사례")));
+});

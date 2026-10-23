@@ -1950,7 +1950,8 @@ const server = http.createServer(async (req, res) => {
       if (입구[1] === "chat") return handleChat(res, body, 맥락, "partner");
       const 글 = String(body?.content || "");
       if (!글.trim()) return json(res, 400, { error: "글이 비어 있습니다" });
-      const { 재기 } = await 대화판정준비(글, String(body?.keyword || "").trim(), 맥락, body, false);   // 원장님이 고치는 글
+      // 원장님이 고친 글은 AI글 false(진짜 사례·경력·주소는 권장으로). 블로그봇이 쓴 글을 다시 잴 때는 점검 사이트가 AI글: true 를 보낸다
+      const { 재기 } = await 대화판정준비(글, String(body?.keyword || "").trim(), 맥락, body, body?.AI글 === true);
       const v = 재기(글);
       return json(res, 200, { pass: v.pass, issues: v.issues, advice: v.advice, chars: v.chars, targetChars: v.targetChars, photos: v.photos, kwCount: v.kwCount });
     }
