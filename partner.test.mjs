@@ -143,3 +143,4 @@ test("바로 재기: 원장님 글은 지어낸 사례를 권장으로, AI글: t
   assert.ok(!원장.issues.some((x) => x.includes("고객 사례")) && 원장.advice.some((x) => x.includes("고객 사례")));
   assert.ok(AI.issues.some((x) => x.includes("고객 사례")));
 });
+

@@ -639,6 +639,17 @@ function 짜임블록(짜, 이번방법 = []) {
   ];
 }
 
+// 생성 흐름의 판단 — 글자수만 모자란가, 다른 불합격이 있나, 권장 때문에 다시 쓸 만한가, 그래서 고쳐 쓰기를 부를까
+const 짧음 = (v) => v.걸린기준.includes("글자수");
+const 다른걸림 = (v) => v.걸린기준.some((n) => n !== "글자수");
+// 고쳐 쓰기를 부를 만한 권장 — 말투·어미·키워드 자리처럼 다시 쓰면 고쳐지는 것만 (원장확인 자리·제목 숫자는 다시 써도 그대로다).
+// '다양한' 같은 말(AI티)은 부르는 까닭으로 치지 않는다 — 사람 글의 절반에도 나오는 말이라 AI를 거의 매번 한 번 더 부르게 된다.
+// 어느 권장이 부르는지는 config.말투.다듬기.부를것 — 판정은 평가()가 한 번만 한다(권장기준)
+const 다듬을까 = (v) => !!CONFIG.말투?.다듬기?.켜짐 && (CONFIG.말투.다듬기.부를것 || []).some((이름) => v.권장기준.includes(이름));
+// 글자수가 모자라고 남은 것이 권장뿐이면 고쳐 쓰기를 건너뛴다 — 호출 3번 가운데 하나를 말투에 쓰면 덧붙일 기회가 한 번만 남아
+// 분량을 못 채웠다(2026-10-23 점검 사이트 실서버: 1,362자·990자). 불합격 기준인 글자수가 먼저다
+const 고쳐쓸까 = (v) => 다른걸림(v) || (다듬을까(v) && !짧음(v));
+
 // 이번글: 만들 때마다 서버가 고르는 것 — 각도·도입·마무리·제목 방법, 그리고 같은 키워드로 이미 쓴 글(피할 것)
 function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = null, 사례 = "", 원장본보기 = [], { 각도 = "", 이미쓴글 = [], 도입 = "", 마무리 = "", 제목방법 = [], 말투목표 = null } = {}) {
   const lines = [`키워드: ${keyword}`];
@@ -1238,8 +1249,14 @@ async function 같은키워드글(ctx, keyword) {
 
 // 한 번에 몰아 고쳐 쓰는 지시 — 불합격·권장(말투 비율·어미 되풀이·키워드 횟수 포함)을 같이 준다.
 // 예전엔 셋을 따로 불러 AI를 7번까지 불렀다. 말투는 '무엇을'은 권장에 이미 있으니 '어떻게'(본보기)만 덧붙인다.
+// 말투 목표가 있으면 고정 말투 본보기(~입니다 기본, ~어요 금지)를 싣지 않는다 — 목표와 거꾸로 끈다. 목표는 권장 줄이 말한다.
+// 고쳐 쓰면 글이 짧아지기 쉽다 — 분량을 줄이지 말라고 같이 적는다(2026-10-23 점검 사이트 실서버: 1,362자·990자로 끝남)
 function 고쳐쓰기지시(v, keyword) {
-  return [fixInstruction(v, keyword), v.말투 ? `\n말투를 고칠 때는 이렇게:\n${말투본보기()}` : ""].filter(Boolean).join("\n");
+  return [
+    fixInstruction(v, keyword),
+    `\n분량은 줄이지 마라 — 지금 공백 빼고 ${v.chars.toLocaleString()}자다. 고쳐 쓴 글은 이보다 짧으면 안 되고 ${v.targetChars.toLocaleString()}자 이상이어야 한다.`,
+    v.말투 && !v.말투견줌 ? `\n말투를 고칠 때는 이렇게:\n${말투본보기()}` : "",
+  ].filter(Boolean).join("\n");
 }
 
 // 어미를 어떻게 바꾸나 — 2026-09-14: 지시문만으로는 말 거는 문장이 6%였다. 본보기를 보여 줘야 바뀐다.
@@ -1442,16 +1459,6 @@ async function handleGenerate(res, body, ctx) {
     // 고칠 게 없으면 ①에서 끝난다. 글자수 하나만 모자라면 ②를 건너뛴다(다시 쓰기보다 덧붙이기가 확실히 늘린다).
     const 최대 = CONFIG.생성?.AI호출최대 ?? 3;
     let 부른 = 1;
-    const 짧음 = (v) => v.걸린기준.includes("글자수");
-    const 다른걸림 = (v) => v.걸린기준.some((n) => n !== "글자수");
-    // 고쳐 쓰기를 부를 만한 권장 — 말투·어미·키워드 자리처럼 다시 쓰면 고쳐지는 것만 (원장확인 자리·제목 숫자는 다시 써도 그대로다).
-    // '다양한' 같은 말(AI티)은 부르는 까닭으로 치지 않는다 — 사람 글의 절반에도 나오는 말이라 AI를 거의 매번 한 번 더 부르게 된다.
-    // 다른 까닭으로 고쳐 쓸 때 권장 목록에 실려 같이 고쳐진다.
-    const 다듬을까 = (v) => {
-      if (!CONFIG.말투?.다듬기?.켜짐) return false;
-      // 어느 권장이 고쳐 쓰기를 부르는지는 config.말투.다듬기.부를것 — 판정은 평가()가 한 번만 한다(권장기준)
-      return (CONFIG.말투.다듬기.부를것 || []).some((이름) => v.권장기준.includes(이름));
-    };
     // AI를 한 번 더 부른다: 지금 제일 좋은 글 + 지시만 보내고(앞 차례는 버린다), 답을 받기(답)로 넘긴다. 실패하면 null.
     const 한번더 = async (알림, 지시) => {
       부른 += 1;
@@ -1465,7 +1472,7 @@ async function handleGenerate(res, body, ctx) {
     const 받기 = (이번) => { best = { ...이번, 모델: 기록.모델 }; ({ parsed, validation } = best); };
     const 글로 = (몸 = parsed.body) => `제목: ${parsed.title}\n\n${몸}`;   // check()가 읽는 모양
 
-    if (부른 < 최대 && validation.chars >= 100 && (다른걸림(validation) || 다듬을까(validation))) {
+    if (부른 < 최대 && validation.chars >= 100 && 고쳐쓸까(validation)) {
       const 답 = await 한번더(`한 번에 고쳐 쓰는 중: ${validation.issues.length + validation.advice.length}가지`, 고쳐쓰기지시(validation, keyword));
       const 이번 = 답 && check(답);
       if (이번 && 더나은가(이번, best)) 받기(이번);
@@ -2168,4 +2175,4 @@ if (process.argv[1] && NFC(path.resolve(process.argv[1])) === NFC(fileURLToPath(
   });
 
 // 테스트에서만 쓴다 — 가짜 구글 서버를 세워 놓고 한도·스트리밍 동작을 확인하려고
-export const __test = { server, 파트너지시, 파트너맥락, 파트너지난, 같은키워드글, 제목방법고르기, 덧붙일자리, 덧붙여넣기, 덧붙이기지시, streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, 기준프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기, 답다듬기 };
+export const __test = { server, 고쳐쓸까, 고쳐쓰기지시, 파트너지시, 파트너맥락, 파트너지난, 같은키워드글, 제목방법고르기, 덧붙일자리, 덧붙여넣기, 덧붙이기지시, streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, 기준프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기, 답다듬기 };
