@@ -8,9 +8,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { 평가, noSpace, claimSentences, pickReference, 참고레퍼런스, 본문에서찾기, 원장글고르기, 품질점수, 레퍼런스안내, 적힌목표, 요청글자수, targetPhotosFor, countLoose, 구체수, 추상어목록, 압축찾기, 채움자리, 출처불명, 허용숫자, 공감범위, 적힌유형, 겹침찾기, 쓴사람, 쓴사람셈, 글짜임, 짜임요약, 줄끝맺음재기, 빈줄고르기, 문장줄나누기, 소개나뉨찾기 } from "./web/rules.js";
 
-const CONFIG = JSON.parse(
+const 실제CONFIG = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "config.json"), "utf8")
 );
+// 판정 장치 시험은 대표님이 끈 판정(config.규칙줄이기.꺼둔판정, 2026-10-26 저녁)도 켠 채로 잰다 — 다시 켤 때 장치가 살아 있어야 한다.
+// 실제 설정에서 꺼져 있는지는 맨 아래 시험이 본다
+const CONFIG = { ...실제CONFIG, 규칙줄이기: { ...실제CONFIG.규칙줄이기, 꺼둔판정: [] } };
 
 // 실제 초안처럼 숫자가 섞인 글 — 구체성 기준(1,000자당 3개)을 넘도록 만든다.
 // 밋밋한 "가가가…"로 재면 새 기준에 걸려서, 검사하려던 것과 다른 게 걸린다.
@@ -1183,13 +1186,14 @@ test("빈 줄 고르기 — 문단 사이 하나, 소제목·사진·지도 앞�
 });
 
 // 2026-10-23 대표님: 거울은 한 글에 한 번까지(사진 자리·소제목 포함), "거울을 볼 때마다" 틀 문장은 쓰지 않는다
-test("거울 장면은 한 번까지 — 넘으면 권장, 틀 문장은 불합격", () => {
+// 2026-10-26 저녁 대표님: 「거울을 볼 때마다」 같은 틀 문장 금지는 뺐다(config 금지문구에서 지움). 횟수 판정 장치만 남겨 잰다
+test("거울 장면 횟수 장치 — 켜 두면 한 번 넘을 때 AI 글은 다시 쓰게 한다, 틀 문장은 이제 걸지 않는다", () => {
   const 두번 = "### 거울 앞에서 보이는 것\n\n아침에 거울 앞에 서면 코가 먼저 보입니다.\n\n[사진: 거울 속 코 옆 각질]";
   const v = 평가(두번, { config: CONFIG, 말투: "지시" });
   assert.equal(v.거울수, 3);
   assert.ok(v.issues.some((a) => a.includes("거울 장면이 3번")), "AI 글은 다시 쓰게 한다");
   const 틀 = 평가("거울을 볼 때마다 한숨이 나옵니다.", { config: CONFIG, 말투: "지시" });
-  assert.ok(틀.issues.some((a) => a.includes("거울 틀 문장")));
+  assert.ok(!틀.issues.some((a) => a.includes("거울 틀 문장")));
   assert.ok(!평가("거울 앞에서 코 옆 각질이 먼저 보입니다.", { config: CONFIG, 말투: "지시" }).advice.some((a) => a.includes("거울 장면")));
 });
 
@@ -1398,4 +1402,13 @@ test("말투 목표의 끝말 바뀜 비율과 견줘 문장마다 번갈아 바
   assert.ok(v.권장기준.includes("어미바뀜"), v.권장기준.join(","));
   assert.ok(v.advice.some((a) => a.includes("원장·업체 글 3편은 5%")));
   assert.ok(!평가(문단째, { config: CONFIG, 말투: "지시", 말투목표: 목표 }).권장기준.includes("어미바뀜"));
+});
+
+// 2026-10-26 저녁 대표님: 숫자를 맞추게 하는 판정은 뺀다. 실제 설정으로 재면 글자수·문장 길이·짐작·질문·거울이 불합격도 권장도 아니다
+test("실제 설정: 꺼둔 판정은 불합격·권장 어느 쪽으로도 나오지 않는다", () => {
+  const 글 = "턱에 좁쌀이 올라오셨을 겁니다. 짜면 번지셨을 겁니다. 아프셨을 겁니다. 속상하셨을 겁니다.\n거울을 볼 때마다 신경 쓰이시죠? 거울 앞에서 또 보시죠? 거울을 보면 붉습니다? 정말 그런가요? 왜 그럴까요?\n" + "이것은 아주 길게 이어지는 문장으로서 공백을 빼고도 스무 글자를 훌쩍 넘기는 문장입니다. ".repeat(6);
+  const v = 평가(글, { config: 실제CONFIG, 말투: "지시" });
+  const 이름 = [...v.걸린기준, ...v.권장기준];
+  for (const n of 실제CONFIG.규칙줄이기.꺼둔판정) assert.ok(!이름.includes(n), n);
+  assert.ok(!v.issues.some((x) => /거울/.test(x)), "거울 틀 문장 금지도 뺐다");
 });

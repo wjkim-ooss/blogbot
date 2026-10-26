@@ -1412,7 +1412,7 @@ export function 줄끝맺음재기(text, config) {
   return { 비율: Math.round(((줄들.length - 끊긴.length) / 줄들.length) * 100), 줄수: 줄들.length, 하한: 설정.하한, 끊긴 };
 }
 
-export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = null, title, 말투 = "요약", 원장값 = null, 유형 = "", 원장글 = null, 사진수 = null, 말투목표 = null, AI글 = 말투 === "지시", 형태목표 = null } = {}) {
+export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = null, title, 말투 = "요약", 원장값 = null, 유형 = "", 원장글 = null, 사진수 = null, 말투목표 = null, AI글 = 말투 === "지시", 형태목표 = null, 본보기 = null } = {}) {
   // 재는 덩어리를 여기서 한 모양("제목: X" + 본문)으로 굳힌다.
   // 같은 글이 두 모양으로 들어오고 있었다: 서버·발행검증은 `제목\n본문`, 편집기는 초안 파일
   // 그대로 "제목: …" 줄째. 그래서 판정이 두 군데서 갈렸다 —
@@ -1560,7 +1560,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   const AI티 = 문구뽑기(본문들.join("\n"), config.사람처럼?.잡는말);
   // 베끼기는 유형과 무관하다. 파는 사람이든 아니든 남의 문장을 옮기면 네이버가 원본을 위로 올린다.
   // 원장글 본보기를 프롬프트에 보여주므로 거기서 옮겨 온 문장도 같이 잡는다.
-  const 겹침 = 겹침찾기(text, [ref, 원장글], config);
+  const 겹침 = 겹침찾기(text, [ref, 원장글, 본보기], config); // 본보기: 대표님이 고른 글(config.본보기글)도 대조한다
   // 문장째 옮긴 것은 절대값이라 글이 짧아도 그대로 잡는다.
   // 겹침률은 비율이라 짧은 초안에서 튄다 — 아래 표본 게이트 안에서만 본다.
   const 베낌 = 겹침.최장 >= (유사.연속불합격 ?? Infinity);
@@ -1644,7 +1644,9 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
   // 무엇에 걸렸는지 이름으로도 남긴다. 문구에는 숫자가 섞여 매번 달라지니, 고치기 전·후를
   // 견줄 때(대화 수정이 다른 기준을 깨뜨렸나)는 이 이름으로 본다 — 이름은 문구 함수 이름 그대로다.
   const 걸린기준 = [], 걸린문구 = {};
-  const 걸림 = (이름) => { const 글 = 말[이름](v); issues.push(글); 걸린기준.push(이름); 걸린문구[이름] = 글; };
+  // 대표님이 끈 판정(config.규칙줄이기.꺼둔판정, 2026-10-26 저녁: 숫자를 맞추게 하는 규칙은 뺀다)은 불합격·권장 어느 쪽으로도 내지 않는다
+  const 꺼둔 = new Set(config.규칙줄이기?.꺼둔판정 || []);
+  const 걸림 = (이름) => { if (꺼둔.has(이름)) return; const 글 = 말[이름](v); issues.push(글); 걸린기준.push(이름); 걸린문구[이름] = 글; };
   if (제목 && keyword && !titleHasKw) 걸림("제목키워드");
   if (chars < 목표) 걸림("글자수");
   if (kwLack) 걸림("키워드부족");   // 부족은 불합격 — 안 잡히면 글을 쓴 보람이 없다
@@ -1671,7 +1673,7 @@ export function 평가(text, { keyword = "", config, 목표글자수 = 0, ref = 
 
   // 권장도 이름을 같이 낸다 — 서버는 그 이름으로 '한 번에 고쳐 쓰기'를 부를지 정한다(config.말투.다듬기.부를것)
   const advice = [], 권장기준 = [];
-  const 권장 = (이름) => { advice.push(말[이름](v)); 권장기준.push(이름); };
+  const 권장 = (이름) => { if (꺼둔.has(이름)) return; advice.push(말[이름](v)); 권장기준.push(이름); };
   if (!AI글) for (const 이름 of AI글만) 권장(이름);
   // 형식이라 불합격으로 걸지 않는다 — 권장으로 짚으면 생성 때 한 번에 고쳐 쓰기가 부른다(config.말투.다듬기)
   if (질문넘침) 권장("질문많음");

@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { __test } from "./server.mjs";
+import { __test, 본보기뽑기 } from "./server.mjs";
 import { 유형검사, 검사켜짐 } from "./web/rules.js";
 
 const CONFIG = JSON.parse(
@@ -34,8 +34,8 @@ test("가격 금지도 파는 사람에게만 간다", () => {
 
 test("문장 규칙과 말투 기본은 둘 다에게 간다 — 폰으로 읽는 것은 같다", () => {
   for (const [이름, p] of [["원장", 원장], ["정보", 정보]]) {
-    assert.ok(p.includes("[문장 규칙 — 폰으로 읽는다는 전제]"), 이름);
-    assert.ok(p.includes(`${CONFIG.문장길이.하한}~${CONFIG.문장길이.상한}자다`), 이름);
+    assert.ok(p.includes("[문장과 문단 — 본보기 글처럼]"), 이름);
+    assert.ok(!p.includes(`${CONFIG.문장길이.하한}~${CONFIG.문장길이.상한}자다`), 이름);
     assert.ok(p.includes("[말투 — 상담실에서 처음 온 손님에게 설명하듯]"), 이름);
     // 2026-10-26 대표님: ~요도 필요하면 쓰게 — ~어요 금지를 되돌렸다
     assert.ok(p.includes("~요(~거든요, ~해요 같은 것)는 사이사이 자연스러운 자리에만 쓴다"), 이름);
@@ -57,10 +57,10 @@ test("딱딱하게 만들던 지시는 빠지고, 말 거는 흐름 본보기는
   for (const [이름, p] of [["원장", 원장], ["정보", 정보]]) {
     assert.ok(!p.includes("주어는 빼고 동사로 끝낸다"), 이름);
     assert.ok(!p.includes("공감하는 지점에만"), 이름);
-    // 2026-09-15 우진: 문장당 10~20자를 꼭 지켜라. 점·반점으로 끊거나 두 줄로 써도 된다. 예외 조항은 없다.
-    assert.ok(p.includes("공백 빼고 10~20자다"), 이름);
+    // 2026-10-26 저녁 대표님: 문장 10~20자 규칙(2026-09-15)을 뺐다 — 길이를 맞추려고 끊지 않는다
+    assert.ok(!p.includes("공백 빼고 10~20자다"), 이름);
     assert.ok(!p.includes("그대로 두는 편이 낫다. 소제목"), 이름);
-    assert.ok(p.includes("마침표나 쉼표로 끊어라"), 이름);
+    assert.ok(p.includes("문장 길이나 문단 줄 수를 맞추려고 끊거나 늘이지 마라"), 이름);
   }
   // 흐름 본보기(○○하셨을 겁니다 / 그 이유는 ○○인데요 …)는 글을 상담 대본처럼 끌어서 뺐다(2026-10-26 대표님)
   assert.ok(!("흐름본보기" in CONFIG.말투) && !원장.includes("그 이유는 ○○인데요"));
@@ -170,7 +170,7 @@ test("레퍼런스가 있으면 상위글의 짜임이 숫자로 가고, 상위�
 // 2026-10-22: '문장 N개'로 시켰더니 한 줄에 한 문장씩 끊었다 — 분량은 줄로, 한 문장은 2~3줄에 걸쳐
 test("분량 지시는 줄로 세고, 한 문장은 한 줄에 끝까지 쓰라고 하며, 소제목을 ###로 쓰게 한다", () => {
   const u = __test.buildUserPrompt("모낭염", "", "", null, 0, { 유형: "원장" }, "", []);
-  assert.ok(/본문을 적어도 \d+줄 쓴다/.test(u));
+  assert.ok(!/본문을 적어도 \d+줄 쓴다/.test(u), "분량을 줄 수로 시키지 않는다(2026-10-26 저녁 대표님)");
   assert.ok(u.includes("한 줄에 한 문장을 끝까지 쓴다"));
   assert.ok(!u.includes("2~3줄에 걸쳐"));
   assert.ok(원장.includes("한 문장은 한 줄에 끝까지 쓴다") && !원장.includes("두 줄로 잇기도 해라"));
@@ -218,12 +218,12 @@ test("첫 장면 표시에는 그 말을 그대로 옮기지 말라는 줄이 �
 });
 
 // 2026-10-23: 문단 기준을 1~3문장으로 바꿨는데 짜임 줄이 "문단은 2~2줄씩"을 따로 말하고 있었다 — 문단 크기는 한 곳에서만
-test("문단 크기는 [목표 분량] 한 곳에서만 말한다", () => {
+test("문단 줄 수 지시는 없다 — 생각 하나가 끝나는 곳에서 나누라고만 한다(2026-10-26 저녁 대표님)", () => {
   const ref = { keyword: "모낭염", avgChars: 1800, avgImages: 12, posts: Array.from({ length: 6 }, (_, i) => ({ title: `모낭염 ${i}`, chars: 1800, images: 12, text: "턱에 좁쌀이 올라와요\n\n짜면 번져요" })) };
   const u = __test.buildUserPrompt("모낭염", "", "", ref, 0, { 유형: "원장" }, "", []);
-  const 짜임 = u.slice(u.indexOf("[상위글의 짜임"), u.indexOf("[목표 분량]"));
+  const 짜임 = u.slice(u.indexOf("[상위글의 짜임"), u.indexOf("[분량]"));
   assert.ok(!/문단은 \d/.test(짜임), "짜임 안내가 문단 줄 수를 따로 정하지 않는다");
-  assert.ok(u.includes(`1~${CONFIG.문단.최대줄}줄`));
+  assert.ok(!u.includes(`1~${CONFIG.문단.최대줄}줄`) && u.includes("문단은 생각 하나가 끝나는 곳에서 나누"));
 });
 
 test("위치 문단 지시는 받은 주소가 없으면 지어내지 말고 [원장확인]으로 두라고 한다", () => {
@@ -231,12 +231,12 @@ test("위치 문단 지시는 받은 주소가 없으면 지어내지 말고 [�
 });
 
 // 2026-10-23 대표님: ~시죠?가 너무 많다 — 본보기와 지시가 ~시죠?를 맨 앞 예로 들지 않는다
-test("말투 본보기와 지시문이 ~시죠?를 시키지 않고, 묻는 문장 상한을 알린다", () => {
+test("말투 본보기와 지시문이 ~시죠?를 시키지 않고, 묻는 문장 상한은 2026-10-26 저녁에 뺐다", () => {
   const M = CONFIG.말투;
   for (const 글 of CONFIG.공통쓰기기준.줄) assert.ok(!/시죠\?/.test(글) || 글.includes("두 번까지") || 글.includes("열지 않는다"), 글);   // 하지 말라는 예로 든 것은 괜찮다
   for (const p of [원장, 정보]) {
     assert.ok(!p.includes("장면 다음(~시죠?)") && !p.includes("문장은 ~시죠?로"));
-    assert.ok(p.includes(`묻는 문장(?)은 한 글에 ${M.질문상한}개까지`));
+    assert.ok(!p.includes(`묻는 문장(?)은 한 글에 ${M.질문상한}개까지`));
   }
 });
 
@@ -269,7 +269,8 @@ test("말투 목표가 있으면 원장 글 본보기 블록이 빠진다", () =
 test("글자수만 모자라고 남은 것이 권장뿐이면 고쳐 쓰지 않고 덧붙이기로 간다 — 고쳐 쓸 때는 분량을 줄이지 말라고 한다", () => {
   const v = (걸린기준, 권장기준) => ({ 걸린기준, 권장기준, chars: 1300, targetChars: 1450, issues: [], advice: [], 말투: { 전체: 1 } });
   assert.equal(__test.고쳐쓸까(v(["글자수"], ["말투목표"])), false, "분량이 먼저다");
-  assert.equal(__test.고쳐쓸까(v([], ["말투목표"])), true);
+  // 2026-10-26 저녁 대표님: 권장 때문에 다시 쓰는 단계(config.말투.다듬기)를 껐다 — 권장만 남으면 고쳐 쓰지 않는다
+  assert.equal(__test.고쳐쓸까(v([], ["말투목표"])), false);
   assert.equal(__test.고쳐쓸까(v(["글자수", "키워드부족"], [])), true, "다른 불합격이 있으면 고쳐 쓴다");
   assert.match(__test.고쳐쓰기지시({ ...v(["키워드부족"], []), 말투견줌: null }, "모낭염"), /분량은 줄이지 마라 — 지금 공백 빼고 1,300자/);
   assert.doesNotMatch(__test.고쳐쓰기지시({ ...v(["키워드부족"], []), 말투견줌: { 니다: 0.5 } }, "모낭염"), /말투를 고칠 때는 이렇게/, "말투 목표가 있으면 고정 말투 본보기를 싣지 않는다");
@@ -278,10 +279,11 @@ test("글자수만 모자라고 남은 것이 권장뿐이면 고쳐 쓰지 않�
 // 말투 목표가 있는 글은 [말투]의 고정 비율·본보기·~어요 금지를 빼고 목표를 따르라는 판을 쓴다 — 처음 쓸 때부터 목표 말투로(2026-10-23)
 test("말투 목표 판 시스템 지시문은 목표를 따르라는 줄이 더해지고, 기본판에는 없다", () => {
   const 목표판 = __test.시스템프롬프트("원장", true), 기본판 = __test.시스템프롬프트("원장");
-  assert.ok(목표판.includes("[이번 글 말투 목표] 숫자를 따른다") && !기본판.includes("[이번 글 말투 목표] 숫자를 따른다"));
+  // 2026-10-26 저녁 대표님: 말투 목표 숫자를 쓰지 않는다 — 목표판에도 따르라는 줄이 없다
+  assert.ok(!목표판.includes("[이번 글 말투 목표] 숫자를 따른다") && !기본판.includes("[이번 글 말투 목표] 숫자를 따른다"));
   for (const p of [목표판, 기본판]) assert.ok(!p.includes("~어요 / ~해요 / ~네요로 문장을 끝내지 마라") && p.includes("존댓말로 쓴다. ~입니다가 기본이고"));
   for (const 줄 of CONFIG.공통쓰기기준.줄) assert.ok(목표판.includes(줄), "공통 쓰기 기준은 그대로");
-  assert.ok(__test.대화수정프롬프트("원장", true).includes("[이번 글 말투 목표] 숫자를 따른다"));
+  assert.ok(!__test.대화수정프롬프트("원장", true).includes("[이번 글 말투 목표] 숫자를 따른다"));
 });
 
 // 2026-10-26 대표님: 상위 10개 글의 형태를 반영 — 점검 사이트 형태목표가 오면 소제목·사진 수는 그 숫자가 블로그봇 기본을 이긴다
@@ -293,5 +295,23 @@ test("형태목표가 오면 소제목 개수 지시를 빼고 사진 자리를 
   assert.ok(!u.includes("개로 나눠 소제목마다"), "기본 소제목 개수 지시는 뺀다");
   assert.ok(u.includes("끝말은 문단째로 정한다"));
   const 기본 = __test.buildUserPrompt("송도 여드름 관리", "", "", null, 0, { 유형: "원장" }, "", []);
-  assert.ok(!기본.includes("[이번 글 모양 목표") && 기본.includes("개로 나눠 소제목마다"));
+  // 소제목 개수 지시는 2026-10-26 저녁 대표님이 뺐다(이야기가 바뀌는 곳에 붙인다)
+  assert.ok(!기본.includes("[이번 글 모양 목표") && !기본.includes("개로 나눠 소제목마다") && 기본.includes("소제목은 ###로 쓰고 이야기가 바뀌는 곳에"));
+});
+
+// 2026-10-26 저녁 대표님: 규칙 대신 고른 글 두 편을 본보기로(config.본보기글). 켜질 때 받아 메모리에 두고, 지시문에 싣고, 겹침 대조본에도 넣는다
+test("본보기 글: 네이버 글에서 본문만 뽑고, 받아 둔 글은 지시문에 싣고 옮겨 쓰면 겹침으로 잡는다", () => {
+  const html = '<meta property="og:title" content="잘 쓴 글 &#x27;하나&#x27;"><div class="se-main-container"><p class="se-text-paragraph se-text-paragraph-align-"><span>첫 문단입니다.</span></p><p class="se-text-paragraph"><span>&#x27;둘째&#x27; 문단<br>이어지는 줄</span></p></div>';
+  const 글 = 본보기뽑기(html);
+  assert.equal(글.title, "잘 쓴 글 '하나'");
+  assert.equal(글.text, "첫 문단입니다.\n'둘째' 문단\n이어지는 줄");
+  const 본보기 = "저는 이 일을 십이 년째 하고 있고 처음 오시는 분께 늘 같은 순서로 설명을 드리고 있습니다 그래서 오늘도 그 순서를 그대로 적어 보겠습니다";
+  __test.본보기묶음.posts.push({ title: "본보기", text: 본보기 });
+  try {
+    const u = __test.buildUserPrompt("모낭염", "", "", null, 0, { 유형: "원장" }, "", []);
+    assert.ok(u.includes("[잘 쓴 글 본보기") && u.includes(본보기.slice(0, 20)));
+    for (const x of CONFIG.본보기글.볼것) assert.ok(u.includes(x));
+    const v = __test.validateDraft(`제목: 모낭염\n\n${본보기}`, "모낭염");
+    assert.ok(v.걸린기준.includes("베낀문장") || v.권장기준.includes("겹침주의"), JSON.stringify([v.걸린기준, v.권장기준]));
+  } finally { __test.본보기묶음.posts.length = 0; }
 });
