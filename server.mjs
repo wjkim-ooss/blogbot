@@ -1242,6 +1242,41 @@ function 덧붙여넣기(body, 답, 받을까 = () => true) {
   return 받은.length ? { body: 합치기(받은), 결과 } : null;
 }
 
+// 긴 문장만 골라 끊게 한다(2026-10-26 대표님: "반점이나 점을 넣어가며 잘라줘"). 쉼표는 초안다듬기가 먼저 넣고(rules.js 쉼표넣기),
+// 쉼표 자리가 없는 문장은 마침표로 둘로 나눠야 해서 끝말까지 고칠 수 있는 AI가 맡는다. 글 전체를 다시 쓰게 하면 안 짧아졌다(실서버 10편 모두 20자 넘는 토막 36~77%).
+// 긴 줄: 쉼표 토막 하나라도 상한을 넘는 본문 줄(긴문장과 같은 잣대)
+function 긴줄들(body) {
+  const 상한 = CONFIG.문장길이?.상한 || Infinity;
+  return String(body).split("\n").map((l, i) => ({ i, t: l.trim() }))
+    .filter(({ t }) => t && 본문문장(t) && !t.startsWith("[") && !소제목줄.test(t) && t.split(/,\s*/).some((x) => noSpace(x) > 상한));
+}
+function 끊기지시(긴, keyword) {
+  const { 하한, 상한 } = CONFIG.문장길이;
+  return [
+    `아래 문장들은 한 토막이 공백 빼고 ${상한}자를 넘는다. 문장마다 마침표나 쉼표로 끊어 토막마다 ${하한}~${상한}자가 되게 고쳐라.`,
+    "- 마침표로 끊을 때는 앞 문장 끝만 앞뒤 말투에 맞춰 바꾼다(~입니다·~합니다·~요). 뜻과 낱말은 그대로 두고 내용을 더하거나 빼지 않는다.",
+    "- 한 문장에 사실이 둘 이상이면 사실마다 한 문장으로 나눈다. 나눈 문장들은 같은 번호 줄에 이어 쓴다.",
+    `- 키워드 "${keyword}"는 붙인 그대로, 따옴표 안 말도 그대로 둔다.`,
+    "",
+    "형식 — 번호와 고친 문장만, 번호마다 한 줄. 이것 말고 아무것도 쓰지 마라:",
+    ...긴.map((x, n) => `${n + 1}) ${x.t}`),
+  ].join("\n");
+}
+// 받은 줄을 제자리에 넣는다. 글자 수가 원래의 80~130%를 벗어난 줄은 내용을 빼거나 더한 것이라 받지 않는다
+function 끊어넣기(body, 답, 긴, keyword) {
+  const 줄 = String(body).split("\n");
+  let 바꾼 = 0;
+  for (const m of 울타리벗기기(답).matchAll(/^\s*(\d+)\)\s*(.+)$/gm)) {
+    const x = 긴[Number(m[1]) - 1], 새 = m[2].trim();
+    if (!x || !새 || 새 === x.t) continue;
+    const 비 = noSpace(새) / noSpace(x.t);
+    if (비 < 0.8 || 비 > 1.3) continue;
+    줄[x.i] = 줄[x.i].match(/^\s*/)[0] + 새;
+    바꾼 += 1;
+  }
+  return 바꾼 ? 초안다듬기(줄.join("\n"), CONFIG, keyword) : null;
+}
+
 // 같은 키워드로 이미 쓴 초안(최근 3편)의 제목·소제목·첫 문장 — 새 글이 이것과 겹치지 않게 프롬프트에 싣는다.
 // 본문을 통째로 싣지 않는다: 길고, 통째로 보이면 오히려 따라 쓴다.
 async function 같은키워드글(ctx, keyword) {
@@ -1471,7 +1506,7 @@ async function handleGenerate(res, body, ctx) {
 
     // AI는 많아야 CONFIG.생성.AI호출최대(3)번 부른다 — 2026-10-07 우진: "너무 오래 걸린다. 1~3번 안에".
     // 예전엔 고쳐 쓰기 3 + 덧붙이기 2 + 말투 다듬기 1을 따로 돌려 최대 7번이었다. 지금 순서:
-    //   ① 처음 쓰기 → ② 불합격·권장·말투가 남았으면 한 번에 몰아 고쳐 쓰기 → ③ 글자수가 모자라면 덧붙이기.
+    //   ① 처음 쓰기 → ② 불합격·권장·말투가 남았으면 한 번에 몰아 고쳐 쓰기 → ③ 글자수가 모자라면 덧붙이기, 아니고 긴 문장이 걸려 있으면 긴 줄만 끊기.
     // 고칠 게 없으면 ①에서 끝난다. 글자수 하나만 모자라면 ②를 건너뛴다(다시 쓰기보다 덧붙이기가 확실히 늘린다).
     const 최대 = CONFIG.생성?.AI호출최대 ?? 3;
     let 부른 = 1;
@@ -1505,6 +1540,16 @@ async function handleGenerate(res, body, ctx) {
       });
       if (넣음) 받기(넣음.결과);
       else { if (답) send({ type: "status", message: "덧붙일 문단을 못 썼습니다 (AI가 형식을 안 지켰거나, 문단마다 다른 기준을 어겼습니다)" }); break; }
+    }
+
+    // 남은 호출이 있고 긴 문장이 걸려 있으면 그 문장만 끊게 한다(끊기지시). 받는 기준: 긴 토막 비율이 줄고 전에 통과하던 기준이 안 깨졌으면
+    const 긴 = 부른 < 최대 && validation.걸린기준.includes("문장길이") ? 긴줄들(parsed.body).slice(0, CONFIG.문장길이?.끊기최대 ?? 40) : [];
+    if (긴.length) {
+      const 답 = await 한번더(`긴 문장 ${긴.length}개를 마침표·쉼표로 끊는 중`, 끊기지시(긴, keyword));
+      const 몸 = 답 && 끊어넣기(parsed.body, 답, 긴, keyword);
+      const 이번 = 몸 && check(글로(몸));
+      if (이번 && 이번.validation.문장길이.비율 < validation.문장길이.비율 && !깨진기준(validation, 이번.validation).length) 받기(이번);
+      else if (답) send({ type: "status", message: "긴 문장을 끊은 글이 더 낫지 않아 그대로 둡니다" });
     }
 
     send({
