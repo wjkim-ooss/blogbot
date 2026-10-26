@@ -283,3 +283,15 @@ test("말투 목표 판 시스템 지시문에는 고정 말투 숫자와 본보
   for (const 줄 of CONFIG.공통쓰기기준.줄) assert.ok(목표판.includes(줄), "공통 쓰기 기준은 그대로");
   assert.ok(__test.대화수정프롬프트("원장", true).includes("[이번 글 말투 목표] 숫자를 따른다"));
 });
+
+// 2026-10-26 대표님: 상위 10개 글의 형태를 반영 — 점검 사이트 형태목표가 오면 소제목·사진 수는 그 숫자가 블로그봇 기본을 이긴다
+test("형태목표가 오면 소제목 개수 지시를 빼고 사진 자리를 목표대로, 끝말은 문단째로", async () => {
+  const { 형태목표정리 } = await import("./web/rules.js");
+  const 형태목표 = 형태목표정리({ 편수: 10, 사진: 12, 사진사이: 4, 문단줄: 3, 한줄문단: 25, 어미바뀜: 13, 소제목편수: 1 }, CONFIG);
+  const u = __test.buildUserPrompt("송도 여드름 관리", "", "", null, 0, { 유형: "원장" }, "", [], { 형태목표 });
+  assert.ok(u.includes("[이번 글 모양 목표") && u.includes("소제목(###)은 쓰지 않는다") && u.includes("[사진 자리] 12곳"));
+  assert.ok(!u.includes("개로 나눠 소제목마다"), "기본 소제목 개수 지시는 뺀다");
+  assert.ok(u.includes("끝말은 문단째로 정한다"));
+  const 기본 = __test.buildUserPrompt("송도 여드름 관리", "", "", null, 0, { 유형: "원장" }, "", []);
+  assert.ok(!기본.includes("[이번 글 모양 목표") && 기본.includes("개로 나눠 소제목마다"));
+});

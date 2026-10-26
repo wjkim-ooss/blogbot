@@ -1281,9 +1281,9 @@ test("말투목표가 오면 묻는 문장 상한은 그 비율로, 고정 말�
   const 어긋난 = 평가(Array.from({ length: 20 }, (_, i) => `${i}번째 설명입니다.`).join("\n"), { config: CONFIG, 말투: "지시", 말투목표: 목표 });
   assert.ok(어긋난.권장기준.includes("말투목표") && 어긋난.advice.some((a) => a.includes("목표")));
   // 고칠 때는 몇 문장을 어느 쪽으로 바꿀지까지 준다(2026-10-26 점검 사이트 재기: 비율만 주니 고쳐 써도 그대로)
-  assert.ok(어긋난.advice.some((a) => a.includes("~니다로 끝난 문장 가운데 8개쯤을 ~요로")), 어긋난.advice.join("\n"));
+  assert.ok(어긋난.advice.some((a) => a.includes("~니다로 쓴 문단 몇 개를 문단째 ~요로 바꿔 문장 8개쯤을")), 어긋난.advice.join("\n"));
   const 요만 = 평가(Array.from({ length: 20 }, (_, i) => `${i}번째 이유가 있거든요.`).join("\n"), { config: CONFIG, 말투: "지시", 말투목표: 목표 });
-  assert.ok(요만.advice.some((a) => a.includes("~요로 끝난 문장 가운데 12개쯤을 ~니다로")), 요만.advice.join("\n"));
+  assert.ok(요만.advice.some((a) => a.includes("~요로 쓴 문단 몇 개를 문단째 ~니다로 바꿔 문장 12개쯤을")), 요만.advice.join("\n"));
 });
 
 test("보관함 원장·업체 글로 말투 목표를 잰다 — 후기·셋 미만이면 목표 없이 지금 규칙", async () => {
@@ -1368,4 +1368,23 @@ test("원장 정보와 햇수가 다른 경력은 지어낸 경력이다 — 준
   assert.equal(재("피부관리실을 7년째 운영합니다."), 0, "'7년째'는 준 '7년'과 같다");
   assert.equal(재("피부관리실을 8년째 운영합니다.", { 이력: "피부관리실 3년, 피부과 5년" }), 0, "준 햇수의 합");
   assert.equal(재("피부관리실을 3년째 운영합니다.", { 이력: "대학병원 간호사 출신" }), 0, "준 햇수가 없으면 견주지 않는다");
+});
+
+// 2026-10-26 대표님: "상위 10개 레퍼런스를 반영해서 최적의 글 형태를" — 점검 사이트가 검색 결과 위 10편을 재서 형태목표로 넘긴다
+test("형태목표: 소제목을 거의 안 쓰는 검색어면 소제목부족 대신 소제목많음, 사진 수는 목표를 따르고, 끝말을 문장마다 바꾸면 짚는다", async () => {
+  const { 형태목표정리, 어미바뀜재기 } = await import("./web/rules.js");
+  const 형태 = { 편수: 10, 글자: 1800, 사진: 12, 사진사이: 4, 문단줄: 3, 한줄문단: 25, 문장중간: 18, 긴문장: 35, 어미바뀜: 13, 소제목편수: 1, 인용편수: 7 };
+  assert.equal(형태목표정리({ 편수: 2 }, CONFIG), null, "편수가 모자라면 쓰지 않는다");
+  assert.equal(형태목표정리(형태, CONFIG).소제목씀, false);
+  const 번갈아 = Array.from({ length: 20 }, (_, i) => (i % 2 ? `${i}번째 이유가 있거든요.` : `${i}번째 설명입니다.`));
+  assert.equal(어미바뀜재기(번갈아.join("\n"), CONFIG), 100);
+  const 글 = ["### 첫 번째 단계", ...번갈아.slice(0, 7), "### 두 번째 단계", ...번갈아.slice(7, 14), "### 세 번째 단계", ...번갈아.slice(14)].join("\n");
+  const v = 평가(글, { config: CONFIG, 말투: "지시", 형태목표: 형태 });
+  assert.ok(v.권장기준.includes("소제목많음") && !v.권장기준.includes("소제목부족"), v.권장기준.join(","));
+  assert.ok(v.권장기준.includes("어미바뀜"), v.권장기준.join(","));
+  assert.equal(v.targetPhotos, 12);
+  const 문단째 = [...Array(10).fill(0).map((_, i) => `${i}번째 설명입니다.`), ...Array(10).fill(0).map((_, i) => `${i}번째 이유가 있거든요.`)].join("\n");
+  assert.ok(!평가(문단째, { config: CONFIG, 말투: "지시", 형태목표: 형태 }).권장기준.includes("어미바뀜"), "문단째로 바꾸면 조용하다");
+  const 없음 = 평가(글, { config: CONFIG, 말투: "지시" });
+  assert.ok(!없음.권장기준.includes("소제목많음") && !없음.권장기준.includes("어미바뀜"), "형태목표가 없으면 지금 그대로");
 });
