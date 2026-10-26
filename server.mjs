@@ -1290,6 +1290,17 @@ function 끊어넣기(body, 답, 긴, keyword) {
   return 바꾼 ? 초안다듬기(줄.join("\n"), CONFIG, keyword) : null;
 }
 
+// 덧붙이기가 왜 실패했나 — 형식을 못 읽었는지, 넣으면 어느 기준이 깨지는지. 답 앞부분은 서버 로그에만 남긴다(원장님 화면에 AI 원문을 띄우지 않는다)
+// 2026-10-26 점검 사이트: 실패한 답 모양을 알 수 없어 고칠 곳을 못 찾았다
+function 덧붙이기실패(body, 답, 전, 재기) {
+  console.log(`[덧붙이기 실패] 답 앞부분: ${JSON.stringify(울타리벗기기(답).slice(0, 300))}`);
+  const 그냥 = 덧붙여넣기(body, 답);   // 기준을 안 보고 넣어 보면 형식은 읽혔는지 안다
+  if (!그냥) return `형식을 못 읽음 — 머리: ${(울타리벗기기(답).match(/^#{1,4}.*$/gm) || []).slice(0, 3).map((h) => h.slice(0, 30)).join(" / ") || "없음"}, 답 ${noSpace(답)}자`;
+  const 후 = 재기(그냥.body);   // 덧붙이기가 받을 때와 같은 판정(check)
+  const 깨진 = 깨진기준(전, 후);
+  return 깨진.length ? `넣으면 깨지는 기준: ${깨진.join("·")}` : `넣어도 글자수가 늘지 않음(${전.chars}자 → ${후.chars}자)`;
+}
+
 // 같은 키워드로 이미 쓴 초안(최근 3편)의 제목·소제목·첫 문장 — 새 글이 이것과 겹치지 않게 프롬프트에 싣는다.
 // 본문을 통째로 싣지 않는다: 길고, 통째로 보이면 오히려 따라 쓴다.
 async function 같은키워드글(ctx, keyword) {
@@ -1565,7 +1576,7 @@ async function handleGenerate(res, body, ctx) {
         return 이번.validation.chars > validation.chars && !깨진기준(validation, 이번.validation).length && 이번;
       });
       if (넣음) 받기(넣음.결과);
-      else if (답) send({ type: "status", message: "덧붙일 문단을 못 썼습니다 (AI가 형식을 안 지켰거나, 문단마다 다른 기준을 어겼습니다)" });
+      else if (답) send({ type: "status", message: `덧붙일 문단을 못 썼습니다 (${덧붙이기실패(parsed.body, 답, validation, (몸) => check(글로(몸)).validation)})` });
       return !!넣음;
     };
     const 글로 = (몸 = parsed.body) => `제목: ${parsed.title}\n\n${몸}`;   // check()가 읽는 모양
@@ -2281,4 +2292,4 @@ if (process.argv[1] && NFC(path.resolve(process.argv[1])) === NFC(fileURLToPath(
   });
 
 // 테스트에서만 쓴다 — 가짜 구글 서버를 세워 놓고 한도·스트리밍 동작을 확인하려고
-export const __test = { server, 고쳐쓸까, 고쳐쓰기지시, 파트너지시, 파트너맥락, 파트너지난, 같은키워드글, 제목방법고르기, 덧붙일자리, 덧붙여넣기, 덧붙이기지시, streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, 기준프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기, 답다듬기 };
+export const __test = { server, 덧붙이기실패, 고쳐쓸까, 고쳐쓰기지시, 파트너지시, 파트너맥락, 파트너지난, 같은키워드글, 제목방법고르기, 덧붙일자리, 덧붙여넣기, 덧붙이기지시, streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, 기준프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기, 답다듬기 };
