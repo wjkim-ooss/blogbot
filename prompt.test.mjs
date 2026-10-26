@@ -81,7 +81,9 @@ test("원장이 쓴 글 본보기: 스위치는 원장만 켜져 있고, 프롬�
   assert.equal(CONFIG.글쓴이유형.원장.원장글본보기, true);
   assert.equal(CONFIG.글쓴이유형.정보.원장글본보기, false, "정보 전달자에게는 안 준다");
   const 본보기 = [{ title: "압출 대신 하는 순서", text: "오늘 오신 고객님은 턱 밑이 붉으셨는데요.\n저희 샵은 첫 방문에 압출부터 권하지 않습니다." }];
-  const p = __test.buildUserPrompt("모낭염", "", "", null, 0, { 유형: "원장" }, "", 본보기);
+  // 대표님 본보기(config.본보기글)를 쓰는 동안은 보관함 원장 글을 싣지 않는다(config.규칙줄이기.원장본보기 false, 2026-10-26 저녁: 남의 샵 이름이 새어 나옴)
+  assert.ok(!__test.buildUserPrompt("모낭염", "", "", null, 0, { 유형: "원장" }, "", 본보기).includes("원장이 직접 쓴 글"));
+  const p = __test.원장본보기블록(본보기).join("\n");
   assert.ok(p.includes("[원장이 직접 쓴 글 본보기"));
   assert.ok(p.includes("압출 대신 하는 순서") && p.includes("붉으셨는데요. / 저희 샵"), "제목과 발췌(줄바꿈은 /로)");
   assert.ok(!__test.buildUserPrompt("모낭염", "", "", null, 0, { 유형: "원장" }, "", []).includes("원장이 직접 쓴 글"), "본보기가 없으면 블록도 없다");
@@ -261,7 +263,7 @@ test("블로그봇 직접 쓰기도 말투 목표 블록이 실리고, 목표가
 test("말투 목표가 있으면 원장 글 본보기 블록이 빠진다", () => {
   const 본보기 = [{ title: "모낭염 관리 안내", text: "저희 관리실은 상담부터 해요. 손님 얼굴을 먼저 봐요." }];
   const 목표 = { 편수: 3, 질문비율: 0.1, 확인질문비율: 0, 니다비율: 0.73, 요비율: 0.2, 이모지: 0, 끝말: [] };
-  assert.ok(__test.buildUserPrompt("모낭염", "", "", null, 0, { 유형: "원장" }, "", 본보기).includes("원장이 직접 쓴 글"));
+  assert.ok(!__test.buildUserPrompt("모낭염", "", "", null, 0, { 유형: "원장" }, "", 본보기).includes("원장이 직접 쓴 글"), "원장본보기 스위치를 꺼 두었다");
   assert.ok(!__test.buildUserPrompt("모낭염", "", "", null, 0, { 유형: "원장" }, "", 본보기, { 말투목표: 목표 }).includes("원장이 직접 쓴 글"));
 });
 
@@ -326,4 +328,9 @@ test("소개는 의심 뒤에, 관리 구성은 단계 하나만 쓰라고 지�
   const u = __test.buildUserPrompt("모낭염", "", "", null, 0, { 유형: "원장", 관리구성: "상담 10분 / 클렌징 10분 / 압출 20분 = 총 40분" }, "", []);
   assert.ok(u.includes("관리 구성은 전부 늘어놓지 말고 이 글 주제와 이어지는 단계 하나만"));
   assert.ok(!__test.buildUserPrompt("모낭염", "", "", null, 0, { 유형: "원장" }, "", []).includes("관리 구성은 전부 늘어놓지"), "관리 구성을 안 줬으면 말하지 않는다");
+});
+
+test("관리 구성 값 바로 옆에 단계 하나만 쓰라고 적는다", () => {
+  const u = __test.buildUserPrompt("모낭염", "", "", null, 0, { 유형: "원장", 관리구성: "상담 10분 / 압출 20분" }, "", []);
+  assert.match(u, /상담 10분 \/ 압출 20분 \(이 가운데 글 주제와 이어지는 단계 하나만 쓴다/);
 });

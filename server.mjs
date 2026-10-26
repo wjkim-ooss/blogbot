@@ -702,7 +702,9 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = nu
   // 말투 목표가 있으면 원장 글 본보기는 싣지 않는다 — 말투는 상위노출된 원장·업체 글 숫자를 따르는데, 본보기가 ~요 쪽으로 끌었다
   // (2026-10-23 점검 사이트 실서버: 목표 ~니다 73%인데 글은 43~52%, 본보기 2편이 같이 실림)
   lines.push(...본보기블록());   // 대표님이 고른 잘 쓴 글(config.본보기글, 2026-10-26 저녁)
-  lines.push(...(말투목표 ? [] : 원장본보기블록(원장본보기)));
+  // 보관함의 다른 원장님 글 본보기는 대표님 본보기(config.본보기글)를 쓰는 동안 싣지 않는다 — 말투 목표를 끄자 다시 실려
+  // 그 글의 샵 이름(「림에스테틱」)이 지도 자리·해시태그에 그대로 들어갔다(2026-10-26 저녁 점검 사이트 실서버)
+  lines.push(...(말투목표 || CONFIG.규칙줄이기?.원장본보기 === false ? [] : 원장본보기블록(원장본보기)));
   lines.push(
     "",
     목표글자수
@@ -716,7 +718,8 @@ function buildUserPrompt(keyword, region, point, ref, 목표글자수, shop = nu
   const 준값 = 유형항목(유형정규화(shop?.유형)).filter((x) => shop?.[x.key]);
   if (준값.length) {
     lines.push("", "[글쓴이가 준 실제 값 — 이 값만 쓰고 여기 없는 숫자를 만들어 내지 말 것]");
-    for (const x of 준값) lines.push(`- ${x.이름}: ${shop[x.key]}`);
+    // 관리 구성은 전부 늘어놓지 않는다 — 값 바로 옆에 적어 둔다(2026-10-26 저녁 대표님: 「상담 10분… 총 65분」을 소제목 둘에 걸쳐 늘어놓음)
+    for (const x of 준값) lines.push(`- ${x.이름}: ${shop[x.key]}${x.key === "관리구성" ? " (이 가운데 글 주제와 이어지는 단계 하나만 쓴다. 단계와 시간을 전부 늘어놓거나 단계마다 소제목을 만들지 않는다)" : ""}`);
     if (shop.가격 && /비공개/.test(shop.가격))
       lines.push("- 가격은 원장이 공개하지 않는다. 금액·회원권 가격·할인율을 글에 쓰지 말 것 (\"10만 원대\" 같은 어림값도 금지)");
     lines.push("- 이 목록에 없는 연차·금액·소요 시간·인원·비율이 필요하면 지어내지 말고 [원장확인: 무엇] 으로 비워 둘 것");
@@ -1581,7 +1584,10 @@ async function handleGenerate(res, body, ctx) {
     // 점검 사이트가 부를 때는 남긴 규칙(config.생성.파트너다시쓸판정: 지어내지 않기·금지 표현·의료·과장)에 걸렸을 때만 한 번 다시 쓴다(2026-10-26 저녁)
     const 다시쓸까 = ctx.파트너 ? (CONFIG.생성?.파트너다시쓸판정 || []).some((이름) => validation.걸린기준.includes(이름)) : 고쳐쓸까(validation);
     if (부른 < 최대 && validation.chars >= 100 && 다시쓸까) {
-      const 답 = await 한번더(`한 번에 고쳐 쓰는 중: ${validation.issues.length + validation.advice.length}가지`, 고쳐쓰기지시(validation, keyword));
+      // 점검 사이트 글은 남긴 규칙에 걸린 것만 고치게 한다(권장·다른 불합격을 몰아 넣으면 다시 「몰아 고치기」가 된다, 2026-10-26 저녁)
+      const 안전 = CONFIG.생성?.파트너다시쓸판정 || [];
+      const 고칠것 = ctx.파트너 ? { ...validation, issues: validation.issues.filter((_, i) => 안전.includes(validation.걸린기준[i])), advice: [], 권장기준: [] } : validation;
+      const 답 = await 한번더(`한 번에 고쳐 쓰는 중: ${고칠것.issues.length + 고칠것.advice.length}가지`, 고쳐쓰기지시(고칠것, keyword));
       const 이번 = 답 && check(답);
       if (이번 && 더나은가(이번, best)) 받기(이번);
       else if (이번) send({ type: "status", message: "고친 글이 처음 글보다 낫지 않아 처음 글을 씁니다" });
@@ -2287,4 +2293,4 @@ if (process.argv[1] && NFC(path.resolve(process.argv[1])) === NFC(fileURLToPath(
   });
 
 // 테스트에서만 쓴다 — 가짜 구글 서버를 세워 놓고 한도·스트리밍 동작을 확인하려고
-export const __test = { server, 본보기묶음, validateDraft, 덧붙이기실패, 고쳐쓸까, 고쳐쓰기지시, 파트너지시, 파트너맥락, 파트너지난, 같은키워드글, 제목방법고르기, 덧붙일자리, 덧붙여넣기, 덧붙이기지시, streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, 기준프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기, 답다듬기 };
+export const __test = { server, 본보기묶음, validateDraft, 원장본보기블록, 덧붙이기실패, 고쳐쓸까, 고쳐쓰기지시, 파트너지시, 파트너맥락, 파트너지난, 같은키워드글, 제목방법고르기, 덧붙일자리, 덧붙여넣기, 덧붙이기지시, streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, 기준프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기, 답다듬기 };
