@@ -1388,3 +1388,20 @@ test("형태목표: 소제목을 거의 안 쓰는 검색어면 소제목부족 
   const 없음 = 평가(글, { config: CONFIG, 말투: "지시" });
   assert.ok(!없음.권장기준.includes("소제목많음") && !없음.권장기준.includes("어미바뀜"), "형태목표가 없으면 지금 그대로");
 });
+
+// 2026-10-26 점검 사이트 실서버(형태목표 붙인 뒤): 보조 용언 앞 쉼표, 준 경력의 압축, 짐작 끝말, 시술대
+test("쉼표넣기는 -고 싶다·-고 있다 사이에 넣지 않는다", async () => {
+  const { 쉼표넣기 } = await import("./web/rules.js");
+  const s = "이번에는 꼭 흉터 없이 끝내고 싶어 서면 여드름 압출 정보를 찾아보셨을 겁니다.";
+  assert.ok(!쉼표넣기(s, CONFIG, "서면 여드름 압출").includes("끝내고,"));
+});
+test("원장이 준 햇수 그대로인 경력압축은 비우지 말고 풀어 쓰게 한다", () => {
+  const v = 평가("경력 7년의 노하우로 관리합니다.", { config: CONFIG, 말투: "지시", 원장값: { 이력: "피부관리실 7년" } });
+  const 말 = v.issues.find((x) => x.includes("경력을 명사구로 줄였다") || x.includes("압축된 명사구"));
+  assert.ok(말 && 말.includes("비우지 말고") && !말.includes("[원장확인:"), 말);
+});
+test("짐작하는 끝말이 상한을 넘으면 짚는다, 시술대는 의료 표현", () => {
+  const 글 = Array.from({ length: 12 }, (_, i) => (i < 4 ? `${i}번 많이 속상하셨을 겁니다.` : `${i}번째 설명입니다.`)).join("\n");
+  assert.ok(평가(글, { config: CONFIG, 말투: "지시" }).권장기준.includes("짐작많음"));
+  assert.ok(평가("시술대에 누워 관리를 받습니다.", { config: CONFIG, 말투: "지시" }).medicalFound.includes("시술대"));
+});
