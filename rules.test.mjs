@@ -1433,3 +1433,16 @@ test("'많으실 겁니다'도 짐작하는 끝말이다", () => {
   const 글 = Array.from({ length: 12 }, (_, i) => (i < 3 ? `${i}번 걱정이 많으실 겁니다.` : `${i}번째 설명입니다.`)).join("\n");
   assert.ok(평가(글, { config: CONFIG, 말투: "지시" }).권장기준.includes("짐작많음"));
 });
+
+// 2026-10-26 점검 사이트(두 벌 금지): 끝말 바뀜 비율도 말투 목표(원장·업체 글)에서 재고 판정한다
+test("말투 목표의 끝말 바뀜 비율과 견줘 문장마다 번갈아 바꾸면 짚는다", async () => {
+  const { 말투목표재기, 말투목표정리 } = await import("./web/rules.js");
+  const 문단째 = [...Array(10).fill(0).map((_, i) => `${i}번째 설명입니다.`), ...Array(10).fill(0).map((_, i) => `${i}번째 이유가 있거든요.`)].join("\n");
+  const 목표 = 말투목표정리(말투목표재기([{ text: 문단째 }, { text: 문단째 }, { text: 문단째 }], CONFIG));
+  assert.equal(목표.어미바뀜비율, 0.05);
+  const 번갈아 = Array.from({ length: 20 }, (_, i) => (i % 2 ? `${i}번째 이유가 있거든요.` : `${i}번째 설명입니다.`)).join("\n");
+  const v = 평가(번갈아, { config: CONFIG, 말투: "지시", 말투목표: 목표 });
+  assert.ok(v.권장기준.includes("어미바뀜"), v.권장기준.join(","));
+  assert.ok(v.advice.some((a) => a.includes("원장·업체 글 3편은 5%")));
+  assert.ok(!평가(문단째, { config: CONFIG, 말투: "지시", 말투목표: 목표 }).권장기준.includes("어미바뀜"));
+});
