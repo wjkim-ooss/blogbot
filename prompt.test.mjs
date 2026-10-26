@@ -315,3 +315,15 @@ test("본보기 글: 네이버 글에서 본문만 뽑고, 받아 둔 글은 지
     assert.ok(v.걸린기준.includes("베낀문장") || v.권장기준.includes("겹침주의"), JSON.stringify([v.걸린기준, v.권장기준]));
   } finally { __test.본보기묶음.posts.length = 0; }
 });
+
+// 2026-10-26 저녁 대표님: 초사고 순서대로 문제 → 의심 → 권위(본보기처럼 소개로 열지 않는다), 관리 시간표는 늘어놓지 말고 주제와 이어지는 단계 하나만
+test("소개는 의심 뒤에, 관리 구성은 단계 하나만 쓰라고 지시한다", () => {
+  for (const p of [원장]) {
+    assert.ok(p.includes("글쓴이 소개·경력은 ②에서 의심을 꺼낸 뒤에 둔다"));
+    assert.ok(p.includes("10. 관리 구성(단계·시간)"));
+  }
+  assert.ok(CONFIG.본보기글.볼것[0].includes("글의 순서는 본보기를 따르지 않는다"));
+  const u = __test.buildUserPrompt("모낭염", "", "", null, 0, { 유형: "원장", 관리구성: "상담 10분 / 클렌징 10분 / 압출 20분 = 총 40분" }, "", []);
+  assert.ok(u.includes("관리 구성은 전부 늘어놓지 말고 이 글 주제와 이어지는 단계 하나만"));
+  assert.ok(!__test.buildUserPrompt("모낭염", "", "", null, 0, { 유형: "원장" }, "", []).includes("관리 구성은 전부 늘어놓지"), "관리 구성을 안 줬으면 말하지 않는다");
+});
