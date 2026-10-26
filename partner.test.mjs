@@ -119,17 +119,17 @@ test("AI 대화 수정: 점검 사이트가 준 앞 대화와 AI 기억을 싣�
   assert.match(지시, /짧게 끊어 말하는 편이에요/, "말투 예시 글이 지시에 실린다");
 });
 
-// 점검 사이트가 받은 뒤 대화 수정 한 번에 몰아 고치므로 여기서는 고쳐 쓰지 않는다(2026-10-26 대표님: 편당 호출 줄이기).
-// 그래서 고쳐 쓴 답이 끊겨 짧아질 일도 없다(예전 시험: 끊긴 답을 고르면 안 된다)
-test("점검 사이트가 부르면 고쳐 쓰지 않고 처음 글을 그대로 쓴다", async () => {
+// 점검 사이트로 온 글은 몰아 고치기를 뺐지만(2026-10-26 저녁 대표님), 남긴 규칙(의료·과장·지어내기·금지 표현)에 걸리면 한 번 다시 쓴다.
+// 이 시험의 처음 글은 「치료로 완치되는」(의료·과장)이 섞여 있다 — 다시 쓴 답이 중간에 끊겨 짧아지면 처음 글을 그대로 쓴다
+test("점검 사이트 글은 남긴 규칙에 걸릴 때만 한 번 다시 쓰고, 끊긴 답은 고르지 않는다", async () => {
   받은지시.length = 0; 끊어보내기 = true;
   try {
     const r = await 부르기({ keyword: "송도 여드름 관리", region: "인천 연수구 송도동", shop: {} });
     const 줄 = (await r.text()).split("\n").filter((l) => l.startsWith("data: ")).map((l) => JSON.parse(l.slice(6)));
     const 끝 = 줄.find((x) => x.type === "done");
-    assert.equal(받은지시.length, 1, "글자수가 넉넉하면 처음 쓰기 한 번으로 끝난다");
-    assert.ok(!줄.some((x) => /고쳐 쓰는 중|끊는 중/.test(x.message || "")));
-    assert.ok(끝.validation.chars > 500, `처음 글이 그대로 와야 한다: ${끝.validation.chars}자`);
+    assert.equal(받은지시.length, 2, "처음 쓰기 + 다시 쓰기 한 번");
+    assert.ok(!줄.some((x) => /끊는 중|덧붙이는 중/.test(x.message || "")));
+    assert.ok(끝.validation.chars > 500, `끊긴 답(짧은 글)을 고르면 안 된다: ${끝.validation.chars}자`);
   } finally { 끊어보내기 = false; }
 });
 
