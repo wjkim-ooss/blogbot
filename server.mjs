@@ -1524,7 +1524,8 @@ async function handleGenerate(res, body, ctx) {
     //   ① 처음 쓰기 → ② 글자수가 모자라면 덧붙이기(남은 호출을 먼저 쓴다) → ③ 불합격·권장·말투가 남았으면 한 번에 몰아 고쳐 쓰기
     //   → ④ 덧붙이기가 실패한 뒤 고쳐 쓴 글로 바뀌었으면 한 번 더 덧붙이기 → ⑤ 남은 호출이 있고 긴 문장이 걸려 있으면 긴 줄만 끊기.
     // 고칠 게 없으면 ①에서 끝난다. 글자수 하나만 모자라면 ②를 건너뛴다(다시 쓰기보다 덧붙이기가 확실히 늘린다).
-    const 최대 = CONFIG.생성?.AI호출최대 ?? 3;
+    // 점검 사이트가 부를 때는 처음 쓰기와 덧붙이기만 한다. 고쳐 쓰기·긴 줄 끊기는 그쪽 대화 수정 한 번이 같이 맡는다(config 생성.파트너설명, 2026-10-26 대표님)
+    const 최대 = ctx.파트너 ? (CONFIG.생성?.파트너AI호출최대 ?? 2) : (CONFIG.생성?.AI호출최대 ?? 3);
     let 부른 = 1;
     // AI를 한 번 더 부른다: 지금 제일 좋은 글 + 지시만 보내고(앞 차례는 버린다), 답을 받기(답)로 넘긴다. 실패하면 null.
     const 한번더 = async (알림, 지시) => {
@@ -1556,7 +1557,7 @@ async function handleGenerate(res, body, ctx) {
     // 고칠 것이 많은 짧은 글을 먼저 고쳐 쓰게 하면 더 짧아졌고(2026-10-26 점검 사이트 실서버: 823자), 덧붙이기 한 번 뒤 고쳐 쓰기가
     // 마지막 호출이면 줄어든 만큼 메울 호출이 없었다(1,372자). 고쳐 쓴 글이 글자수만 새로 걸리면 더나은가가 안 고른다
     while (부른 < 최대 && 짧음(validation) && validation.chars >= 100) if (!(await 덧붙이기())) break;
-    if (부른 < 최대 && validation.chars >= 100 && 고쳐쓸까(validation)) {
+    if (!ctx.파트너 && 부른 < 최대 && validation.chars >= 100 && 고쳐쓸까(validation)) {
       const 답 = await 한번더(`한 번에 고쳐 쓰는 중: ${validation.issues.length + validation.advice.length}가지`, 고쳐쓰기지시(validation, keyword));
       const 이번 = 답 && check(답);
       if (이번 && 더나은가(이번, best)) 받기(이번);
@@ -1567,7 +1568,7 @@ async function handleGenerate(res, body, ctx) {
     while (부른 < 최대 && 짧음(validation) && validation.chars >= 100 && parsed.body !== 덧붙이기실패몸) if (!(await 덧붙이기())) break;
 
     // 남은 호출이 있고 긴 문장이 걸려 있으면 그 문장만 끊게 한다(끊기지시). 받는 기준: 긴 토막 비율이 줄고 전에 통과하던 기준이 안 깨졌으면
-    const 긴 = 부른 < 최대 && validation.걸린기준.includes("문장길이") ? 긴줄들(parsed.body).slice(0, CONFIG.문장길이?.끊기최대 ?? 40) : [];
+    const 긴 = !ctx.파트너 && 부른 < 최대 && validation.걸린기준.includes("문장길이") ? 긴줄들(parsed.body).slice(0, CONFIG.문장길이?.끊기최대 ?? 40) : [];
     if (긴.length) {
       const 답 = await 한번더(`긴 문장 ${긴.length}개를 마침표·쉼표로 끊는 중`, 끊기지시(긴, keyword));
       const 몸 = 답 && 끊어넣기(parsed.body, 답, 긴, keyword);
