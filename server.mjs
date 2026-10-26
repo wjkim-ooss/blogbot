@@ -1225,8 +1225,14 @@ function 덧붙여넣기(body, 답, 받을까 = () => true) {
     const 글 = 나머지.join("\n").trim();
     if (글) 덩이들.push({ 번호: Number(/^\s*자리\s*(\d+)/.exec(첫)?.[1] ?? 0), 머리: 정규(첫), 글 });
   }
+  // 형식(### 자리 N)을 안 지키고 문단만 낸 답도 버리지 않는다 — 마무리 바로 앞 자리에 넣어 본다(받을까가 기준을 다시 잰다).
+  // 2026-10-26 점검 사이트 실서버: 「덧붙일 문단을 못 썼습니다」로 823자 글이 나갔다(3.5-flash-lite)
+  const 자리들 = 덧붙일자리(body), 맨글 = 울타리벗기기(답).trim();
+  // 대답 한 줄("네, 덧붙이겠습니다")이 글에 들어가지 않게 본문 문장이 두 줄 넘고 40자 넘을 때만
+  const 맨문장 = 맨글.split("\n").map((l) => l.trim()).filter((l) => l && 본문문장(l));
+  if (!덩이들.length && 맨문장.length >= 3 && noSpace(맨문장.join("")) >= 40 && !/^#{2,4}\s/m.test(맨글) && 자리들.length) 덩이들.push({ 번호: Math.max(1, 자리들.length - 1), 머리: "", 글: 맨글 });
   const 원 = String(body).split("\n");
-  const 넣을것 = 덧붙일자리(body)
+  const 넣을것 = 자리들
     .map((x, i) => ({ x, 글: 덩이들.find((d) => d.번호 === i + 1 || (x.소제목 && d.머리 === 정규(x.소제목)))?.글 }))
     .filter((y) => y.글);
   // 뒤 자리부터 넣어야 앞 자리의 줄 번호가 안 밀린다 (넣을것은 앞에서부터 차례다)
@@ -1545,8 +1551,22 @@ async function handleGenerate(res, body, ctx) {
       catch (e) { send({ type: "status", message: `이번 차례는 건너뜁니다 (${e.message})` }); return null; }
     };
     const 받기 = (이번) => { best = { ...이번, 모델: 기록.모델 }; ({ parsed, validation } = best); };
+    // 덧붙이기 한 번. 받는 기준은 대화 수정과 같다 — 늘었고, 전에 통과하던 기준이 깨지지 않았으면(깨진기준). 받았으면 참
+    const 덧붙이기 = async () => {
+      const 답 = await 한번더(`글자수가 ${(validation.targetChars - validation.chars).toLocaleString()}자 모자라 문단을 덧붙이는 중`, 덧붙이기지시(parsed.body, validation));
+      const 넣음 = 답 && 덧붙여넣기(parsed.body, 답, (몸) => {
+        const 이번 = check(글로(몸));
+        return 이번.validation.chars > validation.chars && !깨진기준(validation, 이번.validation).length && 이번;
+      });
+      if (넣음) 받기(넣음.결과);
+      else if (답) send({ type: "status", message: "덧붙일 문단을 못 썼습니다 (AI가 형식을 안 지켰거나, 문단마다 다른 기준을 어겼습니다)" });
+      return !!넣음;
+    };
     const 글로 = (몸 = parsed.body) => `제목: ${parsed.title}\n\n${몸}`;   // check()가 읽는 모양
 
+    // 글자수가 모자라면 덧붙이기를 먼저 한 번 한다 — 고칠 것이 많은 짧은 글을 먼저 고쳐 쓰게 하면 더 짧아졌다(2026-10-26 점검 사이트 실서버: 823자).
+    // 고쳐 쓴 글이 글자수만 새로 걸리면 더나은가가 안 고른다
+    if (부른 < 최대 - 1 && 짧음(validation) && validation.chars >= 100 && 다른걸림(validation)) await 덧붙이기();
     if (부른 < 최대 && validation.chars >= 100 && 고쳐쓸까(validation)) {
       const 답 = await 한번더(`한 번에 고쳐 쓰는 중: ${validation.issues.length + validation.advice.length}가지`, 고쳐쓰기지시(validation, keyword));
       const 이번 = 답 && check(답);
@@ -1556,15 +1576,7 @@ async function handleGenerate(res, body, ctx) {
 
     // 글자수만 모자라면 다시 쓰게 하지 않고 덧붙인다 (덧붙이기지시 참고). 덧붙이기는 줄지 않으니 남은 횟수만큼 되풀이해도 된다.
     // 받는 기준은 대화 수정과 같다 — 늘었고, 전에 통과하던 기준이 깨지지 않았으면(깨진기준).
-    while (부른 < 최대 && 짧음(validation) && validation.chars >= 100) {
-      const 답 = await 한번더(`글자수가 ${(validation.targetChars - validation.chars).toLocaleString()}자 모자라 문단을 덧붙이는 중`, 덧붙이기지시(parsed.body, validation));
-      const 넣음 = 답 && 덧붙여넣기(parsed.body, 답, (몸) => {
-        const 이번 = check(글로(몸));
-        return 이번.validation.chars > validation.chars && !깨진기준(validation, 이번.validation).length && 이번;
-      });
-      if (넣음) 받기(넣음.결과);
-      else { if (답) send({ type: "status", message: "덧붙일 문단을 못 썼습니다 (AI가 형식을 안 지켰거나, 문단마다 다른 기준을 어겼습니다)" }); break; }
-    }
+    while (부른 < 최대 && 짧음(validation) && validation.chars >= 100) if (!(await 덧붙이기())) break;
 
     // 남은 호출이 있고 긴 문장이 걸려 있으면 그 문장만 끊게 한다(끊기지시). 받는 기준: 긴 토막 비율이 줄고 전에 통과하던 기준이 안 깨졌으면
     const 긴 = 부른 < 최대 && validation.걸린기준.includes("문장길이") ? 긴줄들(parsed.body).slice(0, CONFIG.문장길이?.끊기최대 ?? 40) : [];
