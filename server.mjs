@@ -1354,6 +1354,8 @@ function 말투목표블록(목표, 문장수) {
     "위 지시 가운데 문장 끝 어미의 비율, 말 거는 어미, 묻는 문장 수는 이 숫자를 따른다(2026-10-23 대표님: 우리 규칙은 기본만, 말투는 상위노출 글을 따른다).",
     "그대로 지킬 기본: 존댓말, 쓰지 않는 표현(의료·과장·AI 티), 지어내지 않기, 첫 문장, 한 줄에 한 문장, 문단 모양.",
     `- 문장 끝: ~니다 ${퍼(목표.니다비율)}, ~요 ${퍼(목표.요비율)} (이 글이면 문장 ${문장수}개 중 ~니다 ${Math.round(문장수 * 목표.니다비율)}개, ~요 ${Math.round(문장수 * 목표.요비율)}개 안팎)`,
+    // 비율만 주면 한쪽으로 쏠렸다(2026-10-26 점검 사이트 재기: 목표 50·46%에 ~요 94%, 54·35%에 ~니다 88%) — 어느 문장이 어느 끝인지 같이 준다
+    "  설명·근거·약속 문장은 ~입니다·~합니다로, 장면 다음·이유 꺼내기·말 걸기는 ~실 텐데요·~인데요·~거든요·~보세요로 쓴다. 한 문단 안에서도 두 끝을 섞고, 한쪽으로만 몇 문단을 이어 쓰지 않는다.",
     `- 묻는 문장(?): ${퍼(목표.질문비율)} — 이 글이면 ${목표개수(문장수, 목표.질문비율, CONFIG)}개까지, 그중 ~시죠?·~잖아요?는 ${목표개수(문장수, 목표.확인질문비율, CONFIG)}개까지`,
     ...(목표.끝말.length ? [`- 자주 쓰는 끝말: ${목표.끝말.map((w) => `~${w}`).join(" · ")}`] : []),
     `- 이모지: ${목표.이모지 ? `1,000자당 ${목표.이모지}개 안팎` : "쓰지 않는다"}`,
@@ -1456,10 +1458,14 @@ async function handleGenerate(res, body, ctx) {
     // 고쳐 쓴 답이 중간에 끊겨 짧아지면 걸린 기준 수가 줄어 "더 나은 글"로 뽑혔다(2026-10-21 점검 사이트 실서버: 42자 글이 뽑힘).
     // 지금 글의 절반도 안 되게 줄었으면 끊긴 답으로 보고 고르지 않는다. 짧게 고치라는 부탁은 대화 수정이 맡는다.
     const 끊겼나 = (a, b) => b.validation.chars >= 300 && a.validation.chars < b.validation.chars * 0.5;
+    // 말투 목표는 권장이지만 다른 권장보다 먼저 본다 — 말투를 맞춘 고친 글이 다른 권장 하나 때문에 버려져
+    // 처음 글 말투가 그대로 나갔다(2026-10-26 점검 사이트 재기: 송도 ~니다 88%·목표 54%, 「고친 글이 처음 글보다 낫지 않아」)
+    const 말투어긋남 = (x) => x.validation.권장기준.includes("말투목표");
     const 더나은가 = (a, b) =>
       끊겼나(a, b) ? false
       : a.validation.pass !== b.validation.pass ? a.validation.pass
       : a.validation.issues.length !== b.validation.issues.length ? a.validation.issues.length < b.validation.issues.length
+      : 말투어긋남(a) !== 말투어긋남(b) ? !말투어긋남(a)
       : a.validation.advice.length !== b.validation.advice.length ? a.validation.advice.length < b.validation.advice.length
       : a.validation.chars > b.validation.chars;
 

@@ -1280,6 +1280,10 @@ test("말투목표가 오면 묻는 문장 상한은 그 비율로, 고정 말�
   assert.equal(말투목표정리(null), null);
   const 어긋난 = 평가(Array.from({ length: 20 }, (_, i) => `${i}번째 설명입니다.`).join("\n"), { config: CONFIG, 말투: "지시", 말투목표: 목표 });
   assert.ok(어긋난.권장기준.includes("말투목표") && 어긋난.advice.some((a) => a.includes("목표")));
+  // 고칠 때는 몇 문장을 어느 쪽으로 바꿀지까지 준다(2026-10-26 점검 사이트 재기: 비율만 주니 고쳐 써도 그대로)
+  assert.ok(어긋난.advice.some((a) => a.includes("~니다로 끝난 문장 가운데 8개쯤을 ~요로")), 어긋난.advice.join("\n"));
+  const 요만 = 평가(Array.from({ length: 20 }, (_, i) => `${i}번째 이유가 있거든요.`).join("\n"), { config: CONFIG, 말투: "지시", 말투목표: 목표 });
+  assert.ok(요만.advice.some((a) => a.includes("~요로 끝난 문장 가운데 12개쯤을 ~니다로")), 요만.advice.join("\n"));
 });
 
 test("보관함 원장·업체 글로 말투 목표를 잰다 — 후기·셋 미만이면 목표 없이 지금 규칙", async () => {
