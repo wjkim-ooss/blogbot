@@ -1512,7 +1512,7 @@ async function handleGenerate(res, body, ctx) {
     const 이미쓴글 = ctx.파트너 ? (body.이미쓴글 || []).map(String).slice(0, 3) : await 같은키워드글(ctx, keyword);
     const 덧붙임 = ctx.파트너 ? 파트너지시(body) : "";
     const 말투목표 = 말투목표정하기(ctx, body, 글쓴이유형, ref), 형태목표 = 형태목표정하기(ctx, body);
-    if (원장본보기.length && !말투목표) send({ type: "status", message: `원장이 직접 쓴 글 ${원장본보기.length}편을 말투 본보기로 같이 보여줍니다` });
+    if (원장본보기.length && !말투목표 && CONFIG.규칙줄이기?.원장본보기 !== false) send({ type: "status", message: `원장이 직접 쓴 글 ${원장본보기.length}편을 말투 본보기로 같이 보여줍니다` });
     if (말투목표 && !ctx.파트너) send({ type: "status", message: `상위노출된 원장·업체 글 ${말투목표.편수}편의 말투를 따릅니다` });
     const messages = [{ role: "user", content: buildUserPrompt(keyword, body.region, body.point, ref, 지정, shop, 사례, 원장본보기, { 각도, 이미쓴글, 도입, 마무리, 제목방법, 말투목표, 형태목표 }) + (덧붙임 ? "\n\n" + 덧붙임 : "") }];
     const check = (d) => {
