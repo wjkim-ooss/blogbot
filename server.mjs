@@ -2286,10 +2286,7 @@ if (process.argv[1] && NFC(path.resolve(process.argv[1])) === NFC(fileURLToPath(
   server.listen(PORT, () => {
     console.log(`블로그봇 대시보드: http://localhost:${PORT}`);
     본보기받기().catch(() => {});   // 대표님이 고른 본보기 글(config.본보기글). 못 받아도 글쓰기는 그대로 돈다
-    // Render 무료 서버는 15분 동안 요청이 없으면 잠든다. 켜져 있는 동안 10분마다 자기 주소를 불러 깨어 있게 한다(2026-10-22 대표님).
-    // keepalive.yml 의 GitHub 크론은 실제로 3~5시간에 한 번만 돌아(runs 기록 확인) 잠든 뒤 다시 깨우는 역할만 한다. 주소는 Render 가 넣어 주는 RENDER_EXTERNAL_URL
-    const 깨우기주소 = (process.env.KEEP_ALIVE_URL || process.env.RENDER_EXTERNAL_URL || "").replace(/\/$/, "");
-    if (깨우기주소) setInterval(() => fetch(`${깨우기주소}/`, { signal: AbortSignal.timeout(20000) }).catch(() => {}), 10 * 60 * 1000).unref();
+    // 늘 켜 두기(10분마다 자기 주소 부르기)는 껐다(2026-10-28 대표님: 몇 달간 거의 안 쓰고, 무료 750시간은 운영실 사이트에 쓴다). 15분 쉬면 잠들고 첫 접속에 1분쯤 걸린다
   });
 
 // 테스트에서만 쓴다 — 가짜 구글 서버를 세워 놓고 한도·스트리밍 동작을 확인하려고
