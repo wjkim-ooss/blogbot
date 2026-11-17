@@ -44,6 +44,7 @@ async function ensureChrome() {
       `--user-data-dir=${PROFILE_DIR}`,
       "--no-first-run",
       "--no-default-browser-check",
+      "--disable-features=OptimizationGuideModelDownloading,OptimizationGuideOnDeviceModel", // 크롬이 몰래 받는 4GB AI 모델 막기 (2026-11-17 용량 정리)
       "--window-size=1280,900",
       ...(보이기 ? [] : ["--headless=new", "--disable-gpu", "--mute-audio"]),
     ],
