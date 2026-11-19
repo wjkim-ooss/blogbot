@@ -31,7 +31,7 @@
 ## 일하는 방식
 
 - 배포는 `npx -y vercel@48 deploy --prod --yes`(Vercel이 GitHub에 안 묶여 있어 푸시만으론 안 올라간다. CLI 66은 「services」 감지로 막힌다). 커밋은 `git push github main`으로 같이 올린다. 푸시 전에 `git fetch github main`으로 웹에서 올라온 커밋을 본다. 푸시를 묻는지는 전역을 따른다.
-- Vercel이라 잠들지 않는다. 입구는 `api/index.mjs`, 설정은 `vercel.json`. Supabase 열쇠가 없으면 `/api/*`는 503(로그인 없는 관리자 모드를 인터넷에 열지 않으려고). 비밀값은 대표님이 Vercel 화면에 넣는다. 운영실은 2026-10-28 Vercel로 옮겼고, 새로 만드는 것은 Vercel이다(전역 「호스팅」). 다시 켜려면 대표님께 먼저 묻는다.
+- Vercel이라 잠들지 않는다. 입구는 `api/index.mjs`, 설정은 `vercel.json`. Supabase 열쇠가 없으면 `/api/*`는 503(로그인 없는 관리자 모드를 인터넷에 열지 않으려고). 비밀값은 대표님이 Vercel 화면에 넣는다.
 - push만으로 "올렸습니다" 하지 않는다. 사이트에서 바뀐 코드가 보이는지 확인하고(`curl -s <사이트>/rules.js | grep -c "<바꾼 코드>"`), 사이트 주소를 같이 보낸다.
 - 대표님이 붙여 준 긴 프롬프트·지침은 통째로 넣지 않는다. 틀렸거나 고쳤으면 하는 곳은 넣기 전에 짚고, 넣은 것과 뺀 것을 결과에 적는다.
 - 시험은 `npm test`. 새 검사를 넣으면 시험도 넣는다.
