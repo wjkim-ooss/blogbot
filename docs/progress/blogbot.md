@@ -168,7 +168,8 @@
 ## 지금 상태
 
 - **2026-11-19 Vercel로 옮김(대표님: 「너가 전부 직접 해」).** 새 주소 https://blogbot-ooss.vercel.app — 첫 화면·rules.js·/api/config 200(0.3~0.8초, 잠들지 않음). Render는 정지(Suspended)된 채로 둠, 정지 이유는 확인 못 함.
-  아직 안 되는 것: AI 키(GEMINI_API_KEY 또는 ANTHROPIC_API_KEY), SUPABASE_URL·SUPABASE_ANON_KEY·SUPABASE_SERVICE_ROLE_KEY, PARTNER_KEY 가 Vercel에 없다. 그래서 로그인·글쓰기는 503, 점검 사이트 입구는 404. 비밀값은 대표님만 넣는다(제가 대신 못 넣음).
+  같은 날 대표님이 Vercel에 키 여섯 개(GEMINI_API_KEY·GEMINI_MODEL·SUPABASE 셋·PARTNER_KEY, Production) 넣음 → 다시 올림. 확인: 인증 켜짐, /api/me 401(로그인 필요), 점검 사이트 입구 틀린 열쇠 401(열쇠 들어감), Supabase 살아 있음(auth health 200), 로그인 화면 뜸.
+  Render 정지 이유: 「Free usage limit reached」(무료 시간 소진, 다음 결제 주기까지 정지). 실제 AI 글쓰기는 돈이 들어 돌려 보지 않았다(대표님이 처음 쓰실 때 같이 본다).
   점검 사이트 채팅에 블로그봇 주소만 새 주소로 바꿔 달라고 알림(이전 작업은 이쪽, 그쪽은 주소만).
 - 2026-11-19 장종호(크리에이터) 블로그는 블로그봇과 따로, 온라인 컨텐츠 팀에 「블로그 운영」 세션을 두는 쪽으로 넘김 문구를 드렸다. 블로그봇은 원장 대상으로만.
 
