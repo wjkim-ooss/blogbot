@@ -167,6 +167,12 @@
 
 ## 지금 상태
 
+- **2026-11-19 사이트 정지 상태 — 그대로 둔다(대표님).** Render가 서비스를 정지(Suspended, 503 「This service has been suspended」)시켰다. 정지 이유는 Render 화면에 로그인해야 보여 확인 못 함.
+  대표님: 「앱은 깨우지 마. 정지된 상태로 두고 필요하면 말할게」. Vercel로 옮기는 준비는 해 두고 저장소에서는 걷어냈다: `~/Desktop/블로그 봇/vercel이전_준비.patch`(api/index.mjs 입구, vercel.json, server.mjs 에 `본보기받기` 내보내기. 로컬에서 첫 화면·rules.js·/api/config 200 확인, 시험 262 통과).
+  다시 열 때: 패치 적용 → Vercel에 AI 키·Supabase 키·PARTNER_KEY 를 대표님이 넣음 → 보호 설정 결정 → 점검 사이트 `config.json` 블로그봇.주소 를 새 주소로. Vercel CLI 66은 「services」 감지로 막혀 `npx vercel@48` 로 올렸다. `blogbot.vercel.app` 은 남의 주소라 못 쓴다.
+  Vercel 프로젝트 `blogbot`(wjkim-ooss)에 시험 배포 하나가 보호된 채 남아 있다(키 없음, 지우려면 대표님께 묻는다).
+- 2026-11-19 장종호(크리에이터) 블로그는 블로그봇과 따로, 온라인 컨텐츠 팀에 「블로그 운영」 세션을 두는 쪽으로 넘김 문구를 드렸다. 블로그봇은 원장 대상으로만.
+
 **직접 확인한 것**
 
 - 시험 **204개 전부 통과** (`npm test` 돌려서 봄, 10/17). 가짜 AI로 초안 생성을 끝까지 돌려 요청에 제목 방법 세 개가 적혀 나가는 것을 봤다(10/17)
