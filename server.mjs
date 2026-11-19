@@ -1720,14 +1720,20 @@ function serveStatic(res, p) {
   res.end(fs.readFileSync(filePath));
 }
 
+// 조각(Buffer)을 모아 한 번에 글자로 바꾼다. 조각마다 바꾸면 한글이 조각 경계에서 잘려 깨진다(2026-11-19 코덱스 검수).
 function readBody(req) {
   return new Promise((resolve, reject) => {
-    let data = "";
+    const 조각 = [];
+    let 크기 = 0;
     req.on("data", (c) => {
-      data += c;
-      if (data.length > 5_000_000) reject(new Error("본문이 너무 큽니다"));
+      크기 += c.length;
+      if (크기 > 5_000_000) { reject(new Error("본문이 너무 큽니다")); req.destroy(); return; }
+      조각.push(c);
     });
+    req.on("error", reject);
+    req.on("aborted", () => reject(new Error("요청이 끊겼습니다")));
     req.on("end", () => {
+      const data = Buffer.concat(조각).toString("utf8");
       try { resolve(data ? JSON.parse(data) : {}); } catch { reject(new Error("잘못된 JSON")); }
     });
   });
@@ -2082,6 +2088,9 @@ const server = http.createServer(async (req, res) => {
 
     // --- 인증 컨텍스트 (API 요청에만 필요 — 정적 파일은 거치지 않는다) ---
     if (!p.startsWith("/api/")) return serveStatic(res, p);
+    // 인증 OFF(관리자 단독 로컬 모드)는 이 컴퓨터에서만 쓴다. 인터넷에 올린 서버(Vercel)에서 Supabase 열쇠가 빠지면
+    // 누구나 로그인 없이 관리자가 되므로 문을 닫는다(2026-11-19 Vercel 이전). 공개 설정·규칙(/api/config, /rules.js)은 위에서 이미 나갔다.
+    if (!AUTH_ON && process.env.VERCEL) return json(res, 503, { error: "사이트 준비 중입니다(로그인 설정 전)" });
     const ctx = await context(req);
 
     // 내 계정 상태
@@ -2290,4 +2299,5 @@ if (process.argv[1] && NFC(path.resolve(process.argv[1])) === NFC(fileURLToPath(
   });
 
 // 테스트에서만 쓴다 — 가짜 구글 서버를 세워 놓고 한도·스트리밍 동작을 확인하려고
+export { 본보기받기 };
 export const __test = { server, 본보기묶음, validateDraft, 원장본보기블록, 덧붙이기실패, 고쳐쓸까, 고쳐쓰기지시, 파트너지시, 파트너맥락, 파트너지난, 같은키워드글, 제목방법고르기, 덧붙일자리, 덧붙여넣기, 덧붙이기지시, streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, 기준프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기, 답다듬기 };

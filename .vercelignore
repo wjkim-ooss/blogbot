@@ -1,0 +1,9 @@
+node_modules
+.env
+.chrome-profile
+references/archive
+drafts
+rank
+.shop.json
+.추적.json
+*.test.mjs

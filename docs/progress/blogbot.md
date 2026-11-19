@@ -167,10 +167,9 @@
 
 ## 지금 상태
 
-- **2026-11-19 사이트 정지 상태 — 그대로 둔다(대표님).** Render가 서비스를 정지(Suspended, 503 「This service has been suspended」)시켰다. 정지 이유는 Render 화면에 로그인해야 보여 확인 못 함.
-  대표님: 「앱은 깨우지 마. 정지된 상태로 두고 필요하면 말할게」. Vercel로 옮기는 준비는 해 두고 저장소에서는 걷어냈다: `~/Desktop/블로그 봇/vercel이전_준비.patch`(api/index.mjs 입구, vercel.json, server.mjs 에 `본보기받기` 내보내기. 로컬에서 첫 화면·rules.js·/api/config 200 확인, 시험 262 통과).
-  다시 열 때: 패치 적용 → Vercel에 AI 키·Supabase 키·PARTNER_KEY 를 대표님이 넣음 → 보호 설정 결정 → 점검 사이트 `config.json` 블로그봇.주소 를 새 주소로. Vercel CLI 66은 「services」 감지로 막혀 `npx vercel@48` 로 올렸다. `blogbot.vercel.app` 은 남의 주소라 못 쓴다.
-  Vercel 프로젝트 `blogbot`(wjkim-ooss)에 시험 배포 하나가 보호된 채 남아 있다(키 없음, 지우려면 대표님께 묻는다).
+- **2026-11-19 Vercel로 옮김(대표님: 「너가 전부 직접 해」).** 새 주소 https://blogbot-ooss.vercel.app — 첫 화면·rules.js·/api/config 200(0.3~0.8초, 잠들지 않음). Render는 정지(Suspended)된 채로 둠, 정지 이유는 확인 못 함.
+  아직 안 되는 것: AI 키(GEMINI_API_KEY 또는 ANTHROPIC_API_KEY), SUPABASE_URL·SUPABASE_ANON_KEY·SUPABASE_SERVICE_ROLE_KEY, PARTNER_KEY 가 Vercel에 없다. 그래서 로그인·글쓰기는 503, 점검 사이트 입구는 404. 비밀값은 대표님만 넣는다(제가 대신 못 넣음).
+  점검 사이트 채팅에 블로그봇 주소만 새 주소로 바꿔 달라고 알림(이전 작업은 이쪽, 그쪽은 주소만).
 - 2026-11-19 장종호(크리에이터) 블로그는 블로그봇과 따로, 온라인 컨텐츠 팀에 「블로그 운영」 세션을 두는 쪽으로 넘김 문구를 드렸다. 블로그봇은 원장 대상으로만.
 
 **직접 확인한 것**

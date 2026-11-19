@@ -2,7 +2,7 @@
 
 에스테틱 원장이 쓸 네이버 블로그 초안을 만드는 봇. 원장은 키워드 하나만 넣는다.
 봇은 보관함의 상위글을 참고해 글을 쓰고, 기계로 재서 기준에 못 미치면 다시 쓰게 한다.
-사이트 https://blogbot-u7s9.onrender.com · 저장소 github.com/wjkim-ooss/blogbot
+사이트 https://blogbot-ooss.vercel.app (2026-11-19 Render 정지로 Vercel 이전, 옛 onrender 주소는 죽음) · 저장소 github.com/wjkim-ooss/blogbot
 규칙마다 왜 그렇게 정했는지(날짜·사연·실측 숫자)는 `docs/결정근거.md`에 있다. 기준을 바꾸기 전에 그 칸을 읽는다.
 
 ## 어디를 고치면 되나
@@ -30,8 +30,8 @@
 
 ## 일하는 방식
 
-- 배포는 `git push github main`(Render가 2~3분 뒤 반영). 푸시 전에 `git fetch github main`으로 웹에서 올라온 커밋을 본다. 푸시를 묻는지는 전역을 따른다.
-- 늘 켜 두기는 껐다(2026-10-28 대표님). Render 무료라 15분 쉬면 잠들고 첫 접속은 1분쯤 걸린다. 운영실은 2026-10-28 Vercel로 옮겼고, 새로 만드는 것은 Vercel이다(전역 「호스팅」). 다시 켜려면 대표님께 먼저 묻는다.
+- 배포는 `npx -y vercel@48 deploy --prod --yes`(Vercel이 GitHub에 안 묶여 있어 푸시만으론 안 올라간다. CLI 66은 「services」 감지로 막힌다). 커밋은 `git push github main`으로 같이 올린다. 푸시 전에 `git fetch github main`으로 웹에서 올라온 커밋을 본다. 푸시를 묻는지는 전역을 따른다.
+- Vercel이라 잠들지 않는다. 입구는 `api/index.mjs`, 설정은 `vercel.json`. Supabase 열쇠가 없으면 `/api/*`는 503(로그인 없는 관리자 모드를 인터넷에 열지 않으려고). 비밀값은 대표님이 Vercel 화면에 넣는다. 운영실은 2026-10-28 Vercel로 옮겼고, 새로 만드는 것은 Vercel이다(전역 「호스팅」). 다시 켜려면 대표님께 먼저 묻는다.
 - push만으로 "올렸습니다" 하지 않는다. 사이트에서 바뀐 코드가 보이는지 확인하고(`curl -s <사이트>/rules.js | grep -c "<바꾼 코드>"`), 사이트 주소를 같이 보낸다.
 - 대표님이 붙여 준 긴 프롬프트·지침은 통째로 넣지 않는다. 틀렸거나 고쳤으면 하는 곳은 넣기 전에 짚고, 넣은 것과 뺀 것을 결과에 적는다.
 - 시험은 `npm test`. 새 검사를 넣으면 시험도 넣는다.
@@ -126,6 +126,6 @@
 
 ## 하지 않는 일
 
-- API 키를 채팅으로 받지 않는다. 대표님이 `.env`나 Render 화면에만 넣는다.
+- API 키를 채팅으로 받지 않는다. 대표님이 `.env`나 Vercel 화면에만 넣는다.
 - Supabase·Render·GitHub·네이버 계정에 로그인하지 않고, 비밀번호를 대신 넣지 않는다.
 - 레퍼런스를 함부로 지우지 않는다. 원장 글이 아니어도 베끼기 대조에 쓰인다. 태그만 붙인다.
