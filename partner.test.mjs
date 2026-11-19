@@ -164,6 +164,31 @@ test("이미 부른 추가 호출도 끝 시각이 되면 버리고 처음 글�
   } finally { 끊어보내기 = false; 늦게 = false; CONFIG.생성.추가호출끝초 = 원래끝; CONFIG.생성.추가호출마감초 = 원래마감; }
 });
 
+test("점검 사이트가 보낸 마감초로 하던 호출의 끝 시각을 당긴다", async () => {
+  const { CONFIG } = (await import("./server.mjs")).__test;
+  const 원래마감 = CONFIG.생성.추가호출마감초;
+  // config 끝초 260, 새로 부르기 259.9초 → 마감초 1 이면 새로 부르기는 0.9초까지 열려 다시 쓰기를 부르고, 1초에 버린다
+  받은지시.length = 0; 끊어보내기 = true; 늦게 = true; CONFIG.생성.추가호출마감초 = 259.9;
+  try {
+    const t = Date.now();
+    const r = await 부르기({ keyword: "송도 여드름 관리", region: "인천 연수구 송도동", shop: {}, 마감초: 1 });
+    const 줄 = (await r.text()).split("\n").filter((l) => l.startsWith("data: ")).map((l) => JSON.parse(l.slice(6)));
+    assert.equal(받은지시.length, 2, "다시 쓰기는 불렀다");
+    assert.ok(Date.now() - t < 1900, `1초 마감이면 2초 늦은 답을 기다리지 않는다: ${Date.now() - t}ms`);
+    assert.ok(줄.some((x) => /시간이 다 돼/.test(x.message || "")));
+    assert.match(줄.find((x) => x.type === "done")?.body || "", /치료로 완치되는/);
+  } finally { 끊어보내기 = false; 늦게 = false; CONFIG.생성.추가호출마감초 = 원래마감; }
+});
+
+test("마감초가 숫자가 아니면 무시하고 config 대로 다시 쓴다", async () => {
+  받은지시.length = 0; 끊어보내기 = true;
+  try {
+    const r = await 부르기({ keyword: "송도 여드름 관리", region: "인천 연수구 송도동", shop: {}, 마감초: "1" });
+    await r.text();
+    assert.equal(받은지시.length, 2, "문자열 \"1\" 은 마감으로 안 본다");
+  } finally { 끊어보내기 = false; }
+});
+
 // 2026-10-26 저녁 대표님: 끝말·질문·짐작 비율(말투 목표)을 뺐다 — 점검 사이트가 보내도 지시문에 싣지 않는다
 test("말투목표가 와도 지시문에 목표 숫자를 싣지 않는다(config.규칙줄이기.말투목표 false)", async () => {
   const 목표 = { 편수: 3, 질문비율: 0.14, 확인질문비율: 0.02, 니다비율: 0.58, 요비율: 0.19, 이모지: 0, 끝말: ["습니다", "거든요"] };

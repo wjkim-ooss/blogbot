@@ -1447,6 +1447,13 @@ function 파트너지난(지난) {
 
 async function handleGenerate(res, body, ctx) {
   const 시작시각 = Date.now();   // 덧붙이기·고쳐 쓰기를 더 부를지 볼 때 쓴다(config.생성.추가호출마감초)
+  // 점검 사이트는 같은 요청 안에서 상위 글 읽기·제목 AI를 먼저 해서 남은 시간이 300초가 아니다. 그쪽이 보낸 마감초(이 요청 시작부터 몇 초 안에 done)가 있으면
+  // 끝 시각을 그만큼 당기고, 새로 부르지 않는 시각도 같은 만큼 당긴다(2026-11-19 점검 사이트 채팅 요청). 없거나 이상한 값이면 config 그대로
+  const 기본마감 = CONFIG.생성?.추가호출마감초 ?? 0, 기본끝 = CONFIG.생성?.추가호출끝초 ?? 0;
+  const 받은마감 = ctx.파트너 && typeof body?.마감초 === "number" && Number.isFinite(body.마감초) && body.마감초 > 0 ? body.마감초 : null;   // 숫자만 받는다("1"·true 는 무시)
+  const 끝초 = 받은마감 == null ? 기본끝 : 기본끝 ? Math.min(기본끝, 받은마감) : 받은마감;
+  const 새로부를마감초 = 받은마감 == null || !기본마감 ? 기본마감
+    : 기본끝 ? Math.max(0, 기본마감 - (기본끝 - 끝초)) : Math.min(기본마감, 끝초);
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-cache",
@@ -1559,8 +1566,7 @@ async function handleGenerate(res, body, ctx) {
     let 마감알림 = false;
     const 마감 = (message) => { if (!마감알림) send({ type: "status", message }); 마감알림 = true; return null; };
     const 한번더 = async (알림, 지시) => {
-      const 마감초 = CONFIG.생성?.추가호출마감초, 끝초 = CONFIG.생성?.추가호출끝초;
-      if (마감초 && Date.now() - 시작시각 >= 마감초 * 1000) return 마감("시간이 많이 지나 더 고치지 않고 지금 글을 드립니다");
+      if (기본마감 && Date.now() - 시작시각 >= 새로부를마감초 * 1000) return 마감("시간이 많이 지나 더 고치지 않고 지금 글을 드립니다");
       부른 += 1;
       send({ type: "status", message: `${알림} (AI ${부른}/${최대}번째)` });
       send({ type: "reset" });
