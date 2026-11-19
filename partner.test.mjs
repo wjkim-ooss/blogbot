@@ -11,6 +11,7 @@ import http from "node:http";
 console.log = console.info = console.error;
 
 const 받은지시 = [];
+let 늦게 = false; // 두 번째 부르기의 답을 2초 늦게 보낸다(추가 호출 끝 시각 시험)
 let 끊어보내기 = false; // 고쳐 쓰기 차례(두 번째 부르기)에 답을 중간에서 끊어 보낸다
 const 본문 = Array.from({ length: 60 }, (_, i) => `여드름이 반복되는 분들이 많습니다 ${i + 1}번째 이야기입니다.`).join("\n");
 const 가짜구글 = http.createServer((req, res) => {
@@ -32,7 +33,8 @@ const 가짜구글 = http.createServer((req, res) => {
       : 몸.includes("[원장님 부탁]")
       ? `<답>첫 문장을 고객 말로 바꿨어요.</답>\n<수정본>제목: 송도 여드름 관리, 첫날 압출부터 하지 않는 이유\n\n"또 올라왔어요" 하고 오시는 분이 많습니다.\n${본문}</수정본>`
       : `제목: 송도 여드름 관리, 첫날 압출부터 하지 않는 이유\n\n${본문}`;
-    res.end(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: 글 }] }, finishReason: "STOP" }] })}\n\n`);
+    const 보내 = () => res.end(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: 글 }] }, finishReason: "STOP" }] })}\n\n`);
+    if (늦게 && 받은지시.length >= 2) setTimeout(보내, 2000); else 보내();
   });
 });
 
@@ -131,6 +133,35 @@ test("점검 사이트 글은 남긴 규칙에 걸릴 때만 한 번 다시 쓰�
     assert.ok(!줄.some((x) => /끊는 중|덧붙이는 중/.test(x.message || "")));
     assert.ok(끝.validation.chars > 500, `끊긴 답(짧은 글)을 고르면 안 된다: ${끝.validation.chars}자`);
   } finally { 끊어보내기 = false; }
+});
+
+// 2026-11-19 Vercel 이전: 함수가 300초에 끊기므로 정한 시간(config.생성.추가호출마감초)이 지나면 더 부르지 않고 지금 글을 준다
+test("시간이 지났으면 다시 쓰기를 부르지 않고 처음 글을 done 으로 준다", async () => {
+  const { CONFIG } = (await import("./server.mjs")).__test;
+  const 원래 = CONFIG.생성.추가호출마감초;
+  받은지시.length = 0; 끊어보내기 = true;
+  CONFIG.생성.추가호출마감초 = Number.MIN_VALUE;   // 0 은 「끔」이라 가장 작은 양수
+  try {
+    const r = await 부르기({ keyword: "송도 여드름 관리", region: "인천 연수구 송도동", shop: {} });
+    const 줄 = (await r.text()).split("\n").filter((l) => l.startsWith("data: ")).map((l) => JSON.parse(l.slice(6)));
+    assert.equal(받은지시.length, 1, "처음 쓰기만");
+    assert.equal(줄.filter((x) => /시간이 많이 지나/.test(x.message || "")).length, 1, "안내는 한 번만");
+    assert.match(줄.find((x) => x.type === "done")?.body || "", /치료로 완치되는/, "처음 글을 그대로 받는다");
+  } finally { 끊어보내기 = false; CONFIG.생성.추가호출마감초 = 원래; }
+});
+
+test("이미 부른 추가 호출도 끝 시각이 되면 버리고 처음 글을 준다", async () => {
+  const { CONFIG } = (await import("./server.mjs")).__test;
+  const [원래끝, 원래마감] = [CONFIG.생성.추가호출끝초, CONFIG.생성.추가호출마감초];
+  받은지시.length = 0; 끊어보내기 = true; 늦게 = true;
+  CONFIG.생성.추가호출마감초 = 60; CONFIG.생성.추가호출끝초 = 1;   // 다시 쓰기 답이 시작 뒤 1초 안에 안 온다(가짜 서버가 2초 늦게 준다)
+  try {
+    const r = await 부르기({ keyword: "송도 여드름 관리", region: "인천 연수구 송도동", shop: {} });
+    const 줄 = (await r.text()).split("\n").filter((l) => l.startsWith("data: ")).map((l) => JSON.parse(l.slice(6)));
+    assert.equal(받은지시.length, 2, "다시 쓰기는 불렀다");
+    assert.ok(줄.some((x) => /시간이 다 돼/.test(x.message || "")));
+    assert.match(줄.find((x) => x.type === "done")?.body || "", /치료로 완치되는/, "처음 글을 준다");
+  } finally { 끊어보내기 = false; 늦게 = false; CONFIG.생성.추가호출끝초 = 원래끝; CONFIG.생성.추가호출마감초 = 원래마감; }
 });
 
 // 2026-10-26 저녁 대표님: 끝말·질문·짐작 비율(말투 목표)을 뺐다 — 점검 사이트가 보내도 지시문에 싣지 않는다

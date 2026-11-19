@@ -1446,12 +1446,14 @@ function 파트너지난(지난) {
 }
 
 async function handleGenerate(res, body, ctx) {
+  const 시작시각 = Date.now();   // 덧붙이기·고쳐 쓰기를 더 부를지 볼 때 쓴다(config.생성.추가호출마감초)
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
   });
-  const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  // 시간이 다 돼 버린 AI 호출이 응답이 끝난 뒤에도 글을 보내면 write after end 로 함수가 죽는다 — 끝난 뒤엔 보내지 않는다
+  const send = (obj) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`); };
   const fail = (message) => {
     send({ type: "error", message });
     return res.end();
@@ -1552,14 +1554,28 @@ async function handleGenerate(res, body, ctx) {
     const 최대 = ctx.파트너 ? (CONFIG.생성?.파트너AI호출최대 ?? 2) : (CONFIG.생성?.AI호출최대 ?? 3);
     let 부른 = 1;
     // AI를 한 번 더 부른다: 지금 제일 좋은 글 + 지시만 보내고(앞 차례는 버린다), 답을 받기(답)로 넘긴다. 실패하면 null.
+    // Vercel 함수는 300초에 끊긴다. 끊기면 다 쓴 글도 못 받는다(2026-11-19). 그래서 둘을 건다:
+    // 추가호출마감초가 지났으면 새로 부르지 않고, 이미 부른 호출도 추가호출끝초가 되면 버리고 지금 글을 준다(코덱스 검수: 149초에 시작한 호출이 300초를 넘길 수 있다)
+    let 마감알림 = false;
+    const 마감 = (message) => { if (!마감알림) send({ type: "status", message }); 마감알림 = true; return null; };
     const 한번더 = async (알림, 지시) => {
+      const 마감초 = CONFIG.생성?.추가호출마감초, 끝초 = CONFIG.생성?.추가호출끝초;
+      if (마감초 && Date.now() - 시작시각 >= 마감초 * 1000) return 마감("시간이 많이 지나 더 고치지 않고 지금 글을 드립니다");
       부른 += 1;
       send({ type: "status", message: `${알림} (AI ${부른}/${최대}번째)` });
       send({ type: "reset" });
       messages.splice(1);
       messages.push({ role: "assistant", content: 글로() }, { role: "user", content: 지시 });
-      try { return await streamOnce(client, messages, send, 글쓴이유형, 기록, 시스템프롬프트(글쓴이유형, !!말투목표)); }
-      catch (e) { send({ type: "status", message: `이번 차례는 건너뜁니다 (${e.message})` }); return null; }
+      let 버림 = false;   // 시간이 다 돼 버린 호출이 뒤늦게 글 조각을 보내지 않게
+      const 이번send = (o) => { if (!버림) send(o); };
+      let 타이머;
+      const 시간끝 = 끝초 ? new Promise((r) => { 타이머 = setTimeout(() => { 버림 = true; r("시간끝"); }, Math.max(0, 시작시각 + 끝초 * 1000 - Date.now())); }) : null;
+      try {
+        const 답 = await Promise.race([streamOnce(client, messages, 이번send, 글쓴이유형, 기록, 시스템프롬프트(글쓴이유형, !!말투목표)), ...(시간끝 ? [시간끝] : [])]);
+        if (답 === "시간끝") { send({ type: "reset" }); return 마감("시간이 다 돼 고치던 것을 멈추고 지금 글을 드립니다"); }
+        return 답;
+      } catch (e) { if (!버림) send({ type: "status", message: `이번 차례는 건너뜁니다 (${e.message})` }); return null; }
+      finally { clearTimeout(타이머); }
     };
     const 받기 = (이번) => { best = { ...이번, 모델: 기록.모델 }; ({ parsed, validation } = best); };
     // 덧붙이기 한 번. 받는 기준은 대화 수정과 같다 — 늘었고, 전에 통과하던 기준이 깨지지 않았으면(깨진기준). 받았으면 참
@@ -2300,4 +2316,4 @@ if (process.argv[1] && NFC(path.resolve(process.argv[1])) === NFC(fileURLToPath(
 
 // 테스트에서만 쓴다 — 가짜 구글 서버를 세워 놓고 한도·스트리밍 동작을 확인하려고
 export { 본보기받기 };
-export const __test = { server, 본보기묶음, validateDraft, 원장본보기블록, 덧붙이기실패, 고쳐쓸까, 고쳐쓰기지시, 파트너지시, 파트너맥락, 파트너지난, 같은키워드글, 제목방법고르기, 덧붙일자리, 덧붙여넣기, 덧붙이기지시, streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, 기준프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기, 답다듬기 };
+export const __test = { server, CONFIG, 본보기묶음, validateDraft, 원장본보기블록, 덧붙이기실패, 고쳐쓸까, 고쳐쓰기지시, 파트너지시, 파트너맥락, 파트너지난, 같은키워드글, 제목방법고르기, 덧붙일자리, 덧붙여넣기, 덧붙이기지시, streamGemini, streamClaude, describeError, 한도해석, 소진됨, geminiModels, 시스템프롬프트, 기준프롬프트, buildUserPrompt, 대화수정프롬프트, 대화답풀기, 끼워넣기, 본문갈기, 답다듬기 };
